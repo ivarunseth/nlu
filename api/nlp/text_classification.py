@@ -179,13 +179,13 @@ class TextClassification:
             'patience': patience
         }
 
-        print(f'\nCompleted training {self.language} {self.name} text classifier\n')
+        print(f'\nCompleted training {self.language} {self.name} text classifier')
 
         return history
 
 
     def evaluate(self, X, y, verbose=0):
-        predictions = [prediction[0] for prediction in self.predict(self.vectorize(self.preprocess_X(X)), verbose=verbose)]
+        predictions = [prediction[0] for prediction in self.predict(X, verbose=verbose)]
 
         cm = confusion_matrix(y, predictions)
         print(f'\nConfusion Matrix: \n{cm}')
@@ -214,7 +214,7 @@ class TextClassification:
         with open(os.path.join(directory, 'vectorizer.pkl'), 'wb') as vectorizer_file:
             pickle.dump(self.vectorizer.get_weights(), vectorizer_file)
         
-        with open(os.path.join(directory, 'config.json'), 'w', encoding='utf-8') as config_file:
+        with open(os.path.join(directory, 'config.json'), 'w') as config_file:
             json.dump({
                 'name': self.name, 
                 'language': self.language, 
@@ -259,7 +259,7 @@ class TextClassification:
         with open(os.path.join(directory, 'vectorizer.pkl'), 'rb') as vectorizer_file:
             model.vectorizer.set_weights(pickle.load(vectorizer_file))
 
-        with open(os.path.join(directory, 'vocab.txt')) as vocab_file:
+        with open(os.path.join(directory, 'vocab.txt'), 'r', encoding='utf-8') as vocab_file:
             model.vectorizer.set_vocabulary(vocab_file.read().split('\n'))
         
         if model.params['save_format'] == 'tf':
