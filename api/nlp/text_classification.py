@@ -2,6 +2,9 @@
 
 # Importing the libraries
 import os
+
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+
 import string
 import json
 
@@ -19,6 +22,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, accuracy_score, classification_report
 
 import tensorflow as tf
+
+tf.compat.v1.enable_eager_execution()
 
 import tensorflow_model_optimization as tfmot
 
@@ -77,7 +82,7 @@ class TextClassification:
 
     def preprocess_y(self, y):
         inversed_labels = {label: int(i) for i, label in self.labels.items()}
-        return np.array([inversed_labels[str(label)] for label in y])
+        return np.array([inversed_labels[label] for label in y])
 
 
     def vectorize(self, X):
@@ -87,12 +92,12 @@ class TextClassification:
     def train(self, X, y, validation_split=0.1, algorithm='basic', \
               epochs=200, batch_size=32, \
               embedding_dims=64, lstm_dims=64, dense_dims=64, dropout=0.2, \
-              monitor='val_loss', patience=10, pruning=False):
+              monitor='val_loss', patience=3, pruning=False):
         
         X = self.preprocess_X(X, progress=True)
         print(f'\n{X.shape=}')
         
-        self.labels = {str(i): str(label) for i, label in enumerate(set(y))}
+        self.labels = {str(i): label for i, label in enumerate(set(y))}
         y = self.preprocess_y(y)
         print(f'\n{y.shape=}')
 
@@ -107,6 +112,7 @@ class TextClassification:
 
         self.vectorizer = tf.keras.layers.TextVectorization(
             max_tokens=max_tokens,
+            output_mode='int',
             output_sequence_length=sequence_length)
         
         self.vectorizer.adapt(X)
@@ -129,13 +135,13 @@ class TextClassification:
                 tf.keras.layers.Dropout(dropout),
                 tf.keras.layers.GlobalAveragePooling1D(),
                 tf.keras.layers.Dropout(dropout),
-                tf.keras.layers.Dense(num_classes, activation=activation)])
+                tf.keras.layers.Dense(num_classes, activation=activation, name="dense_output")])
         elif algorithm == 'rnn':
             self.classifier = tf.keras.Sequential([
-                tf.keras.layers.Embedding(len(self.vectorizer.get_vocabulary()), embedding_dims, mask_zero=True),
+                tf.keras.layers.Embedding(len(self.vectorizer.get_vocabulary()), embedding_dims),
                 tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(lstm_dims)),
                 tf.keras.layers.Dense(dense_dims, activation='relu'),
-                tf.keras.layers.Dense(num_classes, activation=activation)])
+                tf.keras.layers.Dense(num_classes, activation=activation, name="dense_output")])
         else:
             raise ValueError(f'Invalid value for algorithm argument: {algorithm}. Choose from basic or rnn.')
 
@@ -218,7 +224,6 @@ class TextClassification:
             json.dump({
                 'name': self.name, 
                 'language': self.language, 
-                'vectorizer': self.vectorizer.get_config(),
                 'classifier': self.classifier.get_config()
             }, config_file, indent=4)
 
@@ -230,6 +235,8 @@ class TextClassification:
             tf.keras.models.save_model(self.classifier, os.path.join(directory, 'model.h5'), include_optimizer=False)
         elif save_format == 'tflite':
             converter = tf.lite.TFLiteConverter.from_keras_model(self.classifier)
+            converter._experimental_lower_tensor_list_ops = False
+            converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS, tf.lite.OpsSet.SELECT_TF_OPS]
             self.classifier = converter.convert()
             with open(os.path.join(directory, 'model.tflite'), 'wb') as model_file:
                 model_file.write(self.classifier)
@@ -254,27 +261,27 @@ class TextClassification:
         with open(os.path.join(directory, 'params.txt'), 'r') as params_file:
             model.params = json.loads(params_file.read())
         
-        model.vectorizer = tf.keras.layers.TextVectorization(**config['vectorizer'])
+        model.vectorizer = tf.keras.layers.TextVectorization(
+            max_tokens=model.params['max_tokens'],
+            output_mode='int',
+            output_sequence_length=model.params['sequence_length'])
         
-        with open(os.path.join(directory, 'vectorizer.pkl'), 'rb') as vectorizer_file:
-            model.vectorizer.set_weights(pickle.load(vectorizer_file))
-
         with open(os.path.join(directory, 'vocab.txt'), 'r', encoding='utf-8') as vocab_file:
             model.vectorizer.set_vocabulary(vocab_file.read().split('\n'))
+
+        with open(os.path.join(directory, 'vectorizer.pkl'), 'rb') as vectorizer_file:
+            model.vectorizer.set_weights(pickle.load(vectorizer_file))
         
         if model.params['save_format'] == 'tf':
             model.classifier = tf.keras.models.load_model(os.path.join(directory, 'model'), compile=False)
-            model.classifier.summary()
         elif model.params['save_format'] == 'keras':
             model.classifier = tf.keras.models.load_model(os.path.join(directory, 'model.keras'), compile=False)
-            model.classifier.summary()
         elif model.params['save_format'] == 'h5':
             model.classifier = tf.keras.models.load_model(os.path.join(directory, 'model.h5'), compile=False)
-            model.classifier.summary()
         elif model.params['save_format'] == 'tflite':
             model.classifier = tf.lite.Interpreter(model_path=os.path.join(directory, 'model.tflite'))
         elif model.params['save_format'] == 'onnx':
-            model.classifier = onnxruntime.InferenceSession(os.path.join(directory, 'model.onnx'))
+            model.classifier = onnxruntime.InferenceSession(os.path.join(directory, 'model.onnx'), providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
         else:
             raise ValueError('Invalid value for save_format argument: %s. Choose from tf, keras, h5, tflite or onnx.' % model.params['save_format'])
 
@@ -287,25 +294,24 @@ class TextClassification:
         X = self.vectorize(self.preprocess_X(X))
 
         if isinstance(self.classifier, onnxruntime.InferenceSession):
-            predictions = self.classifier.run(output_names=['dense'], 
-                                             input_feed={'embedding_input': np.array(X).astype(np.float32)})[0]
+            prediction = self.classifier.run(output_names=['dense_output'], input_feed={'embedding_input': np.array(X).astype(np.float32)})[0]
         elif isinstance(self.classifier, tf.lite.Interpreter):
             input_details = self.classifier.get_input_details()[0]
             output_details = self.classifier.get_output_details()[0]
-            self.classifier.resize_tensor_input(input_details['index'], (len(X), self.vectorizer.output_sequence_length))
+            self.classifier.resize_tensor_input(input_details['index'], X.shape)
             self.classifier.allocate_tensors()
-            self.classifier.set_tensor(input_details['index'], np.array(X).astype(input_details['dtype']))
+            self.classifier.set_tensor(input_details['index'], X.astype(input_details['dtype']))
             self.classifier.invoke()
-            predictions = self.classifier.get_tensor(output_details["index"])
+            prediction = self.classifier.get_tensor(output_details['index'])
         else:
-            predictions = self.classifier.predict(X, verbose=verbose)
+            prediction = self.classifier.predict(X, verbose=verbose)
 
-        if len(predictions[0]) == 1:
-            predictions = [(self.labels['0'], 1 - predictions[i][0]) if predictions[i][0] < 0.5 else (self.labels['1'], predictions[i][0]) for i in range(len(predictions))]
+        if len(prediction[0]) == 1:
+            prediction = [(self.labels['0'], 1 - prediction[i][0]) if prediction[i][0] < 0.5 else (self.labels['1'], prediction[i][0]) for i in range(len(prediction))]
         else:
-            predictions = [(self.labels[str(prediction)], predictions[i][prediction]) for i, prediction in enumerate(np.argmax(predictions, axis=1))]
+            prediction = [(self.labels[str(index)], prediction[i][index]) for i, index in enumerate(np.argmax(prediction, axis=1))]
 
-        return predictions
+        return prediction
 
 
 if __name__ == '__main__':
@@ -317,11 +323,11 @@ if __name__ == '__main__':
     # dataset = pd.read_csv(os.path.join(os.getcwd(), 'data', 'examples', 'IMDB Dataset.csv'))
     dataset = pd.read_csv(os.path.join(os.getcwd(), 'data', 'examples', 'telugu_news_dataset.csv'))
 
-    X = dataset.iloc[:, 1].values
-    y = dataset.iloc[:, 2].values
+    X = dataset.iloc[:, 1].values.astype(str)
+    y = dataset.iloc[:, 2].values.astype(str)
 
     # Splitting the dataset into the Training set and Test set
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.20, random_state = 101)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.20, random_state=101)
 
     # Training the Text Classification model on the Training set
     model = TextClassification(name='news', language='telugu')
