@@ -1,8 +1,8 @@
-from flask import request, g, abort
+from flask import request, g, abort, send_file
 
 from .. import db
 from ..auth import token_auth
-from ..models import Model, LanguageModel
+from ..models import Model
 
 from . import api
 
@@ -10,15 +10,20 @@ from . import api
 @api.get('/models')
 @token_auth.login_required
 def get_models():
-    return g.current_user.models_list, 200
+    return {'models': g.current_user.model_list}, 200
 
 
-@api.get('/models/<id>')
+@api.get('/models/<modelId>')
 @token_auth.login_required
-def get_model(id):
-    model = g.current_user.models.filter_by(id=id).first()
+def get_model(modelId):
+    model = g.current_user.models.filter_by(id=modelId).first()
     if model is None:
-        abort(400, f'Model not found: {id}')
+        abort(400, f'Model not found: {modelId}')
+    if request.args.get('format', 'json') == 'csv':
+        return send_file(model.write(), 
+                         mimetype='application/csv', 
+                         as_attachment=True, 
+                         download_name=f'{model.name}.csv')
     return model.to_dict(), 200
 
 
@@ -27,44 +32,37 @@ def get_model(id):
 def create_model():
     model = Model.create(request.form)
     db.session.add(model)
-    for language in request.form.getlist('languages'):
-        model.associate_language(language)
+    if 'dataset' in request.files:
+        model.read(request.files.get('dataset'), 
+                   header=0 if request.form.get('header') == 'true' else None)
     db.session.commit()
-    return model.to_dict(), 201
+    return {'models': g.current_user.model_list}, 201
 
 
-@api.put('/models/<id>')
+@api.put('/models/<modelId>')
 @token_auth.login_required
-def edit_model(id):
-    model = g.current_user.models.filter_by(id=id).first()
+def edit_model(modelId):
+    model = g.current_user.models.filter_by(id=modelId).first()
     if model is None:
-        abort(404, f'Model not found: {id}')
+        abort(404, f'Model not found: {modelId}')
     model.from_dict(request.form)
-    current = set([language.name for language in model.languages])
-    updated = set(request.form.get('languages').split(','))
-    for language in updated - current:
-        model.associate_language(language)
-    for language in current - updated:
-        model.dissociate_language(language)
+    if 'dataset' in request.files:
+        model.labels.delete()
+        model.read(request.files.get('dataset'), 
+                   header=0 if request.form.get('header') == 'true' else None)
     db.session.commit()
-    return model.to_dict(), 200
+    return {'models': g.current_user.model_list}, 200
 
 
-@api.delete('/models/<id>')
+@api.delete('/models/<modelId>')
 @token_auth.login_required
-def delete_model(id):
-    model = g.current_user.models.filter_by(id=id).first()
+def delete_model(modelId):
+    model = g.current_user.models.filter_by(id=modelId).first()
     if model is None:
-        abort(404, f'Model not found: {id}')
+        abort(404, f'Model not found: {modelId}')
+    for training in model.trainings.all():
+        training.task.forget()
+    model.trainings.delete()
     db.session.delete(model)
     db.session.commit()
-    return '', 204
-
-
-@api.post('/models/<id>/<language>/train')
-@token_auth.login_required
-def train(id, language):
-    model = g.current_user.models.filter_by(id=id).first()
-    if model is None:
-        abort(404, f'Model not found: {id}')
-    lm = model.la
+    return {'models': g.current_user.model_list}, 200

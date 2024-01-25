@@ -3,8 +3,6 @@
 # Importing the libraries
 import os
 
-os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
-
 import string
 import json
 
@@ -34,48 +32,11 @@ import onnxruntime
 class TextClassification:
 
 
-    STOPWORDS_DIRECTORY = os.path.join(os.getcwd(), 'data', 'stopwords')
-    UNICODE_RANGES = {
-        'english': 'a-zA-Z',
-        'hinglish': 'a-zA-Z',
-        'hindi': '\u0900-\u097F',
-        'marathi': '\u0900-\u097F',
-        'gujurati': '\u0A80-\u0AFF',
-        'bengali': '\u0980-\u09FF',
-        'punjabi': '\u0A00-\u0A7F',
-        'tamil': '\u0B80-\u0BFF',
-        'telugu': '\u0C00-\u0C7F',
-        'odia': '\u0B00-\u0B7F',
-        'assamese': '\u0980-\u09FF',
-        'kannada': '\u0C80-\u0CFF',
-        'malayalam': '\u0D00-\u0D7F'
-    }
-    DEFAULT_UNICODE_RANGE = ''.join(list(set([value for value in UNICODE_RANGES.values()])))
-
-
-    def __init__(self, name='bag-of-words', language='english'):
-        self.name = name
-        self.language = language
-        self.unicode_range = self.UNICODE_RANGES.get(self.language, self.DEFAULT_UNICODE_RANGE)
-        self.stopwords = self.init_stopwords()
-
-
-    def init_stopwords(self):
-        try:
-            with open(os.path.join(self.STOPWORDS_DIRECTORY, self.language), encoding='utf-8') as stopwords_file:
-                stopwords = set(stopwords_file.read().split('\n'))
-            return stopwords
-        except FileNotFoundError:
-            return {}
-
-
     def preprocess_X(self, X, progress=False):
         for i, text in enumerate(tqdm(X, 'Preprocessing', disable=not progress)):
             text = str(text).strip().lower()
             text = re.sub('<.*?>', ' ', text)
             text = re.sub('[%s]' % re.escape(string.punctuation), ' ', text)
-            text = re.sub('[^%s]' % self.unicode_range, ' ', text)
-            text = ' '.join([word for word in text.split() if word not in self.stopwords])
             X[i] = text
         return np.array(X)
     
@@ -89,11 +50,9 @@ class TextClassification:
         return self.vectorizer(X).numpy()
 
 
-    def train(self, X, y, validation_split=0.1, algorithm='basic', \
-              epochs=200, batch_size=32, \
-              embedding_dims=64, lstm_dims=64, dense_dims=64, dropout=0.2, \
-              monitor='val_loss', patience=3, pruning=False):
-        
+    def train(self, X, y, validation_split=0.1, epochs=200, \
+              batch_size=32, embedding_dims=64, dropout=0.2, \
+              monitor='val_loss', patience=10, pruning=False):
         X = self.preprocess_X(X, progress=True)
         print(f'\n{X.shape=}')
         
@@ -129,28 +88,20 @@ class TextClassification:
             loss = 'sparse_categorical_crossentropy'
             metrics = ['accuracy']
             
-        if algorithm == 'basic':
-            self.classifier = tf.keras.models.Sequential([
-                tf.keras.layers.Embedding(len(self.vectorizer.get_vocabulary()), embedding_dims),
-                tf.keras.layers.Dropout(dropout),
-                tf.keras.layers.GlobalAveragePooling1D(),
-                tf.keras.layers.Dropout(dropout),
-                tf.keras.layers.Dense(num_classes, activation=activation, name="dense_output")])
-        elif algorithm == 'rnn':
-            self.classifier = tf.keras.Sequential([
-                tf.keras.layers.Embedding(len(self.vectorizer.get_vocabulary()), embedding_dims),
-                tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(lstm_dims)),
-                tf.keras.layers.Dense(dense_dims, activation='relu'),
-                tf.keras.layers.Dense(num_classes, activation=activation, name="dense_output")])
-        else:
-            raise ValueError(f'Invalid value for algorithm argument: {algorithm}. Choose from basic or rnn.')
+        self.classifier = tf.keras.models.Sequential([
+            tf.keras.layers.Embedding(len(self.vectorizer.get_vocabulary()), embedding_dims),
+            tf.keras.layers.Dropout(dropout),
+            tf.keras.layers.GlobalAveragePooling1D(),
+            tf.keras.layers.Dropout(dropout),
+            tf.keras.layers.Dense(num_classes, activation=activation, name="dense_output")])
 
         if pruning:
             pruning_params = {
-                  'pruning_schedule': tfmot.sparsity.keras.PolynomialDecay(initial_sparsity=0.50,
-                                                                           final_sparsity=0.80,
-                                                                           begin_step=0,
-                                                                           end_step=np.ceil(X.shape[0] * (1 - validation_split) / batch_size).astype(np.int32) * epochs)
+                'pruning_schedule': tfmot.sparsity.keras.PolynomialDecay(
+                    initial_sparsity=0.50,
+                    final_sparsity=0.80,
+                    begin_step=0,
+                    end_step=np.ceil(X.shape[0] * (1 - validation_split) / batch_size).astype(np.int32) * epochs)
             }
             self.classifier = tfmot.sparsity.keras.prune_low_magnitude(self.classifier, **pruning_params)
  
@@ -178,14 +129,17 @@ class TextClassification:
             'max_tokens': max_tokens,
             'sequence_length': sequence_length,
             'num_classes': num_classes,
+            'validation_split': validation_split,
             'epochs': epochs,
             'batch_size': batch_size,
-            'validation_split': validation_split,
+            'embedding_dims': embedding_dims,
+            'dropout': dropout,
             'monitor': monitor,
-            'patience': patience
+            'patience': patience,
+            'pruning': pruning
         }
 
-        print(f'\nCompleted training {self.language} {self.name} text classifier')
+        print(f'\nCompleted training text classifier')
 
         return history
 
@@ -202,7 +156,7 @@ class TextClassification:
         report = classification_report(y, predictions)
         print(f'\nClassification Report: \n{report}')
 
-        return cm, accuracy, report
+        return cm.tolist(), accuracy, report
     
 
     def save(self, directory, save_format='tf'):
@@ -219,13 +173,6 @@ class TextClassification:
 
         with open(os.path.join(directory, 'vectorizer.pkl'), 'wb') as vectorizer_file:
             pickle.dump(self.vectorizer.get_weights(), vectorizer_file)
-        
-        with open(os.path.join(directory, 'config.json'), 'w') as config_file:
-            json.dump({
-                'name': self.name, 
-                'language': self.language, 
-                'classifier': self.classifier.get_config()
-            }, config_file, indent=4)
 
         if save_format == 'tf':
             tf.keras.models.save_model(self.classifier, os.path.join(directory, 'model'), include_optimizer=False)
@@ -237,6 +184,7 @@ class TextClassification:
             converter = tf.lite.TFLiteConverter.from_keras_model(self.classifier)
             converter._experimental_lower_tensor_list_ops = False
             converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS, tf.lite.OpsSet.SELECT_TF_OPS]
+            converter.optimizations = [tf.lite.Optimize.DEFAULT]
             self.classifier = converter.convert()
             with open(os.path.join(directory, 'model.tflite'), 'wb') as model_file:
                 model_file.write(self.classifier)
@@ -245,15 +193,12 @@ class TextClassification:
         else:
             raise ValueError(f'Invalid value for save_format argument: {save_format}. Choose from tf, keras, h5, tflite or onnx.')
 
-        print(f'\nSaved model and config files at: {directory}\n')
+        print(f'Saved model and config files at: {directory}\n')
 
 
     @staticmethod
     def load(directory):
-        with open(os.path.join(directory, 'config.json'), 'r') as config_file:
-            config = json.load(config_file)
-
-        model = TextClassification(name=config['name'], language=config['language'])
+        model = TextClassification()
 
         with open(os.path.join(directory, 'labels.txt'), 'r', encoding='utf-8') as labels_file:
             model.labels = json.loads(labels_file.read())
@@ -274,10 +219,13 @@ class TextClassification:
         
         if model.params['save_format'] == 'tf':
             model.classifier = tf.keras.models.load_model(os.path.join(directory, 'model'), compile=False)
+            model.classifier.summary()
         elif model.params['save_format'] == 'keras':
             model.classifier = tf.keras.models.load_model(os.path.join(directory, 'model.keras'), compile=False)
+            model.classifier.summary()
         elif model.params['save_format'] == 'h5':
             model.classifier = tf.keras.models.load_model(os.path.join(directory, 'model.h5'), compile=False)
+            model.classifier.summary()
         elif model.params['save_format'] == 'tflite':
             model.classifier = tf.lite.Interpreter(model_path=os.path.join(directory, 'model.tflite'))
         elif model.params['save_format'] == 'onnx':
@@ -285,7 +233,7 @@ class TextClassification:
         else:
             raise ValueError('Invalid value for save_format argument: %s. Choose from tf, keras, h5, tflite or onnx.' % model.params['save_format'])
 
-        print(f'\nSuccessfully loaded {model.language} {model.name} text classifier\n')
+        print(f'\nSuccessfully loaded text classifier')
 
         return model
 
@@ -307,7 +255,8 @@ class TextClassification:
             prediction = self.classifier.predict(X, verbose=verbose)
 
         if len(prediction[0]) == 1:
-            prediction = [(self.labels['0'], 1 - prediction[i][0]) if prediction[i][0] < 0.5 else (self.labels['1'], prediction[i][0]) for i in range(len(prediction))]
+            prediction = [(self.labels['0'], 1 - prediction[i][0]) if prediction[i][0] < 0.5 else \
+                          (self.labels['1'], prediction[i][0]) for i in range(len(prediction))]
         else:
             prediction = [(self.labels[str(index)], prediction[i][index]) for i, index in enumerate(np.argmax(prediction, axis=1))]
 
@@ -319,26 +268,26 @@ if __name__ == '__main__':
     # Importing the dataset
     # dataset = pd.read_csv(os.path.join(os.getcwd(), 'data', 'examples', 'BBC_train_data.tsv'), delimiter='\t',  quoting=3)
     # dataset = pd.read_csv(os.path.join(os.getcwd(), 'data', 'examples', 'bengali_hate_v2.0.csv'))
-    # dataset = pd.read_csv(os.path.join(os.getcwd(), 'data', 'examples', 'Restaurant_Reviews.tsv'), delimiter='\t',  quoting=3)
+    dataset = pd.read_csv(os.path.join(os.getcwd(), 'data', 'examples', 'Restaurant_Reviews.tsv'), delimiter='\t',  quoting=3)
     # dataset = pd.read_csv(os.path.join(os.getcwd(), 'data', 'examples', 'IMDB Dataset.csv'))
-    dataset = pd.read_csv(os.path.join(os.getcwd(), 'data', 'examples', 'telugu_news_dataset.csv'))
+    # dataset = pd.read_csv(os.path.join(os.getcwd(), 'data', 'examples', 'telugu_news_dataset.csv'))
 
-    X = dataset.iloc[:, 1].values.astype(str)
-    y = dataset.iloc[:, 2].values.astype(str)
+    X = dataset.iloc[:, 0].values.astype(str)
+    y = dataset.iloc[:, 1].values.astype(str)
 
     # Splitting the dataset into the Training set and Test set
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.20, random_state=101)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.10, random_state=101)
 
     # Training the Text Classification model on the Training set
-    model = TextClassification(name='news', language='telugu')
-    model.train(X_train, y_train)
+    model = TextClassification()
+    model.train(X_train, y_train, pruning=True)
 
     # Evaluating the Test set results
     model.evaluate(X_test, y_test)
 
     # Saving the model after training
-    directory = os.path.join(os.getcwd(), 'data', 'models', model.name, model.language, datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
-    model.save(directory, save_format='tf')
+    directory = os.path.join(os.getcwd(), 'data', 'models', 'reviews', 'english', datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    model.save(directory)
 
     # Loading the Text Classification model for prediction
     model = TextClassification.load(directory)

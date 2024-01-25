@@ -1,4 +1,4 @@
-from flask import request, abort, jsonify, g, url_for
+from flask import request, abort, g
 
 from .. import db
 from ..auth import token_auth, token_optional_auth
@@ -7,24 +7,21 @@ from ..models import User
 from . import api
 
 
-@api.route('/users', methods=['POST'])
-def new_user():
+@api.post('/users')
+def create_user():
     """
     Register a new user.
     This endpoint is publicly available.
     """
-    user = User.create(request.get_json() or {})
-    if User.query.filter_by(email=user.email).first() is not None:
+    user = User.create(request.form)
+    if User.query.filter_by(email=user.email).first():
         abort(400)
     db.session.add(user)
     db.session.commit()
-    r = jsonify(user.to_dict())
-    r.status_code = 201
-    r.headers['Location'] = url_for('api.get_user', id=user.id)
-    return r
+    return user.to_dict(), 201
 
 
-@api.route('/users', methods=['GET'])
+@api.get('/users')
 @token_optional_auth.login_required
 def get_users():
     """
@@ -36,29 +33,29 @@ def get_users():
     if request.args.get('updated_since'):
         users = users.filter(
             User.updated_at > int(request.args.get('updated_since')))
-    return jsonify({'users': [user.to_dict() for user in users.all()]})
+    return {'users': [user.to_dict() for user in users.all()]}, 200
 
 
-@api.route('/users/<id>', methods=['GET'])
+@api.get('/users/<userId>')
 @token_optional_auth.login_required
-def get_user(id):
+def get_user(userId):
     """
     Return a user.
     This endpoint is publicly available, but if the client has a token it
     should send it.
     """
-    return jsonify(User.query.get_or_404(id).to_dict())
+    return User.query.get_or_404(userId).to_dict(), 200
 
 
-@api.route('/users/<id>', methods=['PUT'])
+@api.put('/users/<userId>')
 @token_auth.login_required
-def edit_user(id):
+def edit_user(userId):
     """
     Modify an existing user.
     This endpoint is requires a valid user token.
     Note: users are only allowed to modify themselves.
     """
-    user = User.query.get_or_404(id)
+    user = User.query.get_or_404(userId)
     if user != g.current_user:
         abort(403)
     user.from_dict(request.get_json() or {})

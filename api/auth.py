@@ -27,7 +27,7 @@ def verify_password(email, password):
 def password_error():
     """Return a 401 error to the client."""
     # To avoid login prompts in the browser, use the "Bearer" realm.
-    return (jsonify({'error': 'authentication required'}), 401,
+    return (jsonify({'error': 'Invalid email or password.'}), 401,
             {'WWW-Authenticate': 'Bearer realm="Authentication Required"'})
 
 
@@ -50,8 +50,8 @@ def verify_token(token, add_to_session=False):
 @token_auth.error_handler
 def token_error():
     """Return a 401 error to the client."""
-    return (jsonify({'error': 'authentication required'}), 401,
-            {'WWW-Authenticate': 'Bearer realm="Authentication Required"'})
+    return {'error': 'Invalid email or password.'}, 401, \
+        {'WWW-Authenticate': 'Bearer realm="Authentication Required"'}
 
 
 @token_optional_auth.verify_token
