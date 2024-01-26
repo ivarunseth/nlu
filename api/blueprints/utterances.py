@@ -43,10 +43,12 @@ def create_utterance(modelId, labelId):
     label = model.labels.filter_by(id=labelId).first()
     if label is None:
         abort(404, 'Label not found: %s' % labelId)
-    utterance = Utterance.create(request.form, label)
+    if not request.is_json:
+        abort(400, 'Request is not JSON type')
+    utterance = Utterance.create(request.get_json(), label)
     db.session.add(utterance)
     db.session.commit()
-    return {'utterances': label.utterance_list}, 201
+    return utterance.to_dict(), 200
 
 
 @api.put('/models/<modelId>/labels/<labelId>/utterances/<utteranceId>')
@@ -59,9 +61,13 @@ def edit_utterance(modelId, labelId, utteranceId):
     if label is None:
         abort(404, 'Label not found: %s' % labelId)
     utterance = label.utterances.filter_by(id=utteranceId).first()
-    utterance.from_dict(request.form)
+    if utterance is None:
+        abort(404, 'Utterance not found: %s' % utteranceId)
+    if not request.is_json:
+        abort(400, 'Request is not JSON type')
+    utterance.from_dict(request.get_json())
     db.session.commit()
-    return {'utterances': label.utterance_list}, 200
+    return utterance.to_dict(), 200
 
 
 @api.delete('/models/<modelId>/labels/<labelId>/utterances/<utteranceId>')
@@ -74,6 +80,8 @@ def delete_utterances(modelId, labelId, utteranceId):
     if label is None:
         abort(404, 'Label not found: %s' % labelId)
     utterance = label.utterances.filter_by(id=utteranceId).first()
+    if utterance is None:
+        abort(404, 'Utterance not found: %s' % utteranceId)
     db.session.delete(utterance)
     db.session.commit()
-    return {'utterances': label.utterance_list}, 200
+    return '', 204
