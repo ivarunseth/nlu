@@ -1,5 +1,5 @@
 import React, { useContext, useState, useEffect } from "react";
-import { Alert, Row, Col, Dropdown, Form, InputGroup, Button, Table, Pagination, Modal, Spinner } from "react-bootstrap";
+import { Alert, Row, Col, Dropdown, Form, InputGroup, ButtonToolbar, ButtonGroup, Button, Table, Pagination, Modal, Spinner } from "react-bootstrap";
 import { PlusLg, Download, Pen, Trash, InfoCircle } from "react-bootstrap-icons";
 import { Link, useParams } from "react-router-dom";
 import { UserContext } from "../contexts/UserContext";
@@ -13,7 +13,7 @@ const Build = () => {
 
     const { user } = useContext(UserContext);
     const { model, setModel } = useContext(ModelContext);
-    
+
     const socket = useSocket();
 
     const [alert, setAlert] = useState(null);
@@ -32,9 +32,9 @@ const Build = () => {
     const [validated, setValidated] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [page, setPage] = useState(1);
-    
+
     const itemsPerPage = 5;
-    
+
     const handleOpenCreateForm = () => {
         setShowCreateForm(true);
     };
@@ -263,53 +263,59 @@ const Build = () => {
             </Row>
             <Row className="mt-4">
                 <Col>
-                    <Button 
-                        variant="light" 
-                        style={{
-                            border: '1px solid #212529' 
-                        }}
-                        onClick={handleOpenCreateForm}
-                    >
-                        <PlusLg />&nbsp;create label
-                    </Button>
-                    &nbsp;
-                    {status === 'PENDING' || status === 'RECEIVED' ?
-                    <Button 
-                        variant="light" 
-                        disabled
-                        style={{
-                            border: '1px solid #212529' 
-                        }}
-                    >
-                        <Spinner
-                            animation="border"
-                            size="sm"
-                        />
-                        &nbsp;pending...
-                    </Button> : status === 'STARTED' ? 
-                    <Button 
-                        variant="light" 
-                        disabled
-                        style={{
-                            border: '1px solid #212529' 
-                        }}
-                    >
-                        <Spinner
-                            animation="grow"
-                            size="sm"
-                        />
-                        &nbsp;training...
-                    </Button> :
-                    <Button 
-                        variant="light" 
-                        onClick={handleTrain}
-                        disabled={labels.length === 0}
-                        style={{
-                            border: '1px solid #212529' 
-                        }}
-                    >
-                        <i className="bi bi-vignette" />&nbsp;train
-                    </Button>}
+                    <ButtonToolbar>
+                        <ButtonGroup className="me-2">
+                            <Button
+                                variant="light"
+                                style={{
+                                    border: '1px solid #212529'
+                                }}
+                                onClick={handleOpenCreateForm}
+                            >
+                                <PlusLg />&nbsp;create label
+                            </Button>
+                        </ButtonGroup>
+                        <ButtonGroup>
+                            {status === 'PENDING' || status === 'RECEIVED' ?
+                                <Button
+                                    variant="light"
+                                    disabled
+                                    style={{
+                                        border: '1px solid #212529'
+                                    }}
+                                >
+                                    <Spinner
+                                        animation="border"
+                                        size="sm"
+                                    />
+                                    &nbsp;pending...
+                                </Button>
+                                : status === 'STARTED' ?
+                                    <Button
+                                        variant="light"
+                                        disabled
+                                        style={{
+                                            border: '1px solid #212529'
+                                        }}
+                                    >
+                                        <Spinner
+                                            animation="grow"
+                                            size="sm"
+                                        />
+                                        &nbsp;training...
+                                    </Button> :
+                                    <Button
+                                        variant="light"
+                                        onClick={handleTrain}
+                                        disabled={labels.reduce((prev, next) => prev + next.utterances_count, 0) === 0}
+                                        style={{
+                                            border: '1px solid #212529'
+                                        }}
+                                    >
+                                        <i className="bi bi-vignette" />&nbsp;train
+                                    </Button>}
+                        </ButtonGroup>
+                    </ButtonToolbar>
                 </Col>
                 <Col>
                     <Form>
@@ -343,7 +349,7 @@ const Build = () => {
                             </tr>
                         </thead>
                         <tbody>
-                        {labels.length > 0 ? search !== '' && filter.length === 0 ? (
+                            {labels.length > 0 ? search !== '' && filter.length === 0 ? (
                                 <tr>
                                     <td
                                         colSpan={6}
@@ -358,7 +364,7 @@ const Build = () => {
                                 <tr key={label.id}>
                                     <td>{(page - 1) * itemsPerPage + index + 1}.</td>
                                     <td>
-                                        <Link 
+                                        <Link
                                             to={`/models/${modelId}/build/${label.id}/utterances`}
                                             style={{
                                                 textDecorationLine: 'none'
@@ -552,7 +558,7 @@ const Build = () => {
                         <div className="d-grid gap-2">
                             <Button
                                 type="submit"
-                                variant="primary" 
+                                variant="primary"
                                 disabled={submitting}
                             >
                                 {submitting ? (
