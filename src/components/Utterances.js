@@ -14,7 +14,6 @@ const Utterances = () => {
 
     const [alert, setAlert] = useState(null);
     const [search, setSearch] = useState('');
-    const [utterance, setUtterance] = useState(null);
     const [utterances, setUtterances] = useState([]);
     const [filter, setFilter] = useState([]);
     const [data, setData] = useState([]);
@@ -46,31 +45,25 @@ const Utterances = () => {
         }
     };
 
-    const handleKeyPress = (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            handleCreate();
-        }
-    };
-
-    const handleEdit = async (utteranceId) => {
-        if (utterance && utterance !== '') {
-            try {
-                const response = await axios.put(
-                    `/api/models/${modelId}/labels/${labelId}/utterances/${utteranceId}`,
-                    { text: utterance },
-                    {
-                        headers: {
-                            Authorization: `Bearer ${user.token}`,
-                        },
-                    }
-                );
-                const updatedUtterances = utterances.map((u) => u.id === utteranceId ? { ...u, text: response.data.text } : u);
-                setUtterances(updatedUtterances);
-            } catch (error) {
-                setAlert({ variant: 'danger', message: error.response.data.error });
-            } finally {
-                setUtterance(null)
+    const handleEdit = async (utteranceId, utteranceText) => {
+        if (utteranceId && utteranceText !== '') {
+            const originalText = utterances.filter((utterance) => utterance.id === utteranceId)[0].text;
+            if (utteranceText !== originalText) {
+                try {
+                    const response = await axios.put(
+                        `/api/models/${modelId}/labels/${labelId}/utterances/${utteranceId}`,
+                        { text: utteranceText },
+                        {
+                            headers: {
+                                Authorization: `Bearer ${user.token}`,
+                            },
+                        }
+                    );
+                    const updatedUtterances = utterances.map((u) => u.id === utteranceId ? { ...u, text: response.data.text } : u);
+                    setUtterances(updatedUtterances);
+                } catch (error) {
+                    setAlert({ variant: 'danger', message: error.response.data.error });
+                }
             }
         }
     };
@@ -145,7 +138,12 @@ const Utterances = () => {
                             placeholder="search or enter an utterance..."
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
-                            onKeyPress={handleKeyPress}
+                            onKeyPress={(e) => {
+                                if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    handleCreate();
+                                }
+                            }}
                         />
                     </Form>
                 </Col>
@@ -165,9 +163,8 @@ const Utterances = () => {
                                     className="me-auto px-1"
                                     contentEditable
                                     suppressContentEditableWarning
-                                    dangerouslySetInnerHTML={{__html: item.text}}
-                                    onInput={(e) => setUtterance(e.currentTarget.textContent)}
-                                    onBlur={() => handleEdit(item.id)}
+                                    dangerouslySetInnerHTML={{ __html: item.text }}
+                                    onBlur={(e) => handleEdit(item.id, e.currentTarget.textContent)}
                                 />
                                 <div className="ms-1">
                                     <Trash 
