@@ -279,7 +279,7 @@ const History = () => {
             </Row>
             <Modal centered show={showResults} onHide={handleCloseResults}>
                 <Modal.Header closeButton>
-                    <Modal.Title>Report</Modal.Title>
+                    <Modal.Title>Classification Report</Modal.Title>
                 </Modal.Header>
                 <Modal.Body>
                     <pre>
