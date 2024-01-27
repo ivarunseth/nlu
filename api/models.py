@@ -97,7 +97,7 @@ class Model(db.Model):
 
     @property
     def label_list(self):
-        return [label.to_dict() for label in self.labels.order_by(Label.id.desc()).all()]
+        return [label.to_dict() for label in self.labels.order_by(Label.name.asc(), Label.id.desc()).all()]
     
     @property
     def training_list(self):
@@ -123,14 +123,16 @@ class Model(db.Model):
         if file.filename.endswith('.csv'):
             data = pd.read_csv(file, 
                                header=header, 
+                               on_bad_lines='skip', 
                                skip_blank_lines=True,
-                               usecols=[0, 1])
+                               usecols=[0, 1]).dropna()
         elif file.filename.endswith('.tsv'):
             data = pd.read_csv(file, 
                                sep='\t', 
                                header=header,
+                               on_bad_lines='skip', 
                                skip_blank_lines=True,
-                               usecols=[0, 1])
+                               usecols=[0, 1]).dropna()
         for name in list(set(data.iloc[:, 1].values.tolist())):
             label = Label.create({'name': name}, self)
             db.session.add(label)
