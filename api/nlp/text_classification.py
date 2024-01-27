@@ -156,7 +156,7 @@ class TextClassification:
         report = classification_report(y, predictions)
         print(f'\nClassification Report: \n{report}')
 
-        return cm.tolist(), accuracy, report
+        return cm, accuracy, report
     
 
     def save(self, directory, save_format='tf'):
