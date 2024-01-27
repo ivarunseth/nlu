@@ -10,10 +10,10 @@ def text_classification(X, y, directory):
     from ..nlp import TextClassification
     model = TextClassification()
     
-    model.train(X_train, y_train)
+    history = model.train(X_train, y_train)
     
-    result = model.evaluate(X_test, y_test)
+    confusion_matrix, accuracy, report = model.evaluate(X_test, y_test)
     
     model.save(directory)
 
-    return result
+    return confusion_matrix.tolist(), accuracy, report, history.history
