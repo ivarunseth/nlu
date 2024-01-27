@@ -47,7 +47,8 @@ def edit_model(modelId):
         abort(404, f'Model not found: {modelId}')
     model.from_dict(request.form)
     if 'dataset' in request.files:
-        model.labels.delete()
+        for label in model.labels.all():
+            db.session.delete(label)
         model.read(request.files.get('dataset'), 
                    header=0 if request.form.get('header') == 'true' else None)
     db.session.commit()
