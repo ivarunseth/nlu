@@ -25,22 +25,24 @@ const Utterances = () => {
 
 
     const handleCreate = async () => {
-        try {
-            const response = await axios.post(
-                `/api/models/${modelId}/labels/${labelId}/utterances`,
-                {
-                    text: search,
-                },
-                {
-                    headers: {
-                        Authorization: `Bearer ${user.token}`,
+        if (search.trim() !== '') {
+            try {
+                const response = await axios.post(
+                    `/api/models/${modelId}/labels/${labelId}/utterances`,
+                    {
+                        text: search.trim(),
                     },
-                }
-            );
-            setUtterances([response.data, ...utterances]);
-            setSearch('');
-        } catch (error) {
-            setAlert({ variant: 'danger', message: error.response.data.error });
+                    {
+                        headers: {
+                            Authorization: `Bearer ${user.token}`,
+                        },
+                    }
+                );
+                setUtterances([response.data, ...utterances]);
+                setSearch('');
+            } catch (error) {
+                setAlert({ variant: 'danger', message: error.response.data.error });
+            }
         }
     };
 
@@ -54,7 +56,7 @@ const Utterances = () => {
     const handleEdit = async (utteranceId) => {
         if (utterance && utterance !== '') {
             try {
-                await axios.put(
+                const response = await axios.put(
                     `/api/models/${modelId}/labels/${labelId}/utterances/${utteranceId}`,
                     { text: utterance },
                     {
@@ -63,16 +65,13 @@ const Utterances = () => {
                         },
                     }
                 );
-    
-                const updatedUtterances = utterances.map((u) =>
-                    u.id === utteranceId ? { ...u, text: utterance } : u
-                );
-    
+                const updatedUtterances = utterances.map((u) => u.id === utteranceId ? { ...u, text: response.data.text } : u);
                 setUtterances(updatedUtterances);
-                setUtterance(null)
             } catch (error) {
                 setAlert({ variant: 'danger', message: error.response.data.error });
-            }   
+            } finally {
+                setUtterance(null)
+            }
         }
     };
 
@@ -116,8 +115,8 @@ const Utterances = () => {
     }, [user, modelId, labelId])
 
     useEffect(() => {
-        if (search !== '') {
-            setFilter(utterances.filter((i) => i.text.toLowerCase().includes(search.toLowerCase())));
+        if (search.trim() !== '') {
+            setFilter(utterances.filter((i) => i.text.toLowerCase().includes(search.trim().toLowerCase())));
         } else {
             setFilter(utterances);
         }
@@ -143,7 +142,7 @@ const Utterances = () => {
                     <Form>
                         <Form.Control
                             type="text"
-                            placeholder="enter an utterance..."
+                            placeholder="search or enter an utterance..."
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             onKeyPress={handleKeyPress}
@@ -154,26 +153,25 @@ const Utterances = () => {
             <Row className="mt-4">
                 <Col>
                     <ListGroup>
-                        {data.map((value, index) => (
+                        {data.map((item, index) => (
                             <ListGroup.Item 
+                                key={item.id}
                                 className="d-flex justify-content-between align-items-start"
-                                                                
                             >
-                                <div className="me-2">
+                                <div className="me-1">
                                     {(page - 1) * itemsPerPage + index + 1}.
                                 </div>
                                 <div 
-                                    className="me-auto"
+                                    className="me-auto px-1"
                                     contentEditable
                                     suppressContentEditableWarning
+                                    dangerouslySetInnerHTML={{__html: item.text}}
                                     onInput={(e) => setUtterance(e.currentTarget.textContent)}
-                                    onBlur={() => handleEdit(value.id)}
-                                >
-                                    {value.text}
-                                </div>
-                                <div>
+                                    onBlur={() => handleEdit(item.id)}
+                                />
+                                <div className="ms-1">
                                     <Trash 
-                                        onClick={() => handleDelete(value.id)}
+                                        onClick={() => handleDelete(item.id)}
                                         style={{
                                             cursor: 'pointer'
                                         }}
