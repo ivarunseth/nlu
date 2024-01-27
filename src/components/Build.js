@@ -307,7 +307,7 @@ const Build = () => {
                                     <Button
                                         variant="light"
                                         onClick={handleTrain}
-                                        disabled={labels.reduce((prev, next) => prev + next.utterances_count, 0) === 0}
+                                        disabled={labels.length < 2 || labels.reduce((prev, next) => prev + next.utterances_count, 0) === 0}
                                         style={{
                                             border: '1px solid #212529'
                                         }}
