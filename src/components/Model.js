@@ -1,5 +1,5 @@
 import { Container, Nav } from 'react-bootstrap';
-import { Tools, ClockHistory, ClipboardCheck, RocketTakeoff, Activity } from 'react-bootstrap-icons';
+import { Translate, ClockHistory, ClipboardCheck, RocketTakeoff, Activity } from 'react-bootstrap-icons';
 import { Routes, Route, Link } from 'react-router-dom';
 import { ModelProvider } from '../contexts/ModelContext';
 import { SocketProvider } from '../contexts/SocketContext';
@@ -18,7 +18,7 @@ const Model = () => {
                         as={Link}
                         to='build'
                     >
-                        <Tools />&nbsp;Build
+                        <Translate />&nbsp;Build
                     </Nav.Link>
                 </Nav.Item>
                 <Nav.Item>
