@@ -360,16 +360,16 @@ class Training(db.Model):
             task = self.task
             training_dict.update({
                 'status': task.status,
-                'result': task.result if not task.failed() else task.backend.prepare_exception(task.result),
-                'traceback': task.traceback,
-                'children': task.children,
                 'date_done': task.date_done.replace(tzinfo=timezone.utc).astimezone(tz=None).strftime('%d/%m/%Y - %H:%M:%S') if task.date_done else None})
             if extended:
                 training_dict.update({
                     'name': task.name,
                     'args': task.args,
                     'kwargs': task.kwargs,
+                    'result': task.result if not task.failed() else task.backend.prepare_exception(task.result),
+                    'traceback': task.traceback,
                     'worker': task.worker,
+                    'children': task.children,
                     'retries': task.retries,
                     'queue': task.queue})
         return training_dict
