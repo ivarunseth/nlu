@@ -13,7 +13,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
 from . import db
-from .tasks import training
+from .backend.tasks import training
 from .utils import timestamp, format_timestamp, allowed_file
 
 
@@ -304,10 +304,6 @@ class Training(db.Model):
     @property
     def task(self):
         return training.text_classification.AsyncResult(self.task_id)
-    
-    @property
-    def status(self):
-        return self.task.status
 
     @property
     def path(self):
@@ -327,12 +323,12 @@ class Training(db.Model):
         X, y = [], []
         for label in self.model.labels.order_by(Label.created_at.desc()).all():
             for utterance in label.utterances.order_by(Utterance.id.desc()).all():
-                if utterance.text == '':
-                    continue
                 X.append(utterance.text)
                 y.append(label.name)
         filepath = os.path.join(current_app.config['MODELS_DIRECTORY'], self.path)
-        task = training.text_classification.apply_async(args=(X, y, filepath,), countdown=3)
+        task = training.text_classification.apply_async(args=(X, y, filepath,), 
+                                                        countdown=3,
+                                                        queue='training')
         self.task_id = task.id
         return task
     
