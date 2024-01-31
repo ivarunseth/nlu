@@ -45,7 +45,7 @@ def create_training(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
     if model is None:
         abort(404, 'Model not found: %s' % modelId)
-    if model.training and model.training.status in states.UNREADY_STATES:
+    if model.training and model.training.task.status in states.UNREADY_STATES:
         abort(400, 'Training is already in progress')
     training = Training.create(model)
     db.session.add(training)
