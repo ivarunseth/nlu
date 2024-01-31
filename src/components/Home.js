@@ -25,6 +25,7 @@ const Home = () => {
     const [submitting, setSubmitting] = useState(false);
     const [page, setPage] = useState(1);
     const itemsPerPage = 7;
+    const maxVisiblePages =5;
 
     const handleOpenCreateForm = () => {
         setShowCreateForm(true);
@@ -332,14 +333,18 @@ const Home = () => {
                             onClick={() => setPage((prevPage) => Math.max(prevPage - 1, 1))}
                             disabled={page === 1}
                         />
-                        {Array.from({ length: Math.ceil(filter.length / itemsPerPage) }, (_, index) => (
-                            <Pagination.Item
-                                key={index + 1}
-                                active={index + 1 === page}
-                                onClick={() => setPage(index + 1)}
-                            >
-                                {index + 1}
-                            </Pagination.Item>
+                        {[...Array(Math.ceil(filter.length / itemsPerPage))].map((_, i) => (
+                            (i === 0 || i === Math.ceil(filter.length / itemsPerPage) - 1 || (i >= page - Math.floor(maxVisiblePages / 2) && i <= page + Math.floor(maxVisiblePages / 2))) ? (
+                                <Pagination.Item
+                                    key={i + 1}
+                                    active={i + 1 === page}
+                                    onClick={() => setPage(i + 1)}
+                                >
+                                    {i + 1}
+                                </Pagination.Item>
+                            ) : (i === page - Math.floor(maxVisiblePages / 2) - 1 || i === page + Math.floor(maxVisiblePages / 2) + 1 ?
+                                <Pagination.Ellipsis key={`ellipsis-${i}`} /> : null
+                            )
                         ))}
                         <Pagination.Next
                             onClick={() => setPage((prevPage) => Math.min(prevPage + 1, Math.ceil(filter.length / itemsPerPage)))}

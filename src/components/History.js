@@ -24,6 +24,7 @@ const History = () => {
     const [submitting, setSubmitting] = useState(false);
     const [page, setPage] = useState(1);
     const itemsPerPage = 5;
+    const maxVisiblePages = 5;
 
     const handleDownload = async (training) => {
         try {
@@ -261,14 +262,18 @@ const History = () => {
                             onClick={() => setPage((prevPage) => Math.max(prevPage - 1, 1))}
                             disabled={page === 1}
                         />
-                        {Array.from({ length: Math.ceil(filter.length / itemsPerPage) }, (_, index) => (
-                            <Pagination.Item
-                                key={index + 1}
-                                active={index + 1 === page}
-                                onClick={() => setPage(index + 1)}
-                            >
-                                {index + 1}
-                            </Pagination.Item>
+                        {[...Array(Math.ceil(filter.length / itemsPerPage))].map((_, i) => (
+                            (i === 0 || i === Math.ceil(filter.length / itemsPerPage) - 1 || (i >= page - Math.floor(maxVisiblePages / 2) && i <= page + Math.floor(maxVisiblePages / 2))) ? (
+                                <Pagination.Item
+                                    key={i + 1}
+                                    active={i + 1 === page}
+                                    onClick={() => setPage(i + 1)}
+                                >
+                                    {i + 1}
+                                </Pagination.Item>
+                            ) : (i === page - Math.floor(maxVisiblePages / 2) - 1 || i === page + Math.floor(maxVisiblePages / 2) + 1 ?
+                                <Pagination.Ellipsis key={`ellipsis-${i}`} /> : null
+                            )
                         ))}
                         <Pagination.Next
                             onClick={() => setPage((prevPage) => Math.min(prevPage + 1, Math.ceil(filter.length / itemsPerPage)))}
@@ -281,20 +286,34 @@ const History = () => {
                 <Modal.Header closeButton>
                     <Modal.Title>Classification Report</Modal.Title>
                 </Modal.Header>
-                <Modal.Body>
-                    <pre>
-                        {result}
-                    </pre>
+                <Modal.Body
+                    style={{
+                        maxHeight: '50vh',
+                        overflowY: 'scroll'
+                    }}
+                >
+                    <div className="d-flex justify-content-center align-items-center">
+                        <pre>
+                            {result}
+                        </pre>
+                    </div>
                 </Modal.Body>
             </Modal>
             <Modal size="lg" centered show={showTraceback} onHide={handleCloseTraceback}>
                 <Modal.Header closeButton>
                     <Modal.Title>Traceback</Modal.Title>
                 </Modal.Header>
-                <Modal.Body>
-                    <pre>
-                        {traceback}
-                    </pre>
+                <Modal.Body
+                    style={{
+                        maxHeight: '50vh',
+                        overflowY: 'scroll'
+                    }}
+                >
+                    <div className="d-flex justify-content-center align-items-center">
+                        <pre>
+                            {traceback}
+                        </pre>    
+                    </div>
                 </Modal.Body>
             </Modal>
             <Modal centered show={showDeleteConfirmation} onHide={handleCloseDeleteConfirmation}>
