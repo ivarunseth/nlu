@@ -1,11 +1,13 @@
-from flask import g
 from flask_socketio import emit, join_room, leave_room
 from flask_socketio.namespace import Namespace
 
+from celery.result import AsyncResult
+
 from .auth import verify_token
+from .backend import worker
 
 
-class Training(Namespace):
+class Status(Namespace):
 
     def on_connect(self):
         pass
@@ -20,12 +22,9 @@ class Training(Namespace):
         leave_room(room)
 
     def on_status(self, data):
-        if not verify_token(data['token']):
+        if not 'task_id' in data:
             return
-        model = g.current_user.models.filter_by(id=data['model_id']).first()
-        if model is None:
+        task = AsyncResult(data['task_id'], app=worker)
+        if task is None:
             return
-        training = model.trainings.filter_by(task_id=data['task_id']).first()
-        if training is None:
-            return
-        emit('status', {'status': training.task.status, 'task_id': training.task_id}, room=training.task_id, namespace='/training')
+        emit('status', {'status': task.status, 'task_id': task.id}, room=task.id, namespace='/status')
