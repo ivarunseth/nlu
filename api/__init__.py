@@ -7,7 +7,7 @@ from flask_socketio import SocketIO
 
 from sqlalchemy import MetaData
 
-from celery import Celery
+from redis import StrictRedis
 
 from .config import flask_config
 
@@ -21,7 +21,13 @@ metadata = MetaData(naming_convention={
 })
 db = SQLAlchemy(metadata=metadata)
 migrate = Migrate()
-socketio = SocketIO(cors_allowed_origins="*", engineio_logger=True)
+socketio = SocketIO(cors_allowed_origins='*',
+                    channel='socketio', 
+                    logger=False,
+                    engineio_logger=True)
+redis = StrictRedis(host=os.environ.get('REDIS_HOST', 'localhost'), 
+                    port=os.environ.get('REDIS_POST', '6379'), 
+                    db=os.environ.get('REDIS_DB', '0'))
 
 
 from . import models
@@ -34,39 +40,10 @@ def create_application(config_name=os.environ.get('FLASK_ENV', 'development')):
     db.init_app(app)
     migrate.init_app(app, db, directory='./migrations')
     
-    socketio.init_app(app,
-                      message_queue=app.config['SOCKETIO_MESSAGE_QUEUE'])
+    socketio.init_app(app, message_queue=app.config['SOCKETIO_MESSAGE_QUEUE'])
     
-    from .events import Training
-    socketio.on_namespace(Training('/training'))
-
-    celery = Celery(app.import_name)
-    celery.conf.update(app.config['CELERY_CONFIG'])
-    
-    class ContextTask(celery.Task):
-        def __call__(self, *args, **kwargs):
-            with app.app_context():
-                return self.run(*args, **kwargs)
-        def to_dict(self):
-            return 
-        def send_status(self):
-            socketio.emit('status', 
-                          {'status': self.AsyncResult(self.request.id).status, 'task_id': self.request.id}, 
-                          room=self.request.id, 
-                          namespace='/training')
-        def before_start(self, *args, **kwargs):
-            super().before_start(*args, **kwargs)
-            self.send_status()
-        def on_success(self, *args, **kwargs):
-            super().on_success(*args, **kwargs)
-            self.send_status()
-        def on_failure(self, *args, **kwargs):
-            super().on_failure(*args, **kwargs)
-            self.send_status()
-
-    celery.Task = ContextTask
-
-    celery.set_default()
+    from .events import Status
+    socketio.on_namespace(Status('/status'))
 
     from .main import main as main_blueprint
     app.register_blueprint(main_blueprint, url_prefix='/api')
@@ -74,4 +51,4 @@ def create_application(config_name=os.environ.get('FLASK_ENV', 'development')):
     from .blueprints import api as api_blueprint
     app.register_blueprint(api_blueprint, url_prefix='/api')
 
-    return app, celery
+    return app
