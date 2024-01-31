@@ -2,7 +2,7 @@ from flask import Blueprint
 
 api = Blueprint('api', __name__)
 
-from . import users, tokens, models, labels, utterances, trainings # noqa
+from . import users, tokens, models, labels, utterances, trainings, prediction # noqa
 
 
 @api.errorhandler(400)
