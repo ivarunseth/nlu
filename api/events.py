@@ -1,4 +1,5 @@
-from flask_socketio import emit, join_room, leave_room
+from flask import request
+from flask_socketio import emit, join_room, leave_room, ConnectionRefusedError
 from flask_socketio.namespace import Namespace
 
 from celery.result import AsyncResult
@@ -9,8 +10,15 @@ from .backend import worker
 
 class Status(Namespace):
 
-    def on_connect(self):
-        pass
+    def on_connect(self, auth):
+        if 'Authorization' in request.headers:
+            token = request.headers.get('Authorization').split()[1]
+        elif auth and 'token' in auth:
+            token = auth.get('token')
+        else:
+            raise ConnectionRefusedError('Authorization required')
+        if not verify_token(token):
+            raise ConnectionRefusedError('token is invalid or expired')
 
     def on_disconnect(self):
         pass
