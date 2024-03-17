@@ -45,10 +45,17 @@ def create_application(config_name=os.environ.get('FLASK_ENV', 'development')):
     from .events import Status
     socketio.on_namespace(Status('/status'))
 
-    from .main import main as main_blueprint
-    app.register_blueprint(main_blueprint, url_prefix='/api')
-
-    from .blueprints import api as api_blueprint
+    from .blueprints import api_blueprint
     app.register_blueprint(api_blueprint, url_prefix='/api')
 
     return app
+
+
+def create_prediction_server(config_name=os.environ.get('FLASK_ENV', 'development')):
+    prediction_server = Flask('Prediction Server')
+    prediction_server.config.from_object(flask_config[config_name])
+
+    from .blueprints import nlu_blueprint
+    prediction_server.register_blueprint(nlu_blueprint, url_prefix='/nlu')
+
+    return prediction_server

@@ -1,8 +1,8 @@
 from flask import request, g, abort
 
-from .. import db
-from ..auth import token_auth
-from ..models import Utterance
+from ... import db
+from ...auth import token_auth
+from ...models import Utterance
 
 from . import api
 

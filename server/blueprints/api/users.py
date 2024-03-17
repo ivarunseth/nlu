@@ -1,8 +1,8 @@
 from flask import request, abort, g
 
-from .. import db
-from ..auth import token_auth, token_optional_auth
-from ..models import User
+from ... import db
+from ...auth import token_auth, token_optional_auth
+from ...models import User
 
 from . import api
 

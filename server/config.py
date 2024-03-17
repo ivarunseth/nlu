@@ -24,7 +24,6 @@ class ProductionConfig(Config):
 class TestingConfig(Config):
     TESTING = True
     SERVER_NAME = 'localhost'
-    CELERY_CONFIG = {'task_always_eager': True}
 
 
 flask_config = {

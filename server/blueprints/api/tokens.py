@@ -1,7 +1,7 @@
-from flask import jsonify, g
+from flask import g
 
-from .. import db
-from ..auth import basic_auth, token_auth
+from ... import db
+from ...auth import basic_auth, token_auth
 
 from . import api
 

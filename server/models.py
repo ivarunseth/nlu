@@ -13,7 +13,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
 from . import db
-from .backend.tasks import training
+from .backend import worker, WorkerResult
+from .backend.tasks import prediction, training
 from .utils import timestamp, format_timestamp, allowed_file
 
 
@@ -303,7 +304,7 @@ class Training(db.Model):
 
     @property
     def task(self):
-        return training.text_classification.AsyncResult(self.task_id)
+        return WorkerResult(self.task_id, app=worker)
 
     @property
     def path(self):
@@ -313,22 +314,20 @@ class Training(db.Model):
     def create(model):
         training = Training()
         if model.trainings.count() > 0:
-            training.version = max([round(float(t.version), 1) for t in model.trainings.all()]) + 0.1
+            training.version = round(max([float(t.version) for t in model.trainings.all()]) + 0.1, 1)
         else:
             training.version = 0.1
         training.model = model
         return training
     
-    def start(self):
+    def start(self, **kwargs):
         X, y = [], []
         for label in self.model.labels.order_by(Label.created_at.desc()).all():
             for utterance in label.utterances.order_by(Utterance.id.desc()).all():
                 X.append(utterance.text)
                 y.append(label.name)
         filepath = os.path.join(current_app.config['MODELS_DIRECTORY'], self.path)
-        task = training.text_classification.apply_async(args=(X, y, filepath,), 
-                                                        countdown=3,
-                                                        queue='training')
+        task = training.text_classification.apply_async(args=(X, y, filepath,), kwargs=kwargs, countdown=3)
         self.task_id = task.id
         return task
     
@@ -345,7 +344,6 @@ class Training(db.Model):
         training_dict = {
             'id': self.id,
             'model_id': self.model_id,
-            'task_id': self.task_id,
             'version': self.version,
             'created_at': format_timestamp(self.created_at),
             'updated_at': format_timestamp(self.updated_at),
@@ -356,18 +354,6 @@ class Training(db.Model):
         }
         if self.task_id:
             task = self.task
-            training_dict.update({
-                'status': task.status,
-                'date_done': task.date_done.replace(tzinfo=timezone.utc).astimezone(tz=None).strftime('%d/%m/%Y - %H:%M:%S') if task.date_done else None})
-            if extended:
-                training_dict.update({
-                    'name': task.name,
-                    'args': task.args,
-                    'kwargs': task.kwargs,
-                    'result': task.result if not task.failed() else task.backend.prepare_exception(task.result),
-                    'traceback': task.traceback,
-                    'worker': task.worker,
-                    'children': task.children,
-                    'retries': task.retries,
-                    'queue': task.queue})
+            if task:
+                training_dict.update(task.to_dict(extended=extended))
         return training_dict

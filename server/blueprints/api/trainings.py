@@ -3,11 +3,11 @@ import os
 from flask import request, g, current_app, abort, send_file
 from celery import states
 
-from .. import db
+from ... import db
 
-from ..auth import token_auth
-from ..models import Training
-from ..utils import zip_file
+from ...auth import token_auth
+from ...models import Training
+from ...utils import zip_file
 
 from . import api
 
@@ -31,8 +31,7 @@ def get_training(modelId, trainingId):
     if training is None:
         abort(404, 'Training not found: %s' % trainingId)
     if request.args.get('format', 'json') == 'zip':
-        path = os.path.join(current_app.config['MODELS_DIRECTORY'], training.path)
-        return send_file(zip_file(path),
+        return send_file(zip_file(os.path.join(current_app.config['MODELS_DIRECTORY'], training.path)),
                          mimetype='application/zip',
                          as_attachment=True,
                          download_name=f'{model.name}_{training.version}.zip')
@@ -49,7 +48,8 @@ def create_training(modelId):
         abort(400, 'Training is already in progress')
     training = Training.create(model)
     db.session.add(training)
-    training.start()
+    parameters = request.get_json() or {}
+    training.start(**parameters)
     db.session.commit()
     return model.to_dict(), 201
 

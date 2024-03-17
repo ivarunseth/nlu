@@ -1,11 +1,12 @@
 import os
 
+from datetime import timezone
+
 from kombu import Queue, Exchange
 
 from celery import Celery, Task
 from celery.exceptions import Ignore
 from celery.result import AsyncResult
-from celery.utils.log import get_logger
 
 from flask_socketio import SocketIO
 
@@ -15,29 +16,27 @@ from redis.exceptions import LockError
 from .. import redis
 
 
-logger = get_logger(__name__)
-
-
 class WorkerConfig(object):
     
     broker_url = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
     broker_connection_retry_on_startup = True
     result_backend = os.environ.get('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
     result_extended = True
-    include = ['api.backend.tasks.training', 'api.backend.tasks.classification']
+    result_persistent = True
+    include = ['server.backend.tasks.training', 'server.backend.tasks.prediction']
     task_routes = {
-        'api.backend.tasks.training.*': {
+        'server.backend.tasks.training.*': {
             'queue': 'training',
             'routing': 'training'
         },
-        'api.backend.tasks.classification.*': {
-            'queue': 'classification',
-            'routing_key': 'classification'
+        'server.backend.tasks.prediction.*': {
+            'queue': 'prediction',
+            'routing_key': 'prediction'
         }
     }
     task_queues = (
         Queue('training', Exchange('training', type='direct'), routing_key='training', durable=True),
-        Queue('classification', Exchange('classification', type='direct'), routing_key='classification', durable=True)
+        Queue('prediction', Exchange('prediction', type='direct'), routing_key='prediction', durable=True)
     )
     accept_content = ['json', 'application/json']
     task_serializer = 'json'
@@ -66,6 +65,26 @@ class WorkerResult(AsyncResult):
             state='ABORTED',
             result=None,
             traceback=None)
+        
+    def to_dict(self, extended=False):
+        task_dict = {
+            'task_id': self.task_id,
+            'name': self.name,
+            'status': self.status,
+            'worker': self.worker,
+            'children': self.children,
+            'date_done': self.date_done.replace(tzinfo=timezone.utc).astimezone(tz=None).strftime('%d/%m/%Y - %H:%M:%S') if self.date_done else None,
+            'retries': self.retries,
+            'queue': self.queue,
+            'traceback': self.traceback
+        }
+        if extended:
+            task_dict.update({
+                'args': self.args,
+                'kwargs': self.kwargs,
+                'result': self.backend.prepare_exception(self.result) if self.failed() else self.result
+            })
+        return task_dict
 
 
 class WorkerTask(Task):
@@ -118,12 +137,10 @@ class WorkerTask(Task):
             if not acquired:
                 raise LockError('Task is already running in another worker')
             return self.run(*args, **kwargs)
-        except LockError as e:
-            logger.error(e)
+        except LockError:
             raise Ignore
-        except Exception as e:
-            logger.error(e)
-            raise e
+        except:
+            raise
         finally:
             if acquired:
                 lock.release()
