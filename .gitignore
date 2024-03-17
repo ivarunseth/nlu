@@ -3,6 +3,8 @@
 # dependencies
 /venv
 /data/models
+/data/examples
+/logs
 /instance
 *.pyc
 /node_modules
