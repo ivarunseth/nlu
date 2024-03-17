@@ -1,6 +1,6 @@
 import { useContext, useEffect, useState } from "react";
 import { Alert, Col, Row, Form, ListGroup, Pagination } from "react-bootstrap";
-import { Trash } from "react-bootstrap-icons";
+import { Trash, InfoCircle } from "react-bootstrap-icons";
 import { UserContext } from "../contexts/UserContext";
 import axios from "axios";
 import { useParams } from "react-router-dom";
@@ -135,7 +135,7 @@ const Utterances = () => {
                     <Form>
                         <Form.Control
                             type="text"
-                            placeholder="search or enter an utterance..."
+                            placeholder="enter or search an utterance..."
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             onKeyPress={(e) => {
@@ -151,9 +151,18 @@ const Utterances = () => {
             <Row className="mt-4">
                 <Col>
                     <ListGroup>
-                        {data.map((item, index) => (
+                        {utterances.length > 0 ? search !== '' && filter.length === 0 ? (
                             <ListGroup.Item 
-                                key={item.id}
+                                className="d-flex justify-content-center align-items-center"
+                                style={{
+                                    minHeight: '50vh'
+                                }}
+                            >
+                                <strong><i class="bi bi-ban" />&nbsp;could not find the model you are looking for.</strong>
+                            </ListGroup.Item>
+                            ) : data.map((utterance, index) => (
+                            <ListGroup.Item 
+                                key={utterance.id}
                                 className="d-flex justify-content-between align-items-start"
                             >
                                 <div className="me-1">
@@ -163,19 +172,28 @@ const Utterances = () => {
                                     className="me-auto px-1"
                                     contentEditable
                                     suppressContentEditableWarning
-                                    dangerouslySetInnerHTML={{ __html: item.text }}
-                                    onBlur={(e) => handleEdit(item.id, e.currentTarget.textContent)}
+                                    dangerouslySetInnerHTML={{ __html: utterance.text }}
+                                    onBlur={(e) => handleEdit(utterance.id, e.currentTarget.textContent)}
                                 />
                                 <div className="ms-1">
                                     <Trash 
-                                        onClick={() => handleDelete(item.id)}
+                                        onClick={() => handleDelete(utterance.id)}
                                         style={{
                                             cursor: 'pointer'
                                         }}
                                     />
                                 </div>
                             </ListGroup.Item>
-                        ))}
+                        )) : (
+                            <ListGroup.Item 
+                                className="d-flex justify-content-center align-items-center"
+                                style={{
+                                    minHeight: '50vh'
+                                }}
+                            >
+                                <strong><InfoCircle />&nbsp;looks like you have no utterances...</strong>
+                            </ListGroup.Item>
+                        )}
                     </ListGroup>
                     <br/>
                     {filter.length > itemsPerPage &&

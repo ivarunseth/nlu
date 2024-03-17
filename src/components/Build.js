@@ -1,6 +1,6 @@
 import React, { useContext, useState, useEffect } from "react";
-import { Alert, Row, Col, Dropdown, Form, InputGroup, ButtonToolbar, ButtonGroup, Button, Table, Pagination, Modal, Spinner } from "react-bootstrap";
-import { PlusLg, Download, Pen, Trash, InfoCircle } from "react-bootstrap-icons";
+import { Alert, Row, Col, Dropdown, Form, FormGroup, InputGroup, ButtonToolbar, ButtonGroup, Button, Table, Pagination, Modal, Spinner, OverlayTrigger, Popover } from "react-bootstrap";
+import { PlusLg, Sliders, Download, Pen, Trash, InfoCircle, QuestionCircle } from "react-bootstrap-icons";
 import { Link, useParams } from "react-router-dom";
 import { UserContext } from "../contexts/UserContext";
 import { ModelContext } from "../contexts/ModelContext";
@@ -18,6 +18,19 @@ const Build = () => {
 
     const [alert, setAlert] = useState(null);
     const [search, setSearch] = useState('');
+    const [paramters, setParameters] = useState({
+        test_split: 0.1,
+        validation_split: 0.1,
+        epochs: 200,
+        batch_size: 32,
+        embedding_dims: 64,
+        dropout: 0.2,
+        early_stopping: true,
+        monitor: 'val_loss',
+        patience: 10,
+        pruning: true,
+        save_format: 'tf'
+    })
     const [labels, setLabels] = useState([]);
     const [filter, setFilter] = useState([]);
     const [data, setData] = useState([]);
@@ -28,11 +41,12 @@ const Build = () => {
     const [showCreateForm, setShowCreateForm] = useState(false);
     const [showEditForm, setShowEditForm] = useState(false);
     const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
+    const [showParameters, setShowParameters] = useState(false);
     const [currentLabel, setCurrentLabel] = useState(null);
     const [validated, setValidated] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [page, setPage] = useState(1);
-    const itemsPerPage = 5;
+    const itemsPerPage = 7;
     const maxVisiblePages = 5;
 
     const handleOpenCreateForm = () => {
@@ -82,7 +96,7 @@ const Build = () => {
         try {
             const response = await axios.post(
                 `/api/models/${modelId}/trainings`,
-                {},
+                paramters,
                 {
                     headers: {
                         "Authorization": `Bearer ${user.token}`
@@ -177,7 +191,7 @@ const Build = () => {
         try {
             setSubmitting(true);
             const response = await axios.delete(
-                `/api/models/${model.id}/labels/${currentLabel.id}`,
+                `/api/models/${modelId}/labels/${currentLabel.id}`,
                 {
                     headers: {
                         "Authorization": `Bearer ${user.token}`
@@ -271,46 +285,60 @@ const Build = () => {
                                 <PlusLg />&nbsp;create label
                             </Button>
                         </ButtonGroup>
+                        {status === 'PENDING' || status === 'RECEIVED' ?
                         <ButtonGroup>
-                            {status === 'PENDING' || status === 'RECEIVED' ?
-                                <Button
-                                    variant="light"
-                                    disabled
-                                    style={{
-                                        border: '1px solid #212529'
-                                    }}
-                                >
-                                    <Spinner
-                                        animation="border"
-                                        size="sm"
-                                    />
-                                    &nbsp;pending...
-                                </Button>
-                                : status === 'STARTED' ?
-                                    <Button
-                                        variant="light"
-                                        disabled
-                                        style={{
-                                            border: '1px solid #212529'
-                                        }}
-                                    >
-                                        <Spinner
-                                            animation="grow"
-                                            size="sm"
-                                        />
-                                        &nbsp;training...
-                                    </Button> :
-                                    <Button
-                                        variant="light"
-                                        onClick={handleTrain}
-                                        disabled={labels.length < 2 || labels.reduce((prev, next) => prev + next.utterances_count, 0) === 0}
-                                        style={{
-                                            border: '1px solid #212529'
-                                        }}
-                                    >
-                                        <i className="bi bi-vignette" />&nbsp;train
-                                    </Button>}
-                        </ButtonGroup>
+                            <Button
+                                variant="light"
+                                disabled
+                                style={{
+                                    border: '1px solid #212529'
+                                }}
+                            >
+                                <Spinner
+                                    animation="border"
+                                    size="sm"
+                                />
+                                &nbsp;pending...
+                            </Button>
+                        </ButtonGroup> :
+                        status === 'STARTED' ?
+                        <ButtonGroup>
+                            <Button
+                                variant="light"
+                                disabled
+                                style={{
+                                    border: '1px solid #212529'
+                                }}
+                            >
+                                <Spinner
+                                    animation="grow"
+                                    size="sm"
+                                />
+                                &nbsp;training...
+                            </Button>
+                        </ButtonGroup> :
+                        <ButtonGroup>
+                            <Button
+                                variant="light"
+                                disabled={labels.length < 2 || labels.reduce((prev, next) => prev + next.utterances_count, 0) === 0}
+                                style={{
+                                    border: '1px solid #212529'
+                                }}
+                                onClick={() => setShowParameters(true)}
+                            >
+                                <Sliders />
+                            </Button>
+                            <Button
+                                variant="light"
+                                disabled={labels.length < 2 || labels.reduce((prev, next) => prev + next.utterances_count, 0) === 0}
+                                onClick={handleTrain}
+                                style={{
+                                    border: '1px solid #212529'
+                                }}
+                            >
+                                train
+                            </Button>
+                        </ButtonGroup>}
                     </ButtonToolbar>
                 </Col>
                 <Col>
@@ -413,29 +441,29 @@ const Build = () => {
                         </tbody>
                     </Table>
                     {filter.length > itemsPerPage &&
-                    <Pagination size='sm'>
-                        <Pagination.Prev
-                            onClick={() => setPage((prevPage) => Math.max(prevPage - 1, 1))}
-                            disabled={page === 1}
-                        />
-                        {[...Array(Math.ceil(filter.length / itemsPerPage))].map((_, i) => (
-                            (i === 0 || i === Math.ceil(filter.length / itemsPerPage) - 1 || (i >= page - Math.floor(maxVisiblePages / 2) && i <= page + Math.floor(maxVisiblePages / 2))) ? (
-                                <Pagination.Item
-                                    key={i + 1}
-                                    active={i + 1 === page}
-                                    onClick={() => setPage(i + 1)}
-                                >
-                                    {i + 1}
-                                </Pagination.Item>
-                            ) : (i === page - Math.floor(maxVisiblePages / 2) - 1 || i === page + Math.floor(maxVisiblePages / 2) + 1 ?
-                                <Pagination.Ellipsis key={`ellipsis-${i}`} /> : null
-                            )
-                        ))}
-                        <Pagination.Next
-                            onClick={() => setPage((prevPage) => Math.min(prevPage + 1, Math.ceil(filter.length / itemsPerPage)))}
-                            disabled={page === Math.ceil(filter.length / itemsPerPage)}
-                        />
-                    </Pagination>}
+                        <Pagination size='sm'>
+                            <Pagination.Prev
+                                onClick={() => setPage((prevPage) => Math.max(prevPage - 1, 1))}
+                                disabled={page === 1}
+                            />
+                            {[...Array(Math.ceil(filter.length / itemsPerPage))].map((_, i) => (
+                                (i === 0 || i === Math.ceil(filter.length / itemsPerPage) - 1 || (i >= page - Math.floor(maxVisiblePages / 2) && i <= page + Math.floor(maxVisiblePages / 2))) ? (
+                                    <Pagination.Item
+                                        key={i + 1}
+                                        active={i + 1 === page}
+                                        onClick={() => setPage(i + 1)}
+                                    >
+                                        {i + 1}
+                                    </Pagination.Item>
+                                ) : (i === page - Math.floor(maxVisiblePages / 2) - 1 || i === page + Math.floor(maxVisiblePages / 2) + 1 ?
+                                    <Pagination.Ellipsis key={`ellipsis-${i}`} /> : null
+                                )
+                            ))}
+                            <Pagination.Next
+                                onClick={() => setPage((prevPage) => Math.min(prevPage + 1, Math.ceil(filter.length / itemsPerPage)))}
+                                disabled={page === Math.ceil(filter.length / itemsPerPage)}
+                            />
+                        </Pagination>}
                 </Col>
             </Row>
             <Modal centered show={showCreateForm} onHide={handleCloseCreateForm}>
@@ -505,6 +533,315 @@ const Build = () => {
                                 )}
                             </Button>
                         </div>
+                    </Form>
+                </Modal.Body>
+            </Modal>
+            <Modal size="lg" centered show={showParameters} onHide={() => setShowParameters(false)}>
+                <Modal.Header closeButton>
+                    <Modal.Title>
+                        Parameters&nbsp;
+                        <OverlayTrigger
+                            placement='bottom'
+                            overlay={
+                                <Popover>
+                                    <Popover.Header as="h3"><InfoCircle />&nbsp;Parameters</Popover.Header>
+                                    <Popover.Body>
+                                        Configurations set before training which influence the learning process. <strong>Only saved after training is completed successfully.</strong>
+                                    </Popover.Body>
+                                </Popover>
+                            }
+                        >
+                            <QuestionCircle />
+                        </OverlayTrigger>
+                    </Modal.Title>
+                </Modal.Header>
+                <Modal.Body>
+                    <Form>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm="4">
+                                    test split&nbsp;
+                                    <OverlayTrigger
+                                        placement='bottom'
+                                        overlay={
+                                            <Popover>
+                                                <Popover.Header as="h3"><InfoCircle />&nbsp;test split</Popover.Header>
+                                                <Popover.Body>
+                                                    The division of dataset used for evaluating the performance of model.
+                                                </Popover.Body>
+                                            </Popover>
+                                        }
+                                    >
+                                        <QuestionCircle />
+                                    </OverlayTrigger>
+                            </Form.Label>
+                            <Col sm="6">
+                                <Form.Range
+                                    min={0.0}
+                                    max={1.0}
+                                    step={0.05}
+                                    value={paramters.test_split}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, test_split: parseFloat(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                            <Col sm="2">
+                                <Form.Control
+                                    type='number'
+                                    min={0.0}
+                                    max={1.0}
+                                    step={0.05}
+                                    value={paramters.test_split}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, test_split: parseFloat(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm="4">
+                                validation split&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm="6">
+                                <Form.Range
+                                    min={0.0}
+                                    max={1.0}
+                                    step={0.05}
+                                    value={paramters.validation_split}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, validation_split: parseFloat(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                            <Col sm="2">
+                                <Form.Control
+                                    type='number'
+                                    min={0.0}
+                                    max={1.0}
+                                    step={0.05}
+                                    value={paramters.validation_split}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, validation_split: parseFloat(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm="4">
+                                epochs&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm="6">
+                                <Form.Range
+                                    min={1}
+                                    max={1000}
+                                    step={1}
+                                    value={paramters.epochs}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, epochs: parseInt(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                            <Col sm="2">
+                                <Form.Control
+                                    type='number'
+                                    min={1}
+                                    max={1000}
+                                    step={1}
+                                    value={paramters.epochs}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, epochs: parseInt(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm="4">
+                                batch size&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm="6">
+                                <Form.Range
+                                    min={4}
+                                    max={128}
+                                    step={4}
+                                    value={paramters.batch_size}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, batch_size: parseInt(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                            <Col sm="2">
+                                <Form.Control
+                                    type='number'
+                                    min={4}
+                                    max={128}
+                                    step={4}
+                                    value={paramters.batch_size}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, batch_size: parseInt(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm="4">
+                                embedding dimensions&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm="6">
+                                <Form.Range
+                                    min={32}
+                                    max={256}
+                                    step={8}
+                                    value={paramters.embedding_dims}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, embedding_dims: parseInt(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                            <Col sm="2">
+                                <Form.Control
+                                    type='number'
+                                    min={32}
+                                    max={256}
+                                    step={8}
+                                    value={paramters.embedding_dims}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, embedding_dims: parseInt(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm="4">
+                                dropout&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm="6">
+                                <Form.Range
+                                    min={0.0}
+                                    max={1.0}
+                                    step={0.05}
+                                    value={paramters.dropout}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, dropout: parseFloat(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                            <Col sm="2">
+                                <Form.Control
+                                    type='number'
+                                    min={0.0}
+                                    max={1.0}
+                                    step={0.05}
+                                    value={paramters.dropout}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, dropout: parseFloat(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm="4">
+                                early stopping&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm='8'>
+                                <Form.Check
+                                    type='switch'
+                                    onChange={(e) => { setParameters({ ...paramters, early_stopping: e.target.checked }) }}
+                                    checked={paramters.early_stopping}
+                                />
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm='4'>
+                                monitor&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm='3'>
+                                <Form.Select
+                                    disabled={!paramters.early_stopping}
+                                    value={paramters.monitor}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, monitor: e.target.value })
+                                    }}
+                                >
+                                    {labels.length === 2 ? 
+                                        <option value='binary_accuracy'>
+                                            binary accuracy
+                                        </option> : 
+                                        <option value='accuracy'>
+                                            accuracy
+                                        </option>}
+                                    <option value='loss'>loss</option>
+                                    {labels.length === 2 ? 
+                                        <option value='val_binary_accuracy'>
+                                            validation binary accuracy
+                                        </option> : 
+                                        <option value='val_accuracy'>
+                                            validation accuracy
+                                        </option>}
+                                    <option value='val_loss' selected>validation loss</option>
+                                </Form.Select>
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm="4">
+                                patience&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm="6">
+                                <Form.Range
+                                    disabled={!paramters.early_stopping}
+                                    min={1}
+                                    max={50}
+                                    step={1}
+                                    value={paramters.patience}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, patience: parseInt(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                            <Col sm="2">
+                                <Form.Control
+                                    disabled={!paramters.early_stopping}
+                                    type='number'
+                                    min={1}
+                                    max={50}
+                                    step={1}
+                                    value={paramters.patience}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, patience: parseInt(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm="4">
+                                pruning&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm='8'>
+                                <Form.Check
+                                    type='switch'
+                                    onChange={(e) => { setParameters({ ...paramters, pruning: e.target.checked }) }}
+                                    checked={paramters.pruning}
+                                />
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm='4'>
+                                save format&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm='3'>
+                                <Form.Select
+                                    value={paramters.save_format}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, save_format: e.target.value })
+                                    }}
+                                >
+                                    <option value='tf' selected>tf</option>
+                                    <option value='keras'>keras</option>
+                                    <option value='h5'>h5</option>
+                                    <option value='tflite'>tflite</option>
+                                    <option value='onnx'>onnx</option>
+                                </Form.Select>
+                            </Col>
+                        </FormGroup>
                     </Form>
                 </Modal.Body>
             </Modal>

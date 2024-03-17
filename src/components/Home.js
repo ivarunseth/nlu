@@ -1,11 +1,13 @@
 import axios from "axios";
 import React, { useContext, useState, useEffect } from "react";
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Alert, Container, Row, Col, Dropdown, Form, InputGroup, Button, Table, Pagination, Modal, Spinner } from "react-bootstrap";
 import { PlusLg, Download, Pen, Trash, InfoCircle } from "react-bootstrap-icons";
 import { UserContext } from "../contexts/UserContext";
 
 const Home = () => {
+    const navigate = useNavigate();
+    
     const { user } = useContext(UserContext);
 
     const [search, setSearch] = useState('');
@@ -192,8 +194,10 @@ const Home = () => {
                 }
             };
             getModels();
+        } else {
+            navigate('/signin');
         }
-    }, [user])
+    }, [user, navigate])
 
     useEffect(() => {
         if (search !== '') {

@@ -14,8 +14,6 @@ export const UserProvider = ({ children }) => {
             if (storedUser) {
                 setUser(storedUser);
                 navigate('/');
-            } else {
-                navigate('/signin');
             }
         }
     }, [user, navigate]);
