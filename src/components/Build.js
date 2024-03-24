@@ -92,6 +92,10 @@ const Build = () => {
         }
     };
 
+    const handleSendEvent = () => {
+        socket.emit('get', 'Model', '9cfb47318f6c4395b45a0420f5b461d2')
+    }
+
     const handleTrain = async () => {
         try {
             const response = await axios.post(
@@ -208,20 +212,21 @@ const Build = () => {
 
     useEffect(() => {
         if (user && socket && model) {
-            socket.on('status', (data) => {
-                setStatus(data.status);
-                if (data.status === 'SUCCESS' || data.status === 'FAILURE') {
-                    socket.emit('leave', data.task_id);
-                }
+            socket.on('data', (data) => {
+                console.log(data)
+                setStatus(data.object);
+                // if (data.status === 'SUCCESS' || data.status === 'FAILURE') {
+                    // socket.emit('leave', data.task_id);
+                // }
             });
             if (model.training) {
                 if (model.training.status !== 'SUCCESS' && model.training.status !== 'FAILURE') {
                     socket.emit('join', model.training.task_id);
-                    socket.emit('status', {'task_id': model.training.task_id});
+                    socket.emit('get', 'Training', model.training.id);
                 }
             }
             return () => {
-                socket.off('status');
+                socket.off('data');
             };
         }
     }, [user, socket, model])
@@ -283,6 +288,17 @@ const Build = () => {
                                 onClick={handleOpenCreateForm}
                             >
                                 <PlusLg />&nbsp;create label
+                            </Button>
+                        </ButtonGroup>
+                        <ButtonGroup className="me-2">
+                            <Button
+                                variant="light"
+                                style={{
+                                    border: '1px solid #212529'
+                                }}
+                                onClick={handleSendEvent}
+                            >
+                                <PlusLg /> send event
                             </Button>
                         </ButtonGroup>
                         {status === 'PENDING' || status === 'RECEIVED' ?

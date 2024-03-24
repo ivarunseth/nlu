@@ -1,5 +1,5 @@
 import { useContext, useEffect, useState } from "react";
-import { Alert, Button, Col, Row, Form, Spinner, Table, Dropdown, Pagination, Modal } from "react-bootstrap";
+import { Alert, Button, Col, Row, Form, Spinner, Table, Dropdown, Pagination, Modal, Nav } from "react-bootstrap";
 import { InfoCircle, Download, PlusSlashMinus, Book, Bug, Trash, QuestionCircle } from "react-bootstrap-icons";
 import ReactDiffViewer from 'react-diff-viewer';
 import { UserContext } from "../contexts/UserContext";
@@ -17,9 +17,8 @@ const History = () => {
     const [filter, setFilter] = useState([]);
     const [data, setData] = useState([]);
     const [showChanges, setShowChanges] = useState(false);
-    const [result, setResult] = useState(null)
-    const [showResults, setShowResults] = useState(false);
-    const [traceback, setTraceback] = useState(null);
+    const [showReport, setShowReport] = useState(false);
+    const [reportEventKey, setReportEventKey] = useState(1);
     const [showTraceback, setShowTraceback] = useState(false);
     const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
     const [selectedTraining, setSelectedTraining] = useState(null);
@@ -60,23 +59,23 @@ const History = () => {
     };
 
     const handleOpenTraceback = (training) => {
-        setTraceback(training.traceback);
+        setSelectedTraining(training);
         setShowTraceback(true);
     };
 
     const handleCloseTraceback = () => {
-        setTraceback(null);
         setShowTraceback(false);
+        setSelectedTraining(null);
     }
-
-    const handleOpenResults = (training) => {
-        setResult(training.result[2]);
-        setShowResults(true);
+    
+    const handleOpenReport = (training) => {
+        setSelectedTraining(training);
+        setShowReport(true);
     };
 
     const handleCloseResults = () => {
-        setResult(null);
-        setShowResults(false);
+        setShowReport(false);
+        setSelectedTraining(null);
     }
     
     const handleOpenDeleteConfirmation = (training) => {
@@ -85,9 +84,9 @@ const History = () => {
     };
 
     const handleCloseDeleteConfirmation = () => {
-        setSelectedTraining(null);
         setSubmitting(false);
         setShowDeleteConfirmation(false);
+        setSelectedTraining(null);
     }
 
     const handleDelete = async () => {
@@ -182,7 +181,7 @@ const History = () => {
                                 <th>status</th>
                                 <th>date start</th>
                                 <th>date done</th>
-                                <th>accuracy (%)</th>
+                                <th>train/test accuracy (%)</th>
                                 <th>options</th>
                             </tr>
                         </thead>
@@ -205,7 +204,7 @@ const History = () => {
                                     <td>{training.status}</td>
                                     <td>{training.created_at}</td>
                                     <td>{training.date_done}</td>
-                                    <td>{training.status === 'SUCCESS' && (training.result[1] * 100).toFixed(2)}</td>
+                                    <td>{training.status === 'SUCCESS' && `${(training.result[2] * 100).toFixed(2)} / ${(training.result[5] * 100).toFixed(2)}`}</td>
                                     <td>
                                         <Dropdown>
                                             <Dropdown.Toggle size='sm' variant='light'>
@@ -230,7 +229,7 @@ const History = () => {
                                                 </Dropdown.Item>
                                                 <Dropdown.Item 
                                                     disabled={training.status !== 'SUCCESS'}
-                                                    onClick={() => handleOpenResults(training)}
+                                                    onClick={() => handleOpenReport(training)}
                                                 >
                                                     <Book />
                                                     &nbsp;
@@ -318,21 +317,41 @@ const History = () => {
                     />}
                 </Modal.Body>
             </Modal>
-            <Modal centered show={showResults} onHide={handleCloseResults}>
+            <Modal size="lg" centered show={showReport} onHide={handleCloseResults}>
                 <Modal.Header closeButton>
-                    <Modal.Title>Classification Report</Modal.Title>
+                    <Modal.Title>Classification Report&nbsp;<QuestionCircle /></Modal.Title>
                 </Modal.Header>
-                <Modal.Body
-                    style={{
-                        maxHeight: '75vh',
-                        overflowY: 'scroll'
-                    }}
-                >
-                    <div className="d-flex justify-content-center align-items-center">
-                        <pre>
-                            {result}
-                        </pre>
-                    </div>
+                <Modal.Body>
+                    {selectedTraining &&
+                    <>
+                        <Row>
+                            <Col>
+                                <Nav fill variant="underline" defaultActiveKey={reportEventKey}>
+                                    <Nav.Item onClick={() => setReportEventKey(1)}>
+                                        <Nav.Link eventKey={1}>
+                                            Training
+                                        </Nav.Link>
+                                    </Nav.Item>
+                                    <Nav.Item onClick={() => setReportEventKey(2)}>
+                                        <Nav.Link eventKey={2}>
+                                            Testing
+                                        </Nav.Link>
+                                    </Nav.Item>
+                                </Nav>
+                            </Col>
+                        </Row>
+                        <Row
+                            style={{
+                                maxHeight: '50vh',
+                                overflowY: 'scroll'
+                            }}>
+                            <div className="d-flex justify-content-center align-items-center mt-4">
+                                <pre>
+                                    {reportEventKey === 1 ? selectedTraining.result[3] : reportEventKey === 2 ? selectedTraining.result[6] : null}
+                                </pre>
+                            </div>
+                        </Row>
+                    </>}
                 </Modal.Body>
             </Modal>
             <Modal size="lg" centered show={showTraceback} onHide={handleCloseTraceback}>
@@ -346,9 +365,7 @@ const History = () => {
                     }}
                 >
                     <div className="d-flex justify-content-center align-items-center">
-                        <pre>
-                            {traceback}
-                        </pre>    
+                        {selectedTraining && <pre>{selectedTraining.traceback}</pre>}
                     </div>
                 </Modal.Body>
             </Modal>

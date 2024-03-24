@@ -1,4 +1,4 @@
-import { Breadcrumb, Container, Row, Col, Nav } from 'react-bootstrap';
+import { Container, Row, Col, Nav } from 'react-bootstrap';
 import { Translate, ClockHistory, ClipboardCheck, RocketTakeoff, Activity } from 'react-bootstrap-icons';
 import { Routes, Route, Link } from 'react-router-dom';
 import { ModelProvider } from '../contexts/ModelContext';
@@ -11,16 +11,6 @@ const Model = () => {
     return (
         <Container>
             <Row>
-                {/* <Col sm={5}>
-                    <Breadcrumb>
-                        <Breadcrumb.Item>
-                            models
-                        </Breadcrumb.Item>
-                        <Breadcrumb.Item active>
-                            labels
-                        </Breadcrumb.Item>
-                    </Breadcrumb>
-                </Col> */}
                 <Col>
                     <Nav fill variant='underline' defaultActiveKey='build'>
                         <Nav.Item>
