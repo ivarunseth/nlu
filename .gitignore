@@ -2,10 +2,10 @@
 
 # dependencies
 /venv
-/data/models
-/data/examples
+/data
 /logs
 /instance
+/flask_session
 *.pyc
 /node_modules
 /logs
