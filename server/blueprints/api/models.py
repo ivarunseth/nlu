@@ -12,12 +12,17 @@ from . import api
 def get_models():
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 10, type=int)
-    models = g.current_user.models.order_by(Model.created_at.desc()).paginate(page=page, per_page=per_page)
+    query = request.args.get('query', None)
+    if query:
+        models = g.current_user.models.filter(Model.name.ilike(f'%{query}%'))
+    else:
+        models = g.current_user.models
+    models = models.order_by(Model.created_at.desc()).paginate(page=page, per_page=per_page, error_out=False)
     return {
         'models': [model.to_dict() for model in models.items],
         'total': models.total,
-        'page': page,
-        'per_page':per_page
+        'page': models.page,
+        'per_page': models.per_page
     }, 200
 
 

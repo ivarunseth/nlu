@@ -31,8 +31,7 @@ def get_users():
     """
     users = User.query.order_by(User.updated_at.asc(), User.email.asc())
     if request.args.get('updated_since'):
-        users = users.filter(
-            User.updated_at > int(request.args.get('updated_since')))
+        users = users.filter(User.updated_at > int(request.args.get('updated_since')))
     return {'users': [user.to_dict() for user in users.all()]}, 200
 
 

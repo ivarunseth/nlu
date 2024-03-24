@@ -1,6 +1,7 @@
 import os
 
 from flask import request, g, current_app, abort, send_file
+from sqlalchemy import cast, String
 from celery import states
 
 from ... import db
@@ -20,12 +21,17 @@ def get_trainings(modelId):
         abort(404, 'Model not found: %s' % modelId)
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 10, type=int)
-    trainings = model.trainings.order_by(Training.created_at.desc()).paginate(page=page, per_page=per_page)
+    query = request.args.get('query', None)
+    if query:
+        trainings = model.trainings.filter(cast(Training.version, String).like(f'%{query}%'))
+    else:
+        trainings = model.trainings
+    trainings = trainings.order_by(Training.created_at.desc()).paginate(page=page, per_page=per_page, error_out=False)
     return {
         'trainings': [training.to_dict() for training in trainings.items],
         'total': trainings.total,
-        'page': page,
-        'per_page':per_page
+        'page': trainings.page,
+        'per_page': trainings.per_page
     }, 200
 
 

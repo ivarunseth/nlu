@@ -18,12 +18,17 @@ def get_utterances(modelId, labelId):
         abort(404, 'Label not found: %s' % labelId)
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 10, type=int)
-    utterances = label.utterances.order_by(Utterance.id.desc()).paginate(page=page, per_page=per_page)
+    query = request.args.get('query', None)
+    if query:
+        utterances = label.utterances.filter(Utterance.text.ilike(f'%{query}%'))
+    else:
+        utterances = label.utterances
+    utterances = utterances.order_by(Utterance.id.desc()).paginate(page=page, per_page=per_page, error_out=False)
     return {
         'utterances': [utterance.to_dict() for utterance in utterances.items],
         'total': utterances.total,
-        'page': page,
-        'per_page':per_page
+        'page': utterances.page,
+        'per_page': utterances.per_page
     }, 200
 
 
