@@ -3,11 +3,11 @@ import os
 from flask import request, g, current_app, abort, send_file
 from celery import states
 
-from .. import db
+from ... import db
 
-from ..auth import token_auth
-from ..models import Training
-from ..utils import zip_file
+from ...auth import token_auth
+from ...models import Training
+from ...utils import zip_file
 
 from . import api
 
@@ -18,7 +18,15 @@ def get_trainings(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
     if model is None:
         abort(404, 'Model not found: %s' % modelId)
-    return {'trainings': model.training_list}, 200
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 10, type=int)
+    trainings = model.trainings.order_by(Training.created_at.desc()).paginate(page=page, per_page=per_page)
+    return {
+        'trainings': [training.to_dict() for training in trainings.items],
+        'total': trainings.total,
+        'page': page,
+        'per_page':per_page
+    }, 200
 
 
 @api.get('/models/<modelId>/trainings/<trainingId>')
@@ -31,8 +39,7 @@ def get_training(modelId, trainingId):
     if training is None:
         abort(404, 'Training not found: %s' % trainingId)
     if request.args.get('format', 'json') == 'zip':
-        path = os.path.join(current_app.config['MODELS_DIRECTORY'], training.path)
-        return send_file(zip_file(path),
+        return send_file(zip_file(os.path.join(current_app.config['MODELS_DIRECTORY'], training.path)),
                          mimetype='application/zip',
                          as_attachment=True,
                          download_name=f'{model.name}_{training.version}.zip')
@@ -49,9 +56,9 @@ def create_training(modelId):
         abort(400, 'Training is already in progress')
     training = Training.create(model)
     db.session.add(training)
-    training.start()
+    training.start(**request.get_json())
     db.session.commit()
-    return model.to_dict(), 201
+    return training.to_dict(), 201
 
 
 @api.delete('/models/<modelId>/trainings/<trainingId>')
@@ -69,4 +76,4 @@ def delete_training(modelId, trainingId):
     task.forget()
     db.session.delete(training)
     db.session.commit()
-    return {'trainings': model.training_list}, 200
+    return '', 204

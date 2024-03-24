@@ -52,7 +52,9 @@ class TextClassification:
 
     def train(self, X, y, validation_split=0.1, epochs=200, \
               batch_size=32, embedding_dims=64, dropout=0.2, \
-              monitor='val_loss', patience=10, pruning=False):
+              early_stopping=True, monitor='val_loss', patience=10, \
+              pruning=False):
+        
         X = self.preprocess_X(X, progress=True)
         print(f'\n{X.shape=}')
         
@@ -109,7 +111,10 @@ class TextClassification:
 
         self.classifier.summary()
         
-        callbacks = [tf.keras.callbacks.EarlyStopping(monitor=monitor, patience=patience, restore_best_weights=True)]
+        callbacks = []
+
+        if early_stopping:
+            callbacks += [tf.keras.callbacks.EarlyStopping(monitor=monitor, patience=patience, restore_best_weights=True)]
         
         if pruning:
             callbacks += [tfmot.sparsity.keras.UpdatePruningStep()]

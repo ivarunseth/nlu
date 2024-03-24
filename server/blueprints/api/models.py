@@ -1,8 +1,8 @@
 from flask import request, g, abort, send_file
 
-from .. import db
-from ..auth import token_auth
-from ..models import Model
+from ... import db
+from ...auth import token_auth
+from ...models import Model
 
 from . import api
 
@@ -10,7 +10,15 @@ from . import api
 @api.get('/models')
 @token_auth.login_required
 def get_models():
-    return {'models': g.current_user.model_list}, 200
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 10, type=int)
+    models = g.current_user.models.order_by(Model.created_at.desc()).paginate(page=page, per_page=per_page)
+    return {
+        'models': [model.to_dict() for model in models.items],
+        'total': models.total,
+        'page': page,
+        'per_page':per_page
+    }, 200
 
 
 @api.get('/models/<modelId>')
@@ -36,7 +44,7 @@ def create_model():
         model.read(request.files.get('dataset'), 
                    header=0 if request.form.get('header') == 'true' else None)
     db.session.commit()
-    return {'models': g.current_user.model_list}, 201
+    return model.to_dict(), 201
 
 
 @api.put('/models/<modelId>')
@@ -45,14 +53,14 @@ def edit_model(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
     if model is None:
         abort(404, f'Model not found: {modelId}')
-    model.from_dict(request.form)
+    model.from_dict(request.form, partial_update=True)
     if 'dataset' in request.files:
         for label in model.labels.all():
             db.session.delete(label)
         model.read(request.files.get('dataset'), 
                    header=0 if request.form.get('header') == 'true' else None)
     db.session.commit()
-    return {'models': g.current_user.model_list}, 200
+    return model.to_dict(), 200
 
 
 @api.delete('/models/<modelId>')
@@ -66,4 +74,4 @@ def delete_model(modelId):
     model.trainings.delete()
     db.session.delete(model)
     db.session.commit()
-    return {'models': g.current_user.model_list}, 200
+    return '', 204

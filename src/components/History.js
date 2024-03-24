@@ -1,6 +1,7 @@
 import { useContext, useEffect, useState } from "react";
 import { Alert, Button, Col, Row, Form, Spinner, Table, Dropdown, Pagination, Modal } from "react-bootstrap";
-import { InfoCircle, Download, PlusSlashMinus, Book, Bug, Trash } from "react-bootstrap-icons";
+import { InfoCircle, Download, PlusSlashMinus, Book, Bug, Trash, QuestionCircle } from "react-bootstrap-icons";
+import ReactDiffViewer from 'react-diff-viewer';
 import { UserContext } from "../contexts/UserContext";
 import { ModelContext } from "../contexts/ModelContext";
 import axios from "axios";
@@ -15,16 +16,27 @@ const History = () => {
     const [trainings, setTrainings] = useState([]);
     const [filter, setFilter] = useState([]);
     const [data, setData] = useState([]);
+    const [showChanges, setShowChanges] = useState(false);
     const [result, setResult] = useState(null)
     const [showResults, setShowResults] = useState(false);
     const [traceback, setTraceback] = useState(null);
     const [showTraceback, setShowTraceback] = useState(false);
     const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
-    const [currentTraining, setCurrentTraining] = useState(null);
+    const [selectedTraining, setSelectedTraining] = useState(null);
     const [submitting, setSubmitting] = useState(false);
     const [page, setPage] = useState(1);
-    const itemsPerPage = 5;
+    const itemsPerPage = 7;
     const maxVisiblePages = 5;
+
+    const handleOpenChanges = (training) => {
+        setSelectedTraining(training)
+        setShowChanges(true);
+    }
+
+    const handleCloseChanges = () => {
+        setShowChanges(false);
+        setSelectedTraining(null);
+    }
 
     const handleDownload = async (training) => {
         try {
@@ -68,12 +80,12 @@ const History = () => {
     }
     
     const handleOpenDeleteConfirmation = (training) => {
-        setCurrentTraining(training);
+        setSelectedTraining(training);
         setShowDeleteConfirmation(true);
     };
 
     const handleCloseDeleteConfirmation = () => {
-        setCurrentTraining(null);
+        setSelectedTraining(null);
         setSubmitting(false);
         setShowDeleteConfirmation(false);
     }
@@ -82,7 +94,7 @@ const History = () => {
         try {
             setSubmitting(true);
             const response = await axios.delete(
-                `/api/models/${model.id}/trainings/${currentTraining.id}`,
+                `/api/models/${model.id}/trainings/${selectedTraining.id}`,
                 {
                     headers: {
                         "Authorization": `Bearer ${user.token}`
@@ -200,7 +212,10 @@ const History = () => {
                                                 select
                                             </Dropdown.Toggle>
                                             <Dropdown.Menu>
-                                                <Dropdown.Item>
+                                                <Dropdown.Item
+                                                    onClick={() => handleOpenChanges(training)}
+                                                    disabled={(page - 1) * itemsPerPage + index + 1 === 0}
+                                                >
                                                     <PlusSlashMinus />
                                                     &nbsp;
                                                     Changes
@@ -282,13 +297,34 @@ const History = () => {
                     </Pagination>}
                 </Col>
             </Row>
+            <Modal size='lg' centered show={showChanges} onHide={handleCloseChanges}>
+                <Modal.Header closeButton>
+                    <Modal.Title>Changes&nbsp;<QuestionCircle /></Modal.Title>
+                </Modal.Header>
+                <Modal.Body
+                    style={{
+                        maxHeight: '75vh',
+                        overflowY: 'scroll'
+                    }}
+                >
+                    {selectedTraining && <ReactDiffViewer 
+                        oldValue={selectedTraining.args[0].map((item, index) => `${item}, ${selectedTraining.args[1][index]}`).join('\n')}
+                        leftTitle={`${selectedTraining.version} (SELECTED)`}
+                        newValue={trainings[0].args[0].map((item, index) => `${item}, ${trainings[0].args[1][index]}`).join('\n')}
+                        rightTitle={`${trainings[0].version} (LATEST)`}
+                        splitView={true}
+                        showDiffOnly={true}
+                        hideLineNumbers={true}
+                    />}
+                </Modal.Body>
+            </Modal>
             <Modal centered show={showResults} onHide={handleCloseResults}>
                 <Modal.Header closeButton>
                     <Modal.Title>Classification Report</Modal.Title>
                 </Modal.Header>
                 <Modal.Body
                     style={{
-                        maxHeight: '50vh',
+                        maxHeight: '75vh',
                         overflowY: 'scroll'
                     }}
                 >

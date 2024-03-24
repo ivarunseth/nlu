@@ -1,8 +1,8 @@
 from flask import request, g, abort
 
-from .. import db
-from ..auth import token_auth
-from ..models import Utterance
+from ... import db
+from ...auth import token_auth
+from ...models import Utterance
 
 from . import api
 
@@ -16,7 +16,15 @@ def get_utterances(modelId, labelId):
     label = model.labels.filter_by(id=labelId).first()
     if label is None:
         abort(404, 'Label not found: %s' % labelId)
-    return {'utterances': label.utterance_list}, 200
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 10, type=int)
+    utterances = label.utterances.order_by(Utterance.id.desc()).paginate(page=page, per_page=per_page)
+    return {
+        'utterances': [utterance.to_dict() for utterance in utterances.items],
+        'total': utterances.total,
+        'page': page,
+        'per_page':per_page
+    }, 200
 
 
 @api.get('/models/<modelId>/labels/<labelId>/utterances/<utteranceId>')

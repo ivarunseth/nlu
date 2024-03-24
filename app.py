@@ -1,12 +1,10 @@
 import eventlet
 eventlet.monkey_patch()
 
-from api import socketio, create_application
+from server import create_application
 
-# Create an application instance that web servers can use. We store it as
-# "application" (the wsgi default) and also the much shorter and convenient
-# "app".
-application = app = create_application() 
+
+application, socketio = app, socket = create_application() 
 
 if __name__ == '__main__':
-    socketio.run(app, log_output=True)
+    socket.run(app, log_output=True)

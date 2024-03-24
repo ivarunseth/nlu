@@ -1,6 +1,7 @@
 import os
 
 from flask import Flask
+from flask_session import Session
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_socketio import SocketIO
@@ -39,16 +40,27 @@ def create_application(config_name=os.environ.get('FLASK_ENV', 'development')):
 
     db.init_app(app)
     migrate.init_app(app, db, directory='./migrations')
-    
-    socketio.init_app(app, message_queue=app.config['SOCKETIO_MESSAGE_QUEUE'])
-    
-    from .events import Status
-    socketio.on_namespace(Status('/status'))
 
-    from .main import main as main_blueprint
-    app.register_blueprint(main_blueprint, url_prefix='/api')
+    Session(app)
+    
+    socketio.init_app(app, 
+                      manage_session=False,
+                      message_queue=app.config['SOCKETIO_MESSAGE_QUEUE'])
+    
+    from .events import Event
+    socketio.on_namespace(Event('/'))
 
-    from .blueprints import api as api_blueprint
+    from .blueprints import api_blueprint
     app.register_blueprint(api_blueprint, url_prefix='/api')
+
+    return app, socketio
+
+
+def create_prediction_server(config_name=os.environ.get('FLASK_ENV', 'development')):
+    app = Flask('Prediction Server')
+    app.config.from_object(flask_config[config_name])
+
+    from .blueprints import nlu_blueprint
+    app.register_blueprint(nlu_blueprint, url_prefix='/nlu')
 
     return app
