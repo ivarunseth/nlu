@@ -1,5 +1,7 @@
-from flask import g, jsonify, session
+from flask import g, request, current_app
 from flask_httpauth import HTTPBasicAuth, HTTPTokenAuth
+
+from jwt import decode, ExpiredSignatureError, InvalidTokenError
 
 from .models import User
 
@@ -27,23 +29,28 @@ def verify_password(email, password):
 def password_error():
     """Return a 401 error to the client."""
     # To avoid login prompts in the browser, use the "Bearer" realm.
-    return (jsonify({'error': 'Invalid email or password.'}), 401,
-            {'WWW-Authenticate': 'Bearer realm="Authentication Required"'})
+    return {'error': 'Invalid email or password.'}, 401, \
+        {'WWW-Authenticate': 'Bearer realm="Authentication Required"'}
 
 
 @token_auth.verify_token
-def verify_token(token, add_to_session=False):
+def verify_token(token):
     """Token verification callback."""
-    if add_to_session:
-        # clear the session in case auth fails
-        if 'email' in session:
-            del session['email']
-    user = User.query.filter_by(token=token).first()
+    if not 'Authorization' in request.headers:
+        return False
+    token = token or request.headers['Authorization'].split()[1]
+    if not token:
+        return False
+    try:
+        data = decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
+    except ExpiredSignatureError:
+        return False
+    except InvalidTokenError:
+        return False
+    user = User.query.filter_by(id=data['id'], token=token).first()
     if user is None:
         return False
     g.current_user = user
-    if add_to_session:
-        session['email'] = user.email
     return True
 
 
