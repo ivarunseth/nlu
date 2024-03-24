@@ -13,7 +13,15 @@ def get_labels(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
     if model is None:
         abort(404, 'Model not found: %s' % modelId)
-    return {'labels': model.label_list}, 200
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 10, type=int)
+    labels = model.labels.order_by(Label.name.asc(), Label.id.desc()).paginate(page=page, per_page=per_page)
+    return {
+        'labels': [label.to_dict() for label in labels.items],
+        'total': labels.total,
+        'page': page,
+        'per_page':per_page
+    }, 200
 
 
 @api.get('/models/<modelId>/labels/<labelId>')
@@ -45,7 +53,7 @@ def create_label(modelId):
         label.read(request.files.get('dataset'), 
                    header=0 if request.form.get('header') == 'true' else None)
     db.session.commit()
-    return {'labels': model.label_list}, 201
+    return label.to_dict(), 201
 
 
 @api.put('/models/<modelId>/labels/<labelId>')
@@ -63,7 +71,7 @@ def edit_label(modelId, labelId):
         label.read(request.files.get('dataset'), 
                    header=0 if request.form.get('header') == 'true' else None)
     db.session.commit()
-    return {'labels': model.label_list}, 200
+    return label.to_dict(), 200
 
 
 @api.delete('/models/<modelId>/labels/<labelId>')
@@ -77,4 +85,4 @@ def delete_label(modelId, labelId):
         abort(404, 'Label not found: %s' % labelId)
     db.session.delete(label)
     db.session.commit()
-    return {'labels': model.label_list}, 200
+    return '', 204

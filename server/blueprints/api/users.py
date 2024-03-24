@@ -15,7 +15,7 @@ def create_user():
     """
     user = User.create(request.form)
     if User.query.filter_by(email=user.email).first():
-        abort(400)
+        abort(400, 'User %s already exists' % user.email)
     db.session.add(user)
     db.session.commit()
     return user.to_dict(), 201
@@ -44,7 +44,10 @@ def get_user(userId):
     This endpoint is publicly available, but if the client has a token it
     should send it.
     """
-    return User.query.get_or_404(userId).to_dict(), 200
+    user = User.query.get(userId)
+    if user is None:
+        abort(404, 'User not found: %s' % userId)
+    return user.to_dict(), 200
 
 
 @api.put('/users/<userId>')
