@@ -1,15 +1,16 @@
 import os
 import io
-import binascii
 import uuid
 
 import pandas as pd
 
-from datetime import timezone
+from datetime import datetime, timedelta
 
 from flask import abort, g, url_for, current_app
 
 from werkzeug.security import generate_password_hash, check_password_hash
+from jwt import encode
+
 from werkzeug.utils import secure_filename
 
 from . import db
@@ -42,9 +43,11 @@ class User(db.Model):
     def verify_password(self, password):
         return check_password_hash(self.password_hash, password)
 
-    def generate_token(self):
-        """Creates a 64 character long randomly generated token."""
-        self.token = binascii.hexlify(os.urandom(32)).decode('utf-8')
+    def generate_token(self, expiry=None):
+        self.token = encode({
+            'id': self.id, 
+            'exp': datetime.utcnow() + timedelta(minutes=expiry or current_app.config['TOKEN_EXPIRY'])
+        }, current_app.config['SECRET_KEY'])
         return self.token
     
     @property
@@ -103,10 +106,6 @@ class Model(db.Model):
     @property
     def training_list(self):
         return [training.to_dict() for training in self.trainings.order_by(Training.created_at.desc()).all()]
-    
-    @property
-    def training(self):
-        return self.trainings.order_by(Training.created_at.desc()).first()
 
     @staticmethod
     def create(data, user=None):
@@ -163,7 +162,7 @@ class Model(db.Model):
 
     def to_dict(self):
         """Export model to a dictionary."""
-        model_dict = {
+        return {
             'id': self.id,
             'user_id': self.user_id,
             'name': self.name,
@@ -177,9 +176,6 @@ class Model(db.Model):
                 'trainings': url_for('api.get_trainings', modelId=self.id)
             }
         }
-        training = self.training
-        model_dict.update({'training': training.to_dict(extended=False) if training else None})
-        return model_dict
 
 
 class Label(db.Model):
@@ -340,11 +336,11 @@ class Training(db.Model):
                 if not partial_update:
                     abort(400)
 
-    def to_dict(self, extended=True):
+    def to_dict(self, extended=False):
         training_dict = {
             'id': self.id,
             'model_id': self.model_id,
-            'version': self.version,
+            'version': float(self.version),
             'created_at': format_timestamp(self.created_at),
             'updated_at': format_timestamp(self.updated_at),
             '_links': {
