@@ -1,10 +1,10 @@
 import eventlet
 eventlet.monkey_patch()
 
-from server import socketio, create_application
+from server import create_application
 
 
-application = app = create_application() 
+application, socketio = app, socket = create_application() 
 
 if __name__ == '__main__':
-    socketio.run(app, log_output=True)
+    socket.run(app, log_output=True)
