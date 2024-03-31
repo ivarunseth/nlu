@@ -155,7 +155,7 @@ const Home = () => {
             await axios.delete(`/api/models/${currentModel.id}`, { headers });
             if (models.length - 1 > 0) {
                 setLoading(true);
-                if (page === Math.ceil((total - 1) / perPage)) {
+                if (page === Math.ceil((total) / perPage)) {
                     setModels(prevModels => prevModels.filter((m) => m.id !== currentModel.id));
                     setTotal(total - 1);
                 } else {
