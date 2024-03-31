@@ -1,20 +1,17 @@
 import axios from "axios";
 import React, { useContext, useState, useEffect } from "react";
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { Alert, Container, Row, Col, Dropdown, Form, InputGroup, Button, Table, Pagination, Modal, Spinner } from "react-bootstrap";
 import { PlusLg, Download, Pen, Trash, InfoCircle } from "react-bootstrap-icons";
 import { UserContext } from "../contexts/UserContext";
+import useDebounce from '../useDebounce';
 
 const Home = () => {
-    const navigate = useNavigate();
-    
-    const { user } = useContext(UserContext);
 
-    const [search, setSearch] = useState('');
+    const { user } = useContext(UserContext);
+    const [query, setQuery] = useState('');
     const [alert, setAlert] = useState(null);
     const [models, setModels] = useState([]);
-    const [filter, setFilter] = useState([]);
-    const [data, setData] = useState([]);
     const [name, setName] = useState('');
     const [dataset, setDataset] = useState(null);
     const [header, setHeader] = useState(true);
@@ -25,9 +22,13 @@ const Home = () => {
     const [currentModel, setCurrentModel] = useState(null);
     const [validated, setValidated] = useState(false);
     const [submitting, setSubmitting] = useState(false);
+    const [loading, setLoading] = useState(false);
     const [page, setPage] = useState(1);
-    const itemsPerPage = 7;
-    const maxVisiblePages =5;
+    const [total, setTotal] = useState(0);
+    const perPage = 7;
+    const maxVisiblePages = 5;
+
+    const debouncedQuery = useDebounce(query, 500);
 
     const handleOpenCreateForm = () => {
         setShowCreateForm(true);
@@ -58,16 +59,18 @@ const Home = () => {
                     data.append('header', header);
                 }
                 data.append('description', description);
-                const response = await axios.post(
-                    '/api/models',
-                    data,
-                    {
-                        headers: {
-                            "Authorization": `Bearer ${user.token}`
-                        }
+                const headers = {"Authorization": `Bearer ${user.token}`}
+                const response = await axios.post('/api/models', data, { headers });
+                if (page === 1) {
+                    if (models.length + 1 > perPage) {
+                        setModels([response.data, ...models.slice(0, -1)])
+                    } else {
+                        setModels([response.data, ...models]);
                     }
-                );
-                setModels(response.data.models);
+                    setTotal(total + 1);
+                } else {
+                    setPage(1);
+                }
             } catch (error) {
                 setAlert({ variant: 'danger', message: error.response.data.error });
             } finally {
@@ -78,12 +81,8 @@ const Home = () => {
 
     const handleDownload = async (model) => {
         try {
-            const response = await axios.get(`/api/models/${model.id}?format=csv`, {
-                responseType: 'blob',
-                headers: {
-                    "Authorization": `Bearer ${user.token}`
-                }
-            });
+            const headers = {"Authorization": `Bearer ${user.token}`}
+            const response = await axios.get(`/api/models/${model.id}?format=csv`, {responseType: 'blob', headers });
             const href = URL.createObjectURL(response.data);
             const link = document.createElement('a');
             link.href = href;
@@ -128,16 +127,9 @@ const Home = () => {
                     data.append('header', header);
                 }
                 data.append('description', description);
-                const response = await axios.put(
-                    `/api/models/${currentModel.id}`,
-                    data,
-                    {
-                        headers: {
-                            "Authorization": `Bearer ${user.token}`
-                        }
-                    }
-                );
-                setModels(response.data.models);
+                const headers = {'Authorization': `Bearer ${user.token}`}
+                const response = await axios.put(`/api/models/${currentModel.id}`, data, { headers });
+                setModels(prevModels => prevModels.map((m) => m.id === currentModel.id ? response.data : m));
             } catch (error) {
                 setAlert({ variant: 'danger', message: error.response.data.error });
             } finally {
@@ -153,67 +145,69 @@ const Home = () => {
 
     const handleCloseDeleteConfirmation = () => {
         setCurrentModel(null);
-        setSubmitting(false);
         setShowDeleteConfirmation(false);
-    }
+    };
 
     const handleDelete = async () => {
         try {
             setSubmitting(true);
-            const response = await axios.delete(
-                `/api/models/${currentModel.id}`,
-                {
-                    headers: {
-                        "Authorization": `Bearer ${user.token}`
-                    }
+            const headers = {"Authorization": `Bearer ${user.token}`}
+            await axios.delete(`/api/models/${currentModel.id}`, { headers });
+            if (models.length - 1 > 0) {
+                setLoading(true);
+                if (page === Math.ceil((total - 1) / perPage)) {
+                    setModels(prevModels => prevModels.filter((m) => m.id !== currentModel.id));
+                    setTotal(total - 1);
+                } else {
+                    let params = { page: page, per_page: perPage }
+                    if (debouncedQuery !== '')
+                        params.query = debouncedQuery
+                    const response = await axios.get(`/api/models`, { params, headers });
+                    setModels(response.data.models);
+                    setTotal(response.data.total);
                 }
-            );
-            setModels(response.data.models);
+                setLoading(false);
+            } else {
+                if (page > 1) {
+                    setPage(page - 1);
+                } else {
+                    setModels([]);
+                    setTotal(0);
+                }
+            }
         } catch (error) {
             setAlert({ variant: 'danger', message: error.response.data.message });
         } finally {
+            setSubmitting(false);
             handleCloseDeleteConfirmation();
         }
     };
 
     useEffect(() => {
+        setPage(1);
+    }, [debouncedQuery]);
+
+    useEffect(() => {
         if (user) {
             const getModels = async () => {
                 try {
-                    const response = await axios.get(
-                        '/api/models',
-                        {
-                            headers: {
-                                "Authorization": `Bearer ${user.token}`
-                            }
-                        }
-                    );
+                    setLoading(true);
+                    const headers = {"Authorization": `Bearer ${user.token}`}
+                    let params = { page: page, per_page: perPage }
+                    if (debouncedQuery !== '')
+                        params.query = debouncedQuery
+                    const response = await axios.get(`/api/models`, { params, headers });
                     setModels(response.data.models);
+                    setTotal(response.data.total);
                 } catch (error) {
                     setAlert({ variant: 'danger', message: error.response.data.error });
+                } finally {
+                    setLoading(false);
                 }
             };
             getModels();
-        } else {
-            navigate('/signin');
         }
-    }, [user, navigate])
-
-    useEffect(() => {
-        if (search !== '') {
-            setFilter(models.filter((model) => model.name.toLowerCase().includes(search.toLowerCase())));
-        } else {
-            setFilter(models);
-        }
-    }, [models, search])
-
-    useEffect(() => {
-        const start = (page - 1) * itemsPerPage;
-        const end = start + itemsPerPage;
-        setData(filter.slice(start, end));
-        if (filter.length > 0)
-            setPage(Math.min(page, Math.ceil(filter.length / itemsPerPage)));
-    }, [filter, page])
+    }, [user, page, perPage, debouncedQuery]);
 
     return (
         <Container>
@@ -224,11 +218,11 @@ const Home = () => {
             </Row>
             <Row className="mt-4">
                 <Col>
-                    <Button 
-                        variant="light" 
+                    <Button
+                        variant="light"
                         style={{
-                            border: '1px solid #212529' 
-                        }} 
+                            border: '1px solid #dee2e6'
+                        }}
                         onClick={handleOpenCreateForm}
                     >
                         <PlusLg />&nbsp;create model
@@ -239,8 +233,8 @@ const Home = () => {
                         <Form.Control
                             type="text"
                             placeholder="search for models..."
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
+                            value={query}
+                            onChange={(e) => { setQuery(e.target.value) }}
                         />
                     </Form>
                 </Col>
@@ -265,7 +259,7 @@ const Home = () => {
                             </tr>
                         </thead>
                         <tbody>
-                            {models.length > 0 ? search !== '' && filter.length === 0 ? (
+                            {loading ? (
                                 <tr>
                                     <td
                                         colSpan={5}
@@ -273,14 +267,14 @@ const Home = () => {
                                             verticalAlign: 'middle'
                                         }}
                                     >
-                                        <i class="bi bi-ban" />&nbsp;could not find the model you are looking for.
+                                        <Spinner animation='border' size='lg' />
                                     </td>
                                 </tr>
-                            ) : data.map((model, index) => (
+                            ) : total > 0 ? models.map((model, index) => (
                                 <tr key={model.id}>
-                                    <td>{(page - 1) * itemsPerPage + index + 1}.</td>
+                                    <td>{(page - 1) * perPage + index + 1}.</td>
                                     <td>
-                                        <Link 
+                                        <Link
                                             to={`/models/${model.id}/build`}
                                             style={{
                                                 textDecorationLine: 'none'
@@ -317,7 +311,18 @@ const Home = () => {
                                         </Dropdown>
                                     </td>
                                 </tr>
-                            )) : (
+                            )) : query !== '' ? (
+                                <tr>
+                                    <td
+                                        colSpan={5}
+                                        style={{
+                                            verticalAlign: 'middle'
+                                        }}
+                                    >
+                                        <i class="bi bi-ban" />&nbsp;could not find the model you are looking for.
+                                    </td>
+                                </tr>
+                            ) : (
                                 <tr>
                                     <td
                                         colSpan={5}
@@ -331,30 +336,30 @@ const Home = () => {
                             )}
                         </tbody>
                     </Table>
-                    {filter.length > itemsPerPage &&
-                    <Pagination size='sm'>
-                        <Pagination.Prev
-                            onClick={() => setPage((prevPage) => Math.max(prevPage - 1, 1))}
-                            disabled={page === 1}
-                        />
-                        {[...Array(Math.ceil(filter.length / itemsPerPage))].map((_, i) => (
-                            (i === 0 || i === Math.ceil(filter.length / itemsPerPage) - 1 || (i >= page - Math.floor(maxVisiblePages / 2) && i <= page + Math.floor(maxVisiblePages / 2))) ? (
-                                <Pagination.Item
-                                    key={i + 1}
-                                    active={i + 1 === page}
-                                    onClick={() => setPage(i + 1)}
-                                >
-                                    {i + 1}
-                                </Pagination.Item>
-                            ) : (i === page - Math.floor(maxVisiblePages / 2) - 1 || i === page + Math.floor(maxVisiblePages / 2) + 1 ?
-                                <Pagination.Ellipsis key={`ellipsis-${i}`} /> : null
-                            )
-                        ))}
-                        <Pagination.Next
-                            onClick={() => setPage((prevPage) => Math.min(prevPage + 1, Math.ceil(filter.length / itemsPerPage)))}
-                            disabled={page === Math.ceil(filter.length / itemsPerPage)}
-                        />
-                    </Pagination>}
+                    {total > perPage &&
+                        <Pagination size='sm'>
+                            <Pagination.Prev
+                                onClick={() => setPage((prevPage) => Math.max(prevPage - 1, 1))}
+                                disabled={page === 1}
+                            />
+                            {[...Array(Math.ceil(total / perPage))].map((_, i) => (
+                                (i === 0 || i === Math.ceil(total / perPage) - 1 || (i >= page - Math.floor(maxVisiblePages / 2) && i <= page + Math.floor(maxVisiblePages / 2))) ? (
+                                    <Pagination.Item
+                                        key={i + 1}
+                                        active={i + 1 === page}
+                                        onClick={() => setPage(i + 1)}
+                                    >
+                                        {i + 1}
+                                    </Pagination.Item>
+                                ) : (i === page - Math.floor(maxVisiblePages / 2) - 1 || i === page + Math.floor(maxVisiblePages / 2) + 1 ?
+                                    <Pagination.Ellipsis key={`ellipsis-${i}`} /> : null
+                                )
+                            ))}
+                            <Pagination.Next
+                                onClick={() => setPage((prevPage) => Math.min(prevPage + 1, Math.ceil(total / perPage)))}
+                                disabled={page === Math.ceil(total / perPage)}
+                            />
+                        </Pagination>}
                 </Col>
             </Row>
             <Modal centered show={showCreateForm} onHide={handleCloseCreateForm}>

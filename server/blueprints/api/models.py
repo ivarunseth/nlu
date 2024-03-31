@@ -10,14 +10,17 @@ from . import api
 @api.get('/models')
 @token_auth.login_required
 def get_models():
+    models = g.current_user.models
+    query = request.args.get('query', None)
+    if query is not None:
+        models = models.filter(Model.name.ilike(f'%{query}%'))
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 10, type=int)
-    query = request.args.get('query', None)
-    if query:
-        models = g.current_user.models.filter(Model.name.ilike(f'%{query}%'))
-    else:
-        models = g.current_user.models
-    models = models.order_by(Model.created_at.desc()).paginate(page=page, per_page=per_page, error_out=False)
+    models = models.order_by(
+        Model.created_at.desc()).paginate(
+            page=page, 
+            per_page=per_page, 
+            error_out=False)
     return {
         'models': [model.to_dict() for model in models.items],
         'total': models.total,
