@@ -311,7 +311,7 @@ const Home = () => {
                                         </Dropdown>
                                     </td>
                                 </tr>
-                            )) : query !== '' ? (
+                            )) : debouncedQuery !== '' ? (
                                 <tr>
                                     <td
                                         colSpan={5}
