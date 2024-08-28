@@ -74,16 +74,13 @@ class WorkerResult(AsyncResult):
             'worker': self.worker,
             'children': self.children,
             'date_done': self.date_done.replace(tzinfo=timezone.utc).astimezone(tz=None).strftime('%d/%m/%Y - %H:%M:%S') if self.date_done else None,
+            'result': self.backend.prepare_exception(self.result) if self.failed() else self.result,
             'retries': self.retries,
             'queue': self.queue,
             'traceback': self.traceback
         }
         if extended:
-            task_dict.update({
-                'args': self.args,
-                'kwargs': self.kwargs,
-                'result': self.backend.prepare_exception(self.result) if self.failed() else self.result
-            })
+            task_dict.update({'args': self.args, 'kwargs': self.kwargs})
         return task_dict
 
 
@@ -102,9 +99,8 @@ class WorkerTask(Task):
             return False
         return result.is_aborted()
 
-    def push_status(self):
-        status = {'status': self.AsyncResult(self.request.id).status, 'task_id': self.request.id}
-        self.socketio.emit('status', status, room=self.request.id, namespace='/status')
+    def push_status(self, extended=False):
+        self.socketio.emit('status', self.AsyncResult(self.request.id).to_dict(extended), room=self.request.id, namespace='/')
 
     def before_start(self, *args, **kwargs):
         self.socketio = SocketIO(
@@ -116,7 +112,7 @@ class WorkerTask(Task):
             logger=False,  
             engineio_logger=False)
         super().before_start(*args, **kwargs)
-        self.push_status()
+        self.push_status(extended=True)
     
     def on_success(self, *args, **kwargs):
         super().on_success(*args, **kwargs)
