@@ -21,38 +21,36 @@ worker_shutting_down.connect(on_worker_shutting_down)
 
 @worker.task(bind=True)
 def text_classification(self, modelId, version, directory):
-
-    from ..scripts import TextClassification
+    
+    from ..scripts.text_classification import TextClassification
     model = TextClassification.load(directory)
 
-    message_queue = f'prediction-queue:{modelId}:{version}'
-    batch_size = model.params['batch_size']
+    input_queue = f'input-queue:{modelId}:{version}'
 
     while not self.is_aborted() and not shutting_down:
 
-        messages = redis.lrange(message_queue, 0, batch_size - 1)
+        inputs = redis.lrange(input_queue, 0, model.params['batch_size'] - 1)
         batch = []
         ids = []
         
-        for message in messages:
-            message = json.loads(message.decode('utf-8'))            
-            batch.append(message['text'])
-            ids.append(message['id'])
+        for input in inputs:
+            data = json.loads(input.decode('utf-8'))
+            batch.append(data['text'])
+            ids.append(data['id'])
         
-        if len(ids) > 0:
-            predictions = model.predict(batch) 
+        if len(batch) > 0:
+            outputs = model.predict(batch) 
     
-            for (id, prediction) in zip(ids, predictions):
-                output = {'label': {'name': prediction[0], 'confidence': float(prediction[1])}}
+            for (id, output) in zip(ids, outputs):
                 redis.set(id, json.dumps(output).encode('utf-8'))
 
-            redis.ltrim(f'prediction-queue:{modelId}:{version}', len(ids), -1)
+            redis.ltrim(input_queue, len(ids), -1)
         
-        time.sleep(0.1)
+        time.sleep(0.01)
     
-    outputs = redis.keys(f'prediction-result:{modelId}:{version}:*')
-    if len(outputs) > 0: 
-        redis.delete(*outputs)
+    outputs = redis.keys(f'output:{modelId}:{version}:*')
+    
+    if len(outputs) > 0: redis.delete(*outputs)
     
     if not self.is_aborted() and shutting_down:
-        raise Reject('Task is requeued for classification', requeue=True)
+        raise Reject('Task has been requeued.', requeue=True)
