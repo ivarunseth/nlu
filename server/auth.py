@@ -1,9 +1,11 @@
-from flask import g, request, current_app
+from flask import g, request, session, current_app
 from flask_httpauth import HTTPBasicAuth, HTTPTokenAuth
 
 from jwt import decode, ExpiredSignatureError, InvalidTokenError
 
 from .models import User
+
+from . import db
 
 
 # Authentication objects for username/password auth, token auth, and a
@@ -43,9 +45,12 @@ def verify_token(token):
         return False
     try:
         data = decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
-    except ExpiredSignatureError:
-        return False
-    except InvalidTokenError:
+    except (ExpiredSignatureError, InvalidTokenError):
+        user = User.query.filter_by(token=token).first()
+        if user is not None:
+            user.token = None
+            db.session.commit()
+            session.clear()
         return False
     user = User.query.filter_by(id=data['id'], token=token).first()
     if user is None:
