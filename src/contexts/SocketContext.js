@@ -26,7 +26,7 @@ export const useSocket = () => {
 
             if (!socket.current) {
                 socket.current = io(
-                    'http://localhost:5000/status', { 
+                    'http://localhost:5000', { 
                         transports: ['websocket'],
                         auth: {
                             token: user.token
