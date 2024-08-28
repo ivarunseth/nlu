@@ -80,22 +80,12 @@ class TextClassification:
         
         X = self.vectorize(X)
         
-        if num_classes == 2:
-            activation = 'sigmoid'
-            loss = 'binary_crossentropy'
-            metrics = ['binary_accuracy']
-            num_classes -= 1
-        else:
-            activation = 'softmax'
-            loss = 'sparse_categorical_crossentropy'
-            metrics = ['accuracy']
-            
         self.classifier = tf.keras.models.Sequential([
             tf.keras.layers.Embedding(len(self.vectorizer.get_vocabulary()), embedding_dims),
             tf.keras.layers.Dropout(dropout),
             tf.keras.layers.GlobalAveragePooling1D(),
             tf.keras.layers.Dropout(dropout),
-            tf.keras.layers.Dense(num_classes, activation=activation, name="dense_output")])
+            tf.keras.layers.Dense(num_classes, activation='softmax', name="dense_output")])
 
         if pruning:
             pruning_params = {
@@ -107,7 +97,7 @@ class TextClassification:
             }
             self.classifier = tfmot.sparsity.keras.prune_low_magnitude(self.classifier, **pruning_params)
  
-        self.classifier.compile(optimizer='adam', loss=loss, metrics=metrics)
+        self.classifier.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
         self.classifier.summary()
         
@@ -126,9 +116,9 @@ class TextClassification:
             batch_size=batch_size,
             callbacks=callbacks)
         
-        if pruning:
+        if pruning: 
             self.classifier = tfmot.sparsity.keras.strip_pruning(self.classifier)
-            self.classifier.compile(optimizer='adam', loss=loss, metrics=metrics)
+            self.classifier.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
         
         self.params = {
             'max_tokens': max_tokens,
