@@ -17,7 +17,7 @@ function Header() {
                     <Navbar.Collapse id="responsive-navbar-nav">
                         <Nav className="ms-auto">
                             <NavDropdown title={user.email}>
-                                <NavDropdown.Item>
+                                <NavDropdown.Item as={Link} to="/settings">
                                     <PersonCircle/>&nbsp;Account settings
                                 </NavDropdown.Item>
                                 <NavDropdown.Divider/>

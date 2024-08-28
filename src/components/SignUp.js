@@ -1,5 +1,6 @@
-import React, { useState } from "react";
-import { Alert, Button, Card, Form, InputGroup, Spinner } from "react-bootstrap";
+import React, { useState, useRef } from "react";
+import { Alert, Button, Container, Form, InputGroup, Spinner, Row, Col } from "react-bootstrap";
+import { Eye, EyeSlash } from "react-bootstrap-icons";
 import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
 
@@ -9,31 +10,26 @@ const SignUp = () => {
 
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
-    const [confirmPassword, setConfirmPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
 
     const [alert, setAlert] = useState(null);
 
     const [validated, setValidated] = useState(false);
     const [submitting, setSubmitting] = useState(false);
 
+    const emailInput = useRef(null);
+    const passwordInput = useRef(null);
+
     const handleSignUp = async (e) => {
         e.preventDefault();
-
-        const form = e.currentTarget;
-
-        if (form.checkValidity() === false) {
-            e.stopPropagation();
-        }
-
+        const valid = e.currentTarget.checkValidity()
         setValidated(true);
-
-        if (email !== '' && password !== '' && confirmPassword !== '') {
+        if (!valid) {
+            e.stopPropagation();
+            return;
+        }
+        if (email !== '' && password !== '') {
             setSubmitting(true)
-            if (password !== confirmPassword) {
-                setAlert({ variant: 'danger', message: 'Passwords do not match. Please try again.' });
-                return;
-            }
-    
             try {
                 let data = new FormData();
                 data.append('email', email);
@@ -47,78 +43,89 @@ const SignUp = () => {
                 setValidated(false);
                 setEmail('')
                 setPassword('')
-                setConfirmPassword('')
                 setSubmitting(false)
             }
         }
     };
 
     return (
-        <div className="d-flex justify-content-center align-items-center vh-100">
-            <Card style={{ width: "30rem" }}>
-                <Card.Body>
-                    <Card.Title className="text-center mb-3">Sign up</Card.Title>
-
+        <Container className="d-flex flex-column justify-content-center align-items-center vh-100">
+            <Row style={{width: "25rem"}}>
+                <Col>
                     {alert && <Alert variant={alert.variant} onClose={() => setAlert(null)} dismissible>{alert.message}</Alert>}
-
+                </Col>
+            </Row>
+            <Row style={{width: "25rem"}}>
+                <Col>
                     <Form noValidate validated={validated} onSubmit={handleSignUp}>
                         <Form.Group className="mb-3">
-                            <Form.Label>Email</Form.Label>
                             <InputGroup hasValidation>
-                                <Form.Control
-                                    type="email"
-                                    placeholder="Enter your email"
-                                    value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
-                                    required
-                                />
-                                <Form.Control.Feedback type="invalid">
-                                    Please enter your email.
-                                </Form.Control.Feedback>
+                                <Form.Floating>
+                                    <Form.Control
+                                        id="email"
+                                        ref={emailInput}
+                                        type="email"
+                                        placeholder="Enter your email"
+                                        value={email}
+                                        onChange={(e) => setEmail(e.target.value)}
+                                        required
+                                        isValid={validated && email && emailInput.current && emailInput.current.validity.valid}
+                                        isInvalid={validated && (!email || (emailInput.current && !emailInput.current.validity.valid))}
+                                    />
+                                    {validated ? (
+                                        <Form.Label className={`${(!email || (emailInput.current && !emailInput.current.validity.valid)) && 'text-danger'}`} htmlFor="email">
+                                            {!email ? 'Enter your email' : !emailInput.current.validity.valid ? 'Invalid email' : 'Email'}
+                                        </Form.Label>
+                                    ) : (
+                                        <Form.Label htmlFor="email">
+                                            Email
+                                        </Form.Label>
+                                    )}
+                                </Form.Floating>
                             </InputGroup>
                         </Form.Group>
-
                         <Form.Group className="mb-3">
-                            <Form.Label>Password</Form.Label>
                             <InputGroup hasValidation>
-                                <Form.Control
-                                    type="password"
-                                    placeholder="Enter a password"
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                    required
-                                />
-                                <Form.Control.Feedback type="invalid">
-                                    Please enter a password.
-                                </Form.Control.Feedback>
+                                <Form.Floating>
+                                    <Form.Control
+                                        id="password"
+                                        ref={passwordInput}
+                                        type={showPassword ? "text" : "password"}
+                                        placeholder="Enter password"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        required
+                                        autoComplete='on'
+                                        isValid={validated && password && passwordInput.current && passwordInput.current.validity.valid}
+                                        isInvalid={validated && (!password || (passwordInput.current && !passwordInput.current.validity.valid))}
+                                        style={{
+                                            borderTopRightRadius: 0,
+                                            borderBottomRightRadius: 0
+                                        }}
+                                    />
+                                    {validated ? (
+                                        <Form.Label className={`${(!password || (passwordInput.current && !passwordInput.current.validity.valid)) && 'text-danger'}`} htmlFor="password">
+                                            {!password ? 'Enter your password' : !passwordInput.current.validity.valid ? 'Invalid password' : 'Password'}
+                                        </Form.Label>
+                                    ) : (
+                                        <Form.Label htmlFor="password">
+                                            Password
+                                        </Form.Label>
+                                    )}
+                                </Form.Floating>
+                                <InputGroup.Text onClick={() => setShowPassword(!showPassword)}>
+                                    {showPassword ? <EyeSlash /> : <Eye />}
+                                </InputGroup.Text>
                             </InputGroup>
-                        </Form.Group>
-
-                        <Form.Group className="mb-3">
-                            <Form.Label>Confirm password</Form.Label>
-                            <InputGroup hasValidation>
-                                <Form.Control
-                                    type="password"
-                                    placeholder="Confirm password"
-                                    value={confirmPassword}
-                                    onChange={(e) => setConfirmPassword(e.target.value)}
-                                    required
-                                />
-                                <Form.Control.Feedback type="invalid">
-                                    Please confirm password.
-                                </Form.Control.Feedback>
-                            </InputGroup>
-                            
                             <Form.Text id="passwordHelpBlock" muted>
-                                    Your password must be 8-20 characters long, contain letters and numbers,
-                                    and must not contain spaces, special characters, or emoji.
-                                </Form.Text>
+                                Your password must be 8-20 characters long, contain letters and numbers,
+                                and must not contain spaces, special characters, or emoji.
+                            </Form.Text>
                         </Form.Group>
-
                         <div className="d-grid gap-2 mb-3">
                             <Button 
                                 type="submit" 
-                                variant="primary" 
+                                variant="dark" 
                                 disabled={submitting}
                             >
                             {submitting ? (
@@ -128,18 +135,25 @@ const SignUp = () => {
                                         size="sm"
                                     />
                                     &nbsp;
-                                    Submitting
+                                    Signing up
                                 </>
                             ) : (
-                                'Submit'
+                                'Sign up'
                             )}
                             </Button>
                         </div>
-                        <Form.Text>Already have an account? <Link to='/signin'>Sign In</Link></Form.Text>
+                        <Form.Text
+                            style={{
+                                display: 'flex',
+                                justifyContent: 'center'
+                            }}
+                        >
+                            Already have an account?&nbsp;<Link to='/signin' style={{ textDecoration: 'none' }}>Sign In</Link>
+                        </Form.Text>
                     </Form>
-                </Card.Body>
-            </Card>
-        </div>
+                </Col>
+            </Row>
+        </Container>
     );
 };
 

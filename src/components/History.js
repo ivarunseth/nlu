@@ -1,21 +1,41 @@
-import { useContext, useEffect, useState } from "react";
-import { Alert, Button, Col, Row, Form, Spinner, Table, Dropdown, Pagination, Modal } from "react-bootstrap";
-import { InfoCircle, Download, PlusSlashMinus, Book, Bug, Trash, QuestionCircle } from "react-bootstrap-icons";
+import { useContext, useEffect, useState, useRef } from "react";
+import { Alert, Button, ButtonGroup, Col, Row, Form, FormGroup, OverlayTrigger, Popover, Spinner, Table, Dropdown, Pagination, Modal } from "react-bootstrap";
+import { InfoCircle, Download, PlusSlashMinus, Book, Bug, Sliders, Trash, QuestionCircle, ArrowClockwise } from "react-bootstrap-icons";
 import ReactDiffViewer from 'react-diff-viewer';
 import { UserContext } from "../contexts/UserContext";
 import { ModelContext } from "../contexts/ModelContext";
+import { useSocket } from "../contexts/SocketContext";
+import { useParams } from "react-router-dom";
+import useDebounce from '../useDebounce';
 import axios from "axios";
 
+
 const History = () => {
+
+    const { modelId } = useParams();
 
     const { user } = useContext(UserContext);
     const { model } = useContext(ModelContext);
 
-    const [search, setSearch] = useState('');
+    const socket = useSocket();
+
+    const [paramters, setParameters] = useState({
+        validation_split: 0.1,
+        epochs: 200,
+        batch_size: 32,
+        embedding_dims: 64,
+        dropout: 0.2,
+        early_stopping: true,
+        monitor: 'val_loss',
+        patience: 10,
+        pruning: true,
+        save_format: 'tf'
+    });
+    const [query, setQuery] = useState('');
     const [alert, setAlert] = useState(null);
     const [trainings, setTrainings] = useState([]);
-    const [filter, setFilter] = useState([]);
-    const [data, setData] = useState([]);
+    const [currentTraining, setCurrentTraining] = useState(null);
+    const [showParameters, setShowParameters] = useState(false);
     const [showChanges, setShowChanges] = useState(false);
     const [result, setResult] = useState(null)
     const [showResults, setShowResults] = useState(false);
@@ -24,9 +44,36 @@ const History = () => {
     const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
     const [selectedTraining, setSelectedTraining] = useState(null);
     const [submitting, setSubmitting] = useState(false);
+    const [loading, setLoading] = useState(false);
     const [page, setPage] = useState(1);
-    const itemsPerPage = 7;
+    const pageRef = useRef(page);
+    const [total, setTotal] = useState(0);
+    const perPage = 7;
     const maxVisiblePages = 5;
+    
+    const debouncedQuery = useDebounce(query, 500);
+
+    const rooms = useRef(new Set())
+
+    const handleTrain = async () => {
+        try {
+            const headers = {"Authorization": `Bearer ${user.token}`};
+            const response = await axios.post(`/api/models/${modelId}/trainings`, paramters, { headers });
+            setCurrentTraining(response.data);
+            if (page === 1) {
+                if (total + 1 > perPage) {
+                    setTrainings(prev => [response.data, ...prev.slice(0, -1)]);
+                } else {
+                    setTrainings(prev => [response.data, ...prev]);
+                    setTotal(total + 1)
+                }
+            } else {
+                setPage(1);
+            }
+        } catch (error) {
+            setAlert({ variant: 'danger', message: error.response.data.error });
+        }
+    };
 
     const handleOpenChanges = (training) => {
         setSelectedTraining(training)
@@ -86,65 +133,105 @@ const History = () => {
 
     const handleCloseDeleteConfirmation = () => {
         setSelectedTraining(null);
-        setSubmitting(false);
         setShowDeleteConfirmation(false);
     }
 
-    const handleDelete = async () => {
+    const handleDelete = async (trainingId) => {
         try {
             setSubmitting(true);
-            const response = await axios.delete(
-                `/api/models/${model.id}/trainings/${selectedTraining.id}`,
-                {
-                    headers: {
-                        "Authorization": `Bearer ${user.token}`
-                    }
+            setLoading(true);
+            const headers = {"Authorization": `Bearer ${user.token}`}
+            await axios.delete(`/api/models/${model.id}/trainings/${trainingId}`, {headers});
+            if (trainings.length - 1 > 0) {
+                if (page === Math.ceil((total) / perPage)) {
+                    if (page === 1 && trainingId === currentTraining.id)
+                        setCurrentTraining(trainings[1])
+                    setTrainings(prev => prev.filter((t) => t.id !== trainingId));
+                    setTotal(total - 1);
+                } else {
+                    let params = { extended: '1', page: page, per_page: perPage };
+                    if (debouncedQuery !== '')
+                        params.query = debouncedQuery;
+                    const response = await axios.get(`/api/models/${model.id}/trainings`, { params, headers });
+                    setTrainings(response.data.trainings);
+                    setTotal(response.data.total);
+                    if (trainingId === currentTraining.id)
+                        setCurrentTraining(response.data.trainings[0]);
                 }
-            );
-            setTrainings(response.data.trainings)
+            } else {
+                if (page > 1) {
+                    setPage(page - 1);
+                } else {
+                    if (trainingId === currentTraining.task_id)
+                        setCurrentTraining(null);
+                    setTrainings([]);
+                    setTotal(0);
+                }
+            }
         } catch (error) {
             setAlert({ variant: 'danger', message: error.response.data.error });
         } finally {
             handleCloseDeleteConfirmation();
+            setLoading(false);
+            setSubmitting(false);
         }
     };
+    
+    useEffect(() => {
+        pageRef.current = page;
+    }, [page]);
 
     useEffect(() => {
-        if (user && model) {
+        setPage(1);
+    }, [debouncedQuery])
+
+    useEffect(() => {
+        if (user && modelId) {
             const getTrainings = async () => {
                 try {
-                    const response = await axios.get(
-                        `/api/models/${model.id}/trainings`,
-                        {
-                            headers: {
-                                "Authorization": `Bearer ${user.token}`
-                            }
-                        }
-                    );
-                    setTrainings(response.data.trainings)
+                    setLoading(true)
+                    let params = {extended: '1', page: page, per_page: perPage};
+                    if (debouncedQuery) params.query = debouncedQuery;
+                    const headers = {"Authorization": `Bearer ${user.token}`};
+                    const response = await axios.get(`/api/models/${modelId}/trainings`, {params, headers});
+                    if (response.data.total > 0) {
+                        setTrainings(response.data.trainings);
+                        setTotal(response.data.total);
+                        if (page === 1 && debouncedQuery === '')
+                            setCurrentTraining(response.data.trainings[0])
+                    }
+                    setLoading(false)
                 } catch (error) {
                     setAlert({ variant: 'danger', message: error.response.data.error });
                 }
             };
             getTrainings();
         }
-    }, [user, model]);
+    }, [user, modelId, page, perPage, debouncedQuery]);
 
     useEffect(() => {
-        if (search !== '') {
-            setFilter(trainings.filter((training) => training.version.toLowerCase().includes(search.toLowerCase())));
-        } else {
-            setFilter(trainings);
+        if (user && socket && socket.connected && currentTraining) {
+            if (currentTraining.status === 'PENDING' || currentTraining.status === 'RECEIVED' || currentTraining.status === 'STARTED') {
+                if (!rooms.current.has(currentTraining.task_id)) {
+                    socket.on('status', (data) => {
+                        setCurrentTraining(prev => ({...prev, ...data}));
+                        setTrainings(prev => prev.map(training => 
+                            training.task_id === currentTraining.task_id 
+                                ? {...training, ...data} 
+                                : training
+                        ));
+                        if (data.status === 'SUCCESS' || data.status === 'FAILURE') {
+                            socket.emit('leave', data.task_id);
+                            socket.off('status');
+                            rooms.current.delete(data.task_id);
+                        }
+                    });
+                    socket.emit('join', currentTraining.task_id);
+                    rooms.current.add(currentTraining.task_id);
+                }
+            }
         }
-    }, [trainings, search])
-
-    useEffect(() => {
-        const start = (page - 1) * itemsPerPage;
-        const end = start + itemsPerPage;
-        setData(filter.slice(start, end));
-        if (filter.length > 0)
-            setPage(Math.min(page, Math.ceil(filter.length / itemsPerPage)));
-    }, [filter, page])
+    }, [user, socket, currentTraining, page]);
 
     return (
         <>
@@ -155,12 +242,73 @@ const History = () => {
             </Row>
             <Row className="mt-4">
                 <Col>
+                    <ButtonGroup>
+                        <Button
+                            variant="light"
+                            style={{
+                                border: '1px solid #dee2e6'
+                            }}
+                            onClick={() => setShowParameters(true)}
+                        >
+                            <Sliders />
+                        </Button>
+                        {total > 0 ?
+                            currentTraining.status === 'PENDING' || currentTraining.status === 'RECEIVED' ?
+                                <Button
+                                    variant="light"
+                                    disabled
+                                    style={{
+                                        border: '1px solid #dee2e6'
+                                    }}
+                                >
+                                    <Spinner
+                                        animation="border"
+                                        size="sm"
+                                    />
+                                    &nbsp;pending...
+                                </Button>
+                            : currentTraining.status === 'STARTED' ?
+                                <Button
+                                    variant="light"
+                                    disabled
+                                    style={{
+                                        border: '1px solid #dee2e6'
+                                    }}
+                                >
+                                    <Spinner
+                                        animation="grow"
+                                        size="sm"
+                                    />
+                                    &nbsp;training...
+                                </Button>
+                            : <Button
+                                variant="light"
+                                    onClick={handleTrain}
+                                    style={{
+                                        border: '1px solid #dee2e6'
+                                    }}
+                                >
+                                    <ArrowClockwise />&nbsp;start training
+                            </Button>
+                        : 
+                        <Button
+                            variant="light"
+                                onClick={handleTrain}
+                                style={{
+                                    border: '1px solid #dee2e6'
+                                }}
+                            >
+                                <ArrowClockwise />&nbsp;start training
+                        </Button>}
+                    </ButtonGroup>
+                </Col>
+                <Col>
                     <Form>
                         <Form.Control
                             type="text"
                             placeholder="search for trainings..."
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
                         />
                     </Form>
                 </Col>
@@ -187,20 +335,21 @@ const History = () => {
                             </tr>
                         </thead>
                         <tbody>
-                            {trainings.length > 0 ? search !== '' && filter.length === 0 ? (
-                                <tr>
-                                    <td
-                                        colSpan={7}
-                                        style={{
-                                            verticalAlign: 'middle'
-                                        }}
-                                    >
-                                        <i class="bi bi-ban" />&nbsp;could not find the training you are looking for.
-                                    </td>
-                                </tr>
-                            ) : data.map((training, index) => (
+                        {loading ? (
+                            <tr >
+                                <td
+                                    colSpan={7}
+                                    style={{
+                                        verticalAlign: 'middle'
+                                    }}
+                                >
+                                    <Spinner animation='border' size='lg'/>
+                                </td>
+                            </tr>
+                        ) : total > 0 ? 
+                            trainings.map((training, index) => (
                                 <tr key={training.id}>
-                                    <td>{(page - 1) * itemsPerPage + index + 1}.</td>
+                                    <td>{(page - 1) * perPage + index + 1}.</td>
                                     <td>{training.version}</td>
                                     <td>{training.status}</td>
                                     <td>{training.created_at}</td>
@@ -214,7 +363,7 @@ const History = () => {
                                             <Dropdown.Menu>
                                                 <Dropdown.Item
                                                     onClick={() => handleOpenChanges(training)}
-                                                    disabled={(page - 1) * itemsPerPage + index + 1 === 0}
+                                                    disabled={(page - 1) * perPage + index + 1 === 0 || !currentTraining || currentTraining.status === 'PENDING' || currentTraining.status === 'RECEIVED'}
                                                 >
                                                     <PlusSlashMinus />
                                                     &nbsp;
@@ -257,7 +406,18 @@ const History = () => {
                                         </Dropdown>
                                     </td>
                                 </tr>
-                            )) : (
+                            )) : query !== '' ? (
+                                <tr>
+                                    <td
+                                        colSpan={7}
+                                        style={{
+                                            verticalAlign: 'middle'
+                                        }}
+                                    >
+                                        <i class="bi bi-ban" />&nbsp;could not find the training you are looking for.
+                                    </td>
+                                </tr>
+                            ) : (
                                 <tr>
                                     <td
                                         colSpan={7}
@@ -271,14 +431,15 @@ const History = () => {
                             )}
                         </tbody>
                     </Table>
-                    {filter.length > itemsPerPage &&
-                    <Pagination size='sm'>
+                    <br></br>
+                    {total > perPage &&
+                    <Pagination>
                         <Pagination.Prev
                             onClick={() => setPage((prevPage) => Math.max(prevPage - 1, 1))}
                             disabled={page === 1}
                         />
-                        {[...Array(Math.ceil(filter.length / itemsPerPage))].map((_, i) => (
-                            (i === 0 || i === Math.ceil(filter.length / itemsPerPage) - 1 || (i >= page - Math.floor(maxVisiblePages / 2) && i <= page + Math.floor(maxVisiblePages / 2))) ? (
+                        {[...Array(Math.ceil(total / perPage))].map((_, i) => (
+                            (i === 0 || i === Math.ceil(total / perPage) - 1 || (i >= page - Math.floor(maxVisiblePages / 2) && i <= page + Math.floor(maxVisiblePages / 2))) ? (
                                 <Pagination.Item
                                     key={i + 1}
                                     active={i + 1 === page}
@@ -291,30 +452,293 @@ const History = () => {
                             )
                         ))}
                         <Pagination.Next
-                            onClick={() => setPage((prevPage) => Math.min(prevPage + 1, Math.ceil(filter.length / itemsPerPage)))}
-                            disabled={page === Math.ceil(filter.length / itemsPerPage)}
+                            onClick={() => setPage((prevPage) => Math.min(prevPage + 1, Math.ceil(total / perPage)))}
+                            disabled={page === Math.ceil(total / perPage)}
                         />
                     </Pagination>}
                 </Col>
             </Row>
-            <Modal size='lg' centered show={showChanges} onHide={handleCloseChanges}>
+            <Modal size="lg" centered show={showParameters} onHide={() => setShowParameters(false)}>
+                <Modal.Header closeButton>
+                    <Modal.Title>
+                        Parameters&nbsp;
+                        <OverlayTrigger
+                            placement='bottom'
+                            overlay={
+                                <Popover>
+                                    <Popover.Header as="h3"><InfoCircle />&nbsp;Parameters</Popover.Header>
+                                    <Popover.Body>
+                                        Configurations set before training which influence the learning process. <strong>Only saved after training is completed successfully.</strong>
+                                    </Popover.Body>
+                                </Popover>
+                            }
+                        >
+                            <QuestionCircle />
+                        </OverlayTrigger>
+                    </Modal.Title>
+                </Modal.Header>
+                <Modal.Body>
+                    <Form>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm="4">
+                                validation split&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm="6">
+                                <Form.Range
+                                    min={0.0}
+                                    max={1.0}
+                                    step={0.05}
+                                    value={paramters.validation_split}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, validation_split: parseFloat(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                            <Col sm="2">
+                                <Form.Control
+                                    type='number'
+                                    min={0.0}
+                                    max={1.0}
+                                    step={0.05}
+                                    value={paramters.validation_split}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, validation_split: parseFloat(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm="4">
+                                epochs&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm="6">
+                                <Form.Range
+                                    min={1}
+                                    max={1000}
+                                    step={1}
+                                    value={paramters.epochs}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, epochs: parseInt(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                            <Col sm="2">
+                                <Form.Control
+                                    type='number'
+                                    min={1}
+                                    max={1000}
+                                    step={1}
+                                    value={paramters.epochs}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, epochs: parseInt(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm="4">
+                                batch size&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm="6">
+                                <Form.Range
+                                    min={4}
+                                    max={128}
+                                    step={4}
+                                    value={paramters.batch_size}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, batch_size: parseInt(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                            <Col sm="2">
+                                <Form.Control
+                                    type='number'
+                                    min={4}
+                                    max={128}
+                                    step={4}
+                                    value={paramters.batch_size}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, batch_size: parseInt(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm="4">
+                                embedding dimensions&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm="6">
+                                <Form.Range
+                                    min={32}
+                                    max={256}
+                                    step={8}
+                                    value={paramters.embedding_dims}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, embedding_dims: parseInt(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                            <Col sm="2">
+                                <Form.Control
+                                    type='number'
+                                    min={32}
+                                    max={256}
+                                    step={8}
+                                    value={paramters.embedding_dims}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, embedding_dims: parseInt(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm="4">
+                                dropout&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm="6">
+                                <Form.Range
+                                    min={0.0}
+                                    max={1.0}
+                                    step={0.05}
+                                    value={paramters.dropout}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, dropout: parseFloat(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                            <Col sm="2">
+                                <Form.Control
+                                    type='number'
+                                    min={0.0}
+                                    max={1.0}
+                                    step={0.05}
+                                    value={paramters.dropout}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, dropout: parseFloat(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm="4">
+                                early stopping&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm='8'>
+                                <Form.Check
+                                    type='switch'
+                                    onChange={(e) => { setParameters({ ...paramters, early_stopping: e.target.checked }) }}
+                                    checked={paramters.early_stopping}
+                                />
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm='4'>
+                                monitor&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm='3'>
+                                <Form.Select
+                                    disabled={!paramters.early_stopping}
+                                    value={paramters.monitor}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, monitor: e.target.value })
+                                    }}
+                                >
+                                    <option value='accuracy'>
+                                        accuracy
+                                    </option>
+                                    <option value='loss'>
+                                        loss
+                                    </option>
+                                    <option value='val_accuracy'>
+                                        validation accuracy
+                                    </option>
+                                    <option value='val_loss' selected>
+                                        validation loss
+                                    </option>
+                                </Form.Select>
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm="4">
+                                patience&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm="6">
+                                <Form.Range
+                                    disabled={!paramters.early_stopping}
+                                    min={1}
+                                    max={50}
+                                    step={1}
+                                    value={paramters.patience}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, patience: parseInt(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                            <Col sm="2">
+                                <Form.Control
+                                    disabled={!paramters.early_stopping}
+                                    type='number'
+                                    min={1}
+                                    max={50}
+                                    step={1}
+                                    value={paramters.patience}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, patience: parseInt(e.target.value) })
+                                    }}
+                                />
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm="4">
+                                pruning&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm='8'>
+                                <Form.Check
+                                    type='switch'
+                                    onChange={(e) => { setParameters({ ...paramters, pruning: e.target.checked }) }}
+                                    checked={paramters.pruning}
+                                />
+                            </Col>
+                        </FormGroup>
+                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
+                            <Form.Label column sm='4'>
+                                save format&nbsp;<QuestionCircle />
+                            </Form.Label>
+                            <Col sm='3'>
+                                <Form.Select
+                                    value={paramters.save_format}
+                                    onChange={(e) => {
+                                        setParameters({ ...paramters, save_format: e.target.value })
+                                    }}
+                                >
+                                    <option value='tf' selected>tf</option>
+                                    <option value='keras'>keras</option>
+                                    <option value='h5'>h5</option>
+                                    <option value='tflite'>tflite</option>
+                                    <option value='onnx'>onnx</option>
+                                </Form.Select>
+                            </Col>
+                        </FormGroup>
+                    </Form>
+                </Modal.Body>
+            </Modal>
+            <Modal centered fullscreen={true} show={showChanges} onHide={handleCloseChanges}>
                 <Modal.Header closeButton>
                     <Modal.Title>Changes&nbsp;<QuestionCircle /></Modal.Title>
                 </Modal.Header>
                 <Modal.Body
                     style={{
-                        maxHeight: '75vh',
                         overflowY: 'scroll'
                     }}
                 >
-                    {selectedTraining && <ReactDiffViewer 
-                        oldValue={selectedTraining.args[0].map((item, index) => `${item}, ${selectedTraining.args[1][index]}`).join('\n')}
+                    {selectedTraining && currentTraining && <ReactDiffViewer 
+                        oldValue={selectedTraining.args[0].map((item, index) => `${item}\t${selectedTraining.args[1][index]}`).join('\n')}
                         leftTitle={`${selectedTraining.version} (SELECTED)`}
-                        newValue={trainings[0].args[0].map((item, index) => `${item}, ${trainings[0].args[1][index]}`).join('\n')}
-                        rightTitle={`${trainings[0].version} (LATEST)`}
+                        newValue={currentTraining.args[0].map((item, index) => `${item}\t${currentTraining.args[1][index]}`).join('\n')}
+                        rightTitle={`${currentTraining.version} (LATEST)`}
                         splitView={true}
                         showDiffOnly={true}
-                        hideLineNumbers={true}
+                        hideLineNumbers={false}
                     />}
                 </Modal.Body>
             </Modal>
@@ -362,7 +786,7 @@ const History = () => {
                         type="submit"
                         variant="danger"
                         disabled={submitting}
-                        onClick={() => handleDelete()}
+                        onClick={() => handleDelete(selectedTraining.id)}
                     >
                         {submitting ? (
                             <>

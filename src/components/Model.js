@@ -1,6 +1,7 @@
-import { Breadcrumb, Container, Row, Col, Nav } from 'react-bootstrap';
+import { Container, Row, Col, Nav } from 'react-bootstrap';
 import { Translate, ClockHistory, ClipboardCheck, RocketTakeoff, Activity } from 'react-bootstrap-icons';
 import { Routes, Route, Link } from 'react-router-dom';
+import { SocketProvider } from '../contexts/SocketContext';
 import { ModelProvider } from '../contexts/ModelContext';
 import Build from './Build';
 import Utterances from './Utterances';
@@ -11,16 +12,6 @@ const Model = () => {
     return (
         <Container>
             <Row>
-                {/* <Col sm={5}>
-                    <Breadcrumb>
-                        <Breadcrumb.Item>
-                            models
-                        </Breadcrumb.Item>
-                        <Breadcrumb.Item active>
-                            labels
-                        </Breadcrumb.Item>
-                    </Breadcrumb>
-                </Col> */}
                 <Col>
                     <Nav fill variant='underline' defaultActiveKey='build'>
                         <Nav.Item>
@@ -34,20 +25,20 @@ const Model = () => {
                         </Nav.Item>
                         <Nav.Item>
                             <Nav.Link
-                                eventKey='history'
+                                eventKey='train'
                                 as={Link}
-                                to='history'
+                                to='train'
                             >
-                                <ClockHistory />&nbsp;History
+                                <ClockHistory />&nbsp;Train
                             </Nav.Link>
                         </Nav.Item>
                         <Nav.Item>
                             <Nav.Link
-                                eventKey='evaluate'
+                                eventKey='test'
                                 as={Link}
-                                to='evaluate'
+                                to='test'
                             >
-                                <ClipboardCheck />&nbsp;Evaluate
+                                <ClipboardCheck />&nbsp;Test
                             </Nav.Link>
                         </Nav.Item>
                         <Nav.Item>
@@ -72,11 +63,13 @@ const Model = () => {
                 </Col>
             </Row>
             <ModelProvider>
-                <Routes>
-                    <Route path="build" element={<Build />} />
-                    <Route path="history" element={<History />} />
-                    <Route path="/build/:labelId/utterances" element={<Utterances />} />
-                </Routes>
+                <SocketProvider>
+                    <Routes>
+                        <Route path="build" element={<Build />} />
+                        <Route path="train" element={<History />} />
+                        <Route path="/build/:labelId/utterances" element={<Utterances />} />
+                    </Routes>
+                </SocketProvider>
             </ModelProvider>
         </Container>
     );

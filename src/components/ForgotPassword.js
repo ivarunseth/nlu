@@ -1,20 +1,17 @@
 import React, { useContext, useState, useEffect, useRef } from "react";
 import { Alert, Form, InputGroup, Button, Spinner, Row, Col, Container } from "react-bootstrap";
-import { Eye, EyeSlash } from "react-bootstrap-icons";
 import { Link, useLocation } from "react-router-dom";
 import { useNavigate } from "react-router";
 import { UserContext } from "../contexts/UserContext";
 
-const SignIn = () => {
+const ForgotPassword = () => {
 
     const location = useLocation();
     const navigate = useNavigate();
 
-    const { user, signIn } = useContext(UserContext);
+    const { user } = useContext(UserContext);
 
     const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
-    const [showPassword, setShowPassword] = useState(false);
 
     const [alert, setAlert] = useState(null);
 
@@ -22,7 +19,6 @@ const SignIn = () => {
     const [submitting, setSubmitting] = useState(false);
 
     const emailInput = useRef(null);
-    const passwordInput = useRef(null);
 
     const handleSignIn = async (e) => {
         e.preventDefault();
@@ -32,15 +28,14 @@ const SignIn = () => {
             e.stopPropagation();
             return;
         }
-        if (email !== '' && password !== '') {
+        if (email !== '') {
             setSubmitting(true);
             try {
-                await signIn(email, password);
+                // await signIn(email, password);
             } catch (error) {
                 setAlert({ variant: 'danger', message: error.response.data.error });
             } finally {
                 setValidated(false);
-                setPassword('')
                 setSubmitting(false);
             }
         }
@@ -93,43 +88,6 @@ const SignIn = () => {
                                 </Form.Floating>
                             </InputGroup>
                         </Form.Group>
-                        <Form.Group className="mb-3">
-                            <InputGroup hasValidation>
-                                <Form.Floating>
-                                    <Form.Control
-                                        id="password"
-                                        ref={passwordInput}
-                                        type={showPassword ? "text" : "password"}
-                                        placeholder="Enter password"
-                                        value={password}
-                                        onChange={(e) => setPassword(e.target.value)}
-                                        required
-                                        autoComplete='on'
-                                        isValid={validated && password && passwordInput.current && passwordInput.current.validity.valid}
-                                        isInvalid={validated && (!password || (passwordInput.current && !passwordInput.current.validity.valid))}
-                                        style={{
-                                            borderTopRightRadius: 0,
-                                            borderBottomRightRadius: 0
-                                        }}
-                                    />
-                                    {validated ? (
-                                        <Form.Label className={`${(!password || (passwordInput.current && !passwordInput.current.validity.valid)) && 'text-danger'}`} htmlFor="password">
-                                            {!password ? 'Enter your password' : !passwordInput.current.validity.valid ? 'Invalid password' : 'Password'}
-                                        </Form.Label>
-                                    ) : (
-                                        <Form.Label htmlFor="password">
-                                            Password
-                                        </Form.Label>
-                                    )}
-                                </Form.Floating>
-                                <InputGroup.Text onClick={() => setShowPassword(!showPassword)}>
-                                    {showPassword ? <EyeSlash /> : <Eye />}
-                                </InputGroup.Text>
-                            </InputGroup>
-                        </Form.Group>
-                        <Form.Text>
-                            <Link style={{ textDecoration: 'none' }}>Forgot password?</Link>
-                        </Form.Text>
                         <div className="d-grid gap-2 my-3">
                             <Button
                                 type="submit"
@@ -143,11 +101,11 @@ const SignIn = () => {
                                             size="sm"
                                         />
                                         &nbsp;
-                                        Signing in...
+                                        Submitting...
                                     </>
                                 ) : (
                                     <span>
-                                        Sign in
+                                        Submit
                                     </span>
 
                                 )}
@@ -159,7 +117,7 @@ const SignIn = () => {
                                 justifyContent: 'center'
                             }}
                         >
-                            Don't have an account?&nbsp;<Link to='/signup' style={{ textDecoration: 'none' }}>Sign up</Link>
+                            Back to&nbsp;<Link to='/signin' style={{ textDecoration: 'none' }}>sign in</Link>.
                         </Form.Text>
                     </Form>
                 </Col>
@@ -168,4 +126,4 @@ const SignIn = () => {
     );
 };
 
-export default SignIn;
+export default ForgotPassword;

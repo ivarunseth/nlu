@@ -1,8 +1,8 @@
 import axios from "axios";
 import React, { useContext, useState, useEffect } from "react";
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router-dom';
 import { Alert, Container, Row, Col, Dropdown, Form, InputGroup, Button, Table, Pagination, Modal, Spinner } from "react-bootstrap";
-import { PlusLg, Download, Pen, Trash, InfoCircle } from "react-bootstrap-icons";
+import { PlusLg, Download, Pen, Trash, InfoCircle } from "react-bootstrap-icons";   
 import { UserContext } from "../contexts/UserContext";
 import useDebounce from '../useDebounce';
 
@@ -59,11 +59,11 @@ const Home = () => {
                     data.append('header', header);
                 }
                 data.append('description', description);
-                const headers = {"Authorization": `Bearer ${user.token}`}
+                const headers = {"Authorization": `Bearer ${user.token}`};
                 const response = await axios.post('/api/models', data, { headers });
                 if (page === 1) {
                     if (models.length + 1 > perPage) {
-                        setModels([response.data, ...models.slice(0, -1)])
+                        setModels([response.data, ...models.slice(0, -1)]);
                     } else {
                         setModels([response.data, ...models]);
                     }
@@ -81,7 +81,7 @@ const Home = () => {
 
     const handleDownload = async (model) => {
         try {
-            const headers = {"Authorization": `Bearer ${user.token}`}
+            const headers = {"Authorization": `Bearer ${user.token}`};
             const response = await axios.get(`/api/models/${model.id}?format=csv`, {responseType: 'blob', headers });
             const href = URL.createObjectURL(response.data);
             const link = document.createElement('a');
@@ -127,7 +127,7 @@ const Home = () => {
                     data.append('header', header);
                 }
                 data.append('description', description);
-                const headers = {'Authorization': `Bearer ${user.token}`}
+                const headers = {'Authorization': `Bearer ${user.token}`};
                 const response = await axios.put(`/api/models/${currentModel.id}`, data, { headers });
                 setModels(prevModels => prevModels.map((m) => m.id === currentModel.id ? response.data : m));
             } catch (error) {
@@ -151,7 +151,7 @@ const Home = () => {
     const handleDelete = async () => {
         try {
             setSubmitting(true);
-            const headers = {"Authorization": `Bearer ${user.token}`}
+            const headers = {"Authorization": `Bearer ${user.token}`};
             await axios.delete(`/api/models/${currentModel.id}`, { headers });
             if (models.length - 1 > 0) {
                 setLoading(true);
@@ -159,9 +159,9 @@ const Home = () => {
                     setModels(prevModels => prevModels.filter((m) => m.id !== currentModel.id));
                     setTotal(total - 1);
                 } else {
-                    let params = { page: page, per_page: perPage }
+                    let params = { page: page, per_page: perPage };
                     if (debouncedQuery !== '')
-                        params.query = debouncedQuery
+                        params.query = debouncedQuery;
                     const response = await axios.get(`/api/models`, { params, headers });
                     setModels(response.data.models);
                     setTotal(response.data.total);
@@ -192,17 +192,15 @@ const Home = () => {
             const getModels = async () => {
                 try {
                     setLoading(true);
-                    const headers = {"Authorization": `Bearer ${user.token}`}
-                    let params = { page: page, per_page: perPage }
-                    if (debouncedQuery !== '')
-                        params.query = debouncedQuery
+                    const headers = {"Authorization": `Bearer ${user.token}`};
+                    let params = { page: page, per_page: perPage };
+                    if (debouncedQuery !== '') params.query = debouncedQuery;
                     const response = await axios.get(`/api/models`, { params, headers });
                     setModels(response.data.models);
                     setTotal(response.data.total);
+                    setLoading(false);
                 } catch (error) {
                     setAlert({ variant: 'danger', message: error.response.data.error });
-                } finally {
-                    setLoading(false);
                 }
             };
             getModels();
@@ -337,7 +335,7 @@ const Home = () => {
                         </tbody>
                     </Table>
                     {total > perPage &&
-                        <Pagination size='sm'>
+                        <Pagination>
                             <Pagination.Prev
                                 onClick={() => setPage((prevPage) => Math.max(prevPage - 1, 1))}
                                 disabled={page === 1}
