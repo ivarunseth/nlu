@@ -1,4 +1,4 @@
-from flask import g
+from flask import g, session
 
 from ... import db
 from ...auth import basic_auth, token_auth
@@ -28,4 +28,5 @@ def delete_token():
     """
     g.current_user.token = None
     db.session.commit()
+    session.clear()
     return '', 204

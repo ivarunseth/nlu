@@ -13,14 +13,17 @@ def get_labels(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
     if model is None:
         abort(404, 'Model not found: %s' % modelId)
+    labels = model.labels
+    query = request.args.get('query', None)
+    if query is not None:
+        labels = model.labels.filter(Label.name.ilike(f'%{query}%'))
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 10, type=int)
-    query = request.args.get('query', None)
-    if query:
-        labels = model.labels.filter(Label.name.ilike(f'%{query}%'))
-    else:
-        labels = model.labels
-    labels = labels.order_by(Label.id.desc()).paginate(page=page, per_page=per_page, error_out=False)
+    labels = labels.order_by(
+        Label.id.desc()).paginate(
+            page=page, 
+            per_page=per_page, 
+            error_out=False)
     return {
         'labels': [label.to_dict() for label in labels.items],
         'total': labels.total,

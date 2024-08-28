@@ -2,7 +2,7 @@ from flask import request, g, abort
 
 from ... import db
 from ...auth import token_auth
-from ...models import Utterance
+from ...models import Label, Utterance
 
 from . import api
 
@@ -16,13 +16,12 @@ def get_utterances(modelId, labelId):
     label = model.labels.filter_by(id=labelId).first()
     if label is None:
         abort(404, 'Label not found: %s' % labelId)
+    utterances = label.utterances
+    query = request.args.get('query', '', type=str)
+    if query is not '':
+        utterances = label.utterances.filter(Utterance.text.ilike(f'%{query}%'))
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 10, type=int)
-    query = request.args.get('query', None)
-    if query:
-        utterances = label.utterances.filter(Utterance.text.ilike(f'%{query}%'))
-    else:
-        utterances = label.utterances
     utterances = utterances.order_by(Utterance.id.desc()).paginate(page=page, per_page=per_page, error_out=False)
     return {
         'utterances': [utterance.to_dict() for utterance in utterances.items],
@@ -35,13 +34,7 @@ def get_utterances(modelId, labelId):
 @api.get('/models/<modelId>/labels/<labelId>/utterances/<utteranceId>')
 @token_auth.login_required
 def get_utterance(modelId, labelId, utteranceId):
-    model = g.current_user.models.filter_by(id=modelId).first()
-    if model is None:
-        abort(404, 'Model not found: %s' % modelId)
-    label = model.labels.filter_by(id=labelId).first()
-    if label is None:
-        abort(404, 'Label not found: %s' % labelId)
-    utterance = label.utterances.filter_by(id=utteranceId).first()
+    utterance = Utterance.query.filter_by(id=utteranceId).first()
     if utterance is None:
         abort(404, 'Utterance not found: %s' % utteranceId)
     return utterance.to_dict(), 200
@@ -50,14 +43,9 @@ def get_utterance(modelId, labelId, utteranceId):
 @api.post('/models/<modelId>/labels/<labelId>/utterances')
 @token_auth.login_required
 def create_utterance(modelId, labelId):
-    model = g.current_user.models.filter_by(id=modelId).first()
-    if model is None:
-        abort(404, 'Model not found: %s' % modelId)
-    label = model.labels.filter_by(id=labelId).first()
+    label = Label.query.filter_by(id=labelId).first()
     if label is None:
         abort(404, 'Label not found: %s' % labelId)
-    if not request.is_json:
-        abort(400, 'Request is not JSON type')
     utterance = Utterance.create(request.get_json(), label)
     db.session.add(utterance)
     db.session.commit()
@@ -67,17 +55,11 @@ def create_utterance(modelId, labelId):
 @api.put('/models/<modelId>/labels/<labelId>/utterances/<utteranceId>')
 @token_auth.login_required
 def edit_utterance(modelId, labelId, utteranceId):
-    model = g.current_user.models.filter_by(id=modelId).first()
-    if model is None:
-        abort(404, 'Model not found: %s' % modelId)
-    label = model.labels.filter_by(id=labelId).first()
-    if label is None:
-        abort(404, 'Label not found: %s' % labelId)
-    utterance = label.utterances.filter_by(id=utteranceId).first()
-    if utterance is None:
-        abort(404, 'Utterance not found: %s' % utteranceId)
     if not request.is_json:
         abort(400, 'Request is not JSON type')
+    utterance = Utterance.query.filter_by(id=utteranceId).first()
+    if utterance is None:
+        abort(404, 'Utterance not found: %s' % utteranceId)
     utterance.from_dict(request.get_json())
     db.session.commit()
     return utterance.to_dict(), 200
@@ -86,13 +68,7 @@ def edit_utterance(modelId, labelId, utteranceId):
 @api.delete('/models/<modelId>/labels/<labelId>/utterances/<utteranceId>')
 @token_auth.login_required
 def delete_utterances(modelId, labelId, utteranceId):
-    model = g.current_user.models.filter_by(id=modelId).first()
-    if model is None:
-        abort(404, 'Model not found: %s' % modelId)
-    label = model.labels.filter_by(id=labelId).first()
-    if label is None:
-        abort(404, 'Label not found: %s' % labelId)
-    utterance = label.utterances.filter_by(id=utteranceId).first()
+    utterance = Utterance.query.filter_by(id=utteranceId).first()
     if utterance is None:
         abort(404, 'Utterance not found: %s' % utteranceId)
     db.session.delete(utterance)
