@@ -1,8 +1,10 @@
 from flask import request, g, current_app, abort, send_file
+from celery import states
 from sqlalchemy import cast, String
 
 from ..auth import token_auth
 from ..database import Training
+from ..tasks import training as training_tasks
 
 from .. import db, store
 from . import api
@@ -88,8 +90,16 @@ def start_training(modelId, trainingId):
     if training is None:
         abort(404, 'Training not found: %s' % trainingId)
     kwargs = request.get_json(silent=True) or {}
-    training.start(**kwargs)
+    task = training.start(**kwargs)
     db.session.commit()
+    task.update_state(
+        states.PENDING,
+        name=training_tasks.train.name,
+        args=(training.path, model.type),
+        kwargs=kwargs,
+        retries=0,
+        queue='training'
+    )
     return training.to_dict(extended=True), 200
 
 
