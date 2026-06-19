@@ -3,35 +3,35 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
-    "@testing-library/jest-dom": "^5.17.0",
-    "@testing-library/react": "^13.4.0",
-    "@testing-library/user-event": "^13.5.0",
-    "axios": "^1.6.5",
-    "bootstrap": "^5.3.2",
-    "bootstrap-icons": "^1.11.3",
-    "chart.js": "^4.4.1",
-    "react": "^18.2.0",
-    "react-bootstrap": "^2.9.2",
-    "react-bootstrap-icons": "^1.10.3",
-    "react-chartjs-2": "^5.2.0",
-    "react-diff-viewer": "^3.1.1",
-    "react-dom": "^18.2.0",
-    "react-router-dom": "^6.21.2",
-    "react-scripts": "5.0.1",
-    "socket.io-client": "^4.7.4",
-    "web-vitals": "^2.1.4"
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "axios": "^1.18.0",
+    "bootstrap": "^5.3.8",
+    "bootstrap-icons": "^1.13.1",
+    "eslint-config-react-app": "^7.0.1",
+    "react": "^19.2.7",
+    "react-bootstrap": "^2.10.10",
+    "react-bootstrap-icons": "^1.11.6",
+    "react-dom": "^19.2.7",
+    "react-router-dom": "^7.18.0",
+    "recharts": "^3.8.1",
+    "socket.io-client": "^4.8.3"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "eslintConfig": {
     "extends": [
       "react-app",
       "react-app/jest"
     ]
+  },
+  "jest": {
+    "moduleNameMapper": {
+      "^axios$": "axios/dist/node/axios.cjs"
+    }
   },
   "browserslist": {
     "production": [
@@ -45,5 +45,9 @@
       "last 1 safari version"
     ]
   },
-  "proxy": "http://127.0.0.1:5000"
+  "proxy": "http://127.0.0.1:5001",
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.2",
+    "vite": "^8.0.16"
+  }
 }

@@ -3,7 +3,7 @@ from flask_httpauth import HTTPBasicAuth, HTTPTokenAuth
 
 from jwt import decode, ExpiredSignatureError, InvalidTokenError
 
-from .models import User
+from .database import User
 
 from . import db
 
@@ -13,6 +13,42 @@ from . import db
 basic_auth = HTTPBasicAuth()
 token_auth = HTTPTokenAuth('Bearer')
 token_optional_auth = HTTPTokenAuth('Bearer')
+
+
+def extract_bearer_token_from_headers(headers):
+    authorization = headers.get('Authorization') if headers else None
+    if not authorization:
+        return None
+    parts = authorization.split(None, 1)
+    if len(parts) != 2:
+        return None
+    scheme, token = parts
+    if scheme.lower() != 'bearer':
+        return None
+    return token.strip() or None
+
+
+def _invalidate_token(token):
+    user = User.query.filter_by(token=token).first()
+    if user is not None:
+        user.token = None
+        db.session.commit()
+        session.clear()
+
+
+def validate_token(token):
+    if not token:
+        return False
+    try:
+        data = decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
+    except (ExpiredSignatureError, InvalidTokenError):
+        _invalidate_token(token)
+        return False
+    user = User.query.filter_by(id=data['id'], token=token).first()
+    if user is None:
+        return False
+    g.current_user = user
+    return True
 
 
 @basic_auth.verify_password
@@ -38,25 +74,8 @@ def password_error():
 @token_auth.verify_token
 def verify_token(token):
     """Token verification callback."""
-    if not 'Authorization' in request.headers:
-        return False
-    token = token or request.headers['Authorization'].split()[1]
-    if not token:
-        return False
-    try:
-        data = decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
-    except (ExpiredSignatureError, InvalidTokenError):
-        user = User.query.filter_by(token=token).first()
-        if user is not None:
-            user.token = None
-            db.session.commit()
-            session.clear()
-        return False
-    user = User.query.filter_by(id=data['id'], token=token).first()
-    if user is None:
-        return False
-    g.current_user = user
-    return True
+    token = token or extract_bearer_token_from_headers(request.headers)
+    return validate_token(token)
 
 
 @token_auth.error_handler
@@ -69,9 +88,9 @@ def token_error():
 @token_optional_auth.verify_token
 def verify_optional_token(token):
     """Alternative token authentication that allows anonymous logins."""
-    if token == '':
+    if not token:
         # no token provided, mark the logged in users as None and continue
         g.current_user = None
         return True
     # but if a token was provided, make sure it is valid
-    return verify_token(token)
+    return validate_token(token)

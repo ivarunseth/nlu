@@ -1,44 +1,24 @@
-import functools
-
-from flask import request, session
-from flask_socketio import join_room, leave_room, disconnect, ConnectionRefusedError
+from flask import request
+from flask_socketio import join_room, leave_room, ConnectionRefusedError
 from flask_socketio.namespace import Namespace
 
-from .auth import verify_token
-
-
-def authenticate(f):
-    @functools.wraps(f)
-    def wrapped(*args, **kwargs):
-        if 'token' in session: 
-            if verify_token(session['token']):
-                return f(*args, **kwargs)
-            del session['token']
-        disconnect()
-    return wrapped
-
+from .auth import verify_token, extract_bearer_token_from_headers
 
 class Event(Namespace):
 
     def on_connect(self, auth):
-        if 'Authorization' in request.headers:
-            token = request.headers.get('Authorization').split()[1]
-        elif auth and 'token' in auth:
-            token = auth['token']
-        else:
+        token = auth.get('token') if auth else None
+        if not token:
+            token = extract_bearer_token_from_headers(request.headers)
+        if not token:
             raise ConnectionRefusedError('Authorization required')
         if not verify_token(token):
             raise ConnectionRefusedError('token is invalid or expired')
-        session['token'] = token
 
-    def on_disconnect(self):
-        if 'token' in session:
-            del session['token']
+    def on_join(self, token, room):
+        if verify_token(token):
+            join_room(room)
 
-    @authenticate
-    def on_join(self, room):
-        join_room(room)
-
-    @authenticate
-    def on_leave(self, room):
-        leave_room(room)
+    def on_leave(self, token, room):
+        if verify_token(token):
+            leave_room(room)

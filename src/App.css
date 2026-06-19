@@ -36,3 +36,17 @@
     transform: rotate(360deg);
   }
 }
+
+footer a {
+  transition: color 0.2s ease-in-out;
+}
+
+footer a:hover {
+  color: #212529 !important;
+}
+
+main {
+  padding-bottom: 2rem;
+}
+
+

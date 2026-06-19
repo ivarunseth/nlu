@@ -1,4 +1,5 @@
 import os
+import sys
 
 from flask import Flask
 from flask_session import Session
@@ -11,6 +12,7 @@ from sqlalchemy import MetaData
 from redis import StrictRedis
 
 from .config import flask_config
+from .storage import Storage
 
 
 metadata = MetaData(naming_convention={
@@ -24,14 +26,12 @@ db = SQLAlchemy(metadata=metadata)
 migrate = Migrate()
 socketio = SocketIO(cors_allowed_origins='*',
                     channel='socketio', 
-                    logger=False,
+                    logger=True,
                     engineio_logger=True)
 redis = StrictRedis(host=os.environ.get('REDIS_HOST', 'localhost'), 
-                    port=os.environ.get('REDIS_POST', '6379'), 
+                    port=os.environ.get('REDIS_PORT', '6379'), 
                     db=os.environ.get('REDIS_DB', '0'))
-
-
-from . import models
+store = Storage()
 
 
 def create_application(config_name=os.environ.get('FLASK_ENV', 'development')):
@@ -39,6 +39,8 @@ def create_application(config_name=os.environ.get('FLASK_ENV', 'development')):
     app.config.from_object(flask_config[config_name])
 
     db.init_app(app)
+    from . import database
+
     migrate.init_app(app, db, directory='./migrations')
 
     Session(app)
@@ -47,20 +49,15 @@ def create_application(config_name=os.environ.get('FLASK_ENV', 'development')):
                       manage_session=False,
                       message_queue=app.config['SOCKETIO_MESSAGE_QUEUE'])
     
+    store.init_app(app)
+    
     from .events import Event
     socketio.on_namespace(Event('/'))
 
-    from .blueprints import api_blueprint
+    from .views import api as api_blueprint, before_app_first_request
     app.register_blueprint(api_blueprint, url_prefix='/api')
 
+    if 'db' not in sys.argv:
+        before_app_first_request(app)
+
     return app, socketio
-
-
-def create_prediction_server(config_name=os.environ.get('FLASK_ENV', 'development')):
-    app = Flask('Prediction Server')
-    app.config.from_object(flask_config[config_name])
-
-    from .blueprints import nlu_blueprint
-    app.register_blueprint(nlu_blueprint, url_prefix='/nlu')
-
-    return app
