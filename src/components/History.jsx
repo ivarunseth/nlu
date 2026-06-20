@@ -279,6 +279,11 @@ const TRAINING_DELETABLE_STATUSES = ['SUCCESS', 'FAILURE', 'ABORTED', 'REVOKED']
 const isTrainingActive = (training) => TRAINING_ACTIVE_STATUSES.includes(training?.status);
 const isTrainingReady = (training) => TRAINING_DONE_STATUSES.includes(training?.status);
 const isTrainingDeletable = (training) => TRAINING_DELETABLE_STATUSES.includes(training?.status);
+const mergeTraining = (training, data) => ({
+    ...training,
+    ...data,
+    task_id: data.task_id || training?.task_id
+});
 
 const getTrainingStatusBadge = (status) => {
     switch (status) {
@@ -674,7 +679,7 @@ const HistoryCharts = ({ history }) => {
 
     return (
         <Row className="mt-2 g-3" style={{ height: 'calc(100vh - 350px)' }}>
-            <Col lg={3} className="h-100">
+            <Col lg={2} className="h-100">
                 <Card className="border-light h-100">
                     <Card.Body className="p-3 d-flex flex-column">
                         <Form.Check
@@ -748,7 +753,7 @@ const HistoryCharts = ({ history }) => {
                     </Card.Body>
                 </Card>
             </Col>
-            <Col lg={9} className="h-100">
+            <Col lg={10} className="h-100">
                 <Card className="border-light h-100">
                     <Card.Body className="p-3 d-flex flex-column">
                         <div className="flex-grow-1" onDoubleClick={zoomOut}>
@@ -1236,11 +1241,13 @@ const History = () => {
     const [alert, setAlert] = useState(null);
     const [trainings, setTrainings] = useState([]);
     const [currentTraining, setCurrentTraining] = useState(null);
+    const [activeTrainings, setActiveTrainings] = useState([]);
     const [showParameters, setShowParameters] = useState(false);
     const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
     const [selectedTraining, setSelectedTraining] = useState(null);
     const [submitting, setSubmitting] = useState(false);
-    const [stoppingTraining, setStoppingTraining] = useState(false);
+    const [stoppingTrainingIds, setStoppingTrainingIds] = useState(new Set());
+    const [restartingTrainingIds, setRestartingTrainingIds] = useState(new Set());
     const [loading, setLoading] = useState(false);
     const [page, setPage] = useState(1);
     const pageRef = useRef(page);
@@ -1251,9 +1258,57 @@ const History = () => {
     const debouncedQuery = useDebounce(query, 500);
 
     const rooms = useRef(new Set())
-    const currentTrainingStatusRef = useRef(null);
-    const currentTrainingTaskId = currentTraining?.task_id;
-    const currentTrainingStatus = currentTraining?.status;
+    const hasActiveTraining = activeTrainings.length > 0;
+    const activeTrainingTaskIds = useMemo(
+        () => activeTrainings
+            .filter(isTrainingActive)
+            .map(training => training.task_id)
+            .filter(Boolean),
+        [activeTrainings]
+    );
+    const activeTrainingTaskKey = activeTrainingTaskIds.join('|');
+    const activeTrainingStatus = activeTrainings.some(training => training.status === 'STARTED')
+        ? 'STARTED'
+        : activeTrainings[0]?.status;
+
+    const syncActiveTraining = (training) => {
+        if (!training) return;
+        setActiveTrainings(prev => {
+            const withoutTraining = prev.filter(item =>
+                item.id !== training.id && item.task_id !== training.task_id
+            );
+            return isTrainingActive(training) ? [training, ...withoutTraining] : withoutTraining;
+        });
+    };
+
+    const updateTraining = (data) => {
+        let nextTraining = null;
+        setTrainings(prev => prev.map(training => {
+            if (training.id !== data.id && training.task_id !== data.task_id) return training;
+            nextTraining = mergeTraining(training, data);
+            return nextTraining;
+        }));
+        setCurrentTraining(prev => {
+            if (!prev || (prev.id !== data.id && prev.task_id !== data.task_id)) return prev;
+            const mergedTraining = mergeTraining(prev, data);
+            nextTraining = mergedTraining;
+            return mergedTraining;
+        });
+        setActiveTrainings(prev => {
+            let matched = false;
+            const updated = prev.map(training => {
+                if (training.id !== data.id && training.task_id !== data.task_id) return training;
+                matched = true;
+                return mergeTraining(training, data);
+            });
+            const candidate = nextTraining || (matched ? null : data);
+            const next = candidate ? [candidate, ...updated] : updated;
+            const deduped = next.filter((training, index, list) =>
+                training && list.findIndex(item => item.id === training.id) === index
+            );
+            return deduped.filter(isTrainingActive);
+        });
+    };
 
     useEffect(() => {
         setParameters(getDefaultParameters(model?.type));
@@ -1335,6 +1390,7 @@ const History = () => {
             let response = await axios.post(`/api/models/${modelId}/trainings`, {}, { headers });
             response = await axios.post(`/api/models/${modelId}/trainings/${response.data.id}/start`, paramters, { headers });
             setCurrentTraining(response.data);
+            syncActiveTraining(response.data);
             if (page === 1) {
                 if (total + 1 > perPage) {
                     setTrainings(prev => [response.data, ...prev.slice(0, -1)]);
@@ -1371,31 +1427,49 @@ const History = () => {
         }
     };
 
-    const handleStopTraining = async () => {
-        if (!currentTraining || !isTrainingActive(currentTraining)) return;
+    const handleStopTraining = async (training) => {
+        if (!training || !isTrainingActive(training)) return;
 
         try {
-            setStoppingTraining(true);
+            setStoppingTrainingIds(prev => new Set(prev).add(training.id));
             const headers = { "Authorization": `Bearer ${user.token}` };
             const response = await axios.post(
-                `/api/models/${modelId}/trainings/${currentTraining.id}/stop`,
+                `/api/models/${modelId}/trainings/${training.id}/stop`,
                 {},
                 { headers }
             );
-            setCurrentTraining(prev => ({
-                ...prev,
-                ...response.data,
-                task_id: response.data.task_id || prev?.task_id
-            }));
-            setTrainings(prev => prev.map(training =>
-                training.id === response.data.id
-                    ? { ...training, ...response.data, task_id: response.data.task_id || training.task_id }
-                    : training
-            ));
+            updateTraining(response.data);
         } catch (error) {
             setAlert({ variant: 'danger', message: error.response?.data?.error || error.message });
         } finally {
-            setStoppingTraining(false);
+            setStoppingTrainingIds(prev => {
+                const next = new Set(prev);
+                next.delete(training.id);
+                return next;
+            });
+        }
+    };
+
+    const handleRestartTraining = async (training) => {
+        if (!training || !isTrainingReady(training)) return;
+
+        try {
+            setRestartingTrainingIds(prev => new Set(prev).add(training.id));
+            const headers = { "Authorization": `Bearer ${user.token}` };
+            const response = await axios.post(
+                `/api/models/${modelId}/trainings/${training.id}/start`,
+                training.kwargs || {},
+                { headers }
+            );
+            updateTraining(response.data);
+        } catch (error) {
+            setAlert({ variant: 'danger', message: error.response?.data?.error || error.message });
+        } finally {
+            setRestartingTrainingIds(prev => {
+                const next = new Set(prev);
+                next.delete(training.id);
+                return next;
+            });
         }
     };
 
@@ -1415,9 +1489,10 @@ const History = () => {
             setLoading(true);
             const headers = { "Authorization": `Bearer ${user.token}` }
             await axios.delete(`/api/models/${model.id}/trainings/${trainingId}`, { headers });
+            setActiveTrainings(prev => prev.filter(training => training.id !== trainingId));
             if (trainings.length - 1 > 0) {
                 if (page === Math.ceil((total) / perPage)) {
-                    if (page === 1 && trainingId === currentTraining.id)
+                    if (page === 1 && trainingId === currentTraining?.id)
                         setCurrentTraining(trainings[1])
                     setTrainings(prev => prev.filter((t) => t.id !== trainingId));
                     setTotal(total - 1);
@@ -1428,14 +1503,14 @@ const History = () => {
                     const response = await axios.get(`/api/models/${model.id}/trainings`, { params, headers });
                     setTrainings(response.data.trainings);
                     setTotal(response.data.total);
-                    if (trainingId === currentTraining.id)
+                    if (trainingId === currentTraining?.id)
                         setCurrentTraining(response.data.trainings[0]);
                 }
             } else {
                 if (page > 1) {
                     setPage(page - 1);
                 } else {
-                    if (trainingId === currentTraining.task_id)
+                    if (trainingId === currentTraining?.id)
                         setCurrentTraining(null);
                     setTrainings([]);
                     setTotal(0);
@@ -1466,12 +1541,24 @@ const History = () => {
                     let params = { extended: '1', page: page, per_page: perPage };
                     if (debouncedQuery) params.query = debouncedQuery;
                     const headers = { "Authorization": `Bearer ${user.token}` };
-                    const response = await axios.get(`/api/models/${modelId}/trainings`, { params, headers });
+                    const [response, activeResponse] = await Promise.all([
+                        axios.get(`/api/models/${modelId}/trainings`, { params, headers }),
+                        axios.get(`/api/models/${modelId}/trainings`, {
+                            params: { extended: '1', page: 1, per_page: 1000 },
+                            headers
+                        })
+                    ]);
+                    setActiveTrainings((activeResponse.data.trainings || []).filter(isTrainingActive));
                     if (response.data.total > 0) {
                         setTrainings(response.data.trainings);
                         setTotal(response.data.total);
                         if (page === 1 && debouncedQuery === '')
                             setCurrentTraining(response.data.trainings[0])
+                    } else {
+                        setTrainings([]);
+                        setTotal(0);
+                        if (page === 1 && debouncedQuery === '')
+                            setCurrentTraining(null);
                     }
                     setLoading(false)
                 } catch (error) {
@@ -1483,43 +1570,35 @@ const History = () => {
     }, [user, modelId, page, perPage, debouncedQuery]);
 
     useEffect(() => {
-        currentTrainingStatusRef.current = currentTrainingStatus;
-    }, [currentTrainingStatus]);
-
-    useEffect(() => {
-        if (!user || !socket || !socket.connected || !TRAINING_ACTIVE_STATUSES.includes(currentTrainingStatusRef.current)) return;
-        const taskId = currentTrainingTaskId;
+        if (!user || !socket || !socket.connected || activeTrainingTaskIds.length === 0) return;
         const activeRooms = rooms.current;
-        if (!taskId || activeRooms.has(taskId)) return;
 
         const handleStatus = (data) => {
-            if (data.task_id !== taskId) return;
+            if (!activeRooms.has(data.task_id)) return;
 
-            setCurrentTraining(prev => ({ ...prev, ...data }));
-            setTrainings(prev => prev.map(training =>
-                training.task_id === taskId
-                    ? { ...training, ...data }
-                    : training
-            ));
+            updateTraining(data);
             if (TRAINING_DONE_STATUSES.includes(data.status)) {
                 socket.emit('leave', user.token, data.task_id);
-                socket.off('status', handleStatus);
                 rooms.current.delete(data.task_id);
             }
         };
 
         socket.on('status', handleStatus);
-        socket.emit('join', user.token, taskId);
-        activeRooms.add(taskId);
+        activeTrainingTaskIds.forEach(taskId => {
+            if (!activeRooms.has(taskId)) {
+                socket.emit('join', user.token, taskId);
+                activeRooms.add(taskId);
+            }
+        });
 
         return () => {
             socket.off('status', handleStatus);
-            if (activeRooms.has(taskId)) {
+            activeTrainingTaskIds.forEach(taskId => {
                 socket.emit('leave', user.token, taskId);
                 activeRooms.delete(taskId);
-            }
+            });
         };
-    }, [user, socket, currentTrainingTaskId]);
+    }, [user, socket, activeTrainingTaskKey]);
 
     return (
         <div className="container-fluid">
@@ -1538,9 +1617,9 @@ const History = () => {
                         >
                             <Sliders />
                         </Button>
-                        {total > 0 && currentTraining ?
+                        {hasActiveTraining ?
                             <>
-                                {currentTraining.status === 'PENDING' || currentTraining.status === 'RECEIVED' ?
+                                {activeTrainingStatus === 'PENDING' || activeTrainingStatus === 'RECEIVED' ?
                                     <Button
                                         variant="light"
                                         disabled
@@ -1550,9 +1629,9 @@ const History = () => {
                                             animation="border"
                                             size="sm"
                                         />
-                                        &nbsp;pending...
-                                    </Button>
-                                    : currentTraining.status === 'STARTED' ?
+                                            &nbsp;pending...
+                                        </Button>
+                                    : activeTrainingStatus === 'STARTED' ?
                                         <Button
                                             variant="light"
                                             disabled
@@ -1564,29 +1643,7 @@ const History = () => {
                                             />
                                             &nbsp;training...
                                         </Button>
-                                        : <Button
-                                            variant="light"
-                                            onClick={handleTrain}
-                                            className="border"
-                                        >
-                                            <ArrowClockwise />&nbsp;start training
-                                        </Button>}
-                                {isTrainingActive(currentTraining) && (
-                                    <Button
-                                        variant="light"
-                                        className="border"
-                                        aria-label="Stop training"
-                                        title="Stop training"
-                                        disabled={stoppingTraining}
-                                        onClick={handleStopTraining}
-                                    >
-                                        {stoppingTraining ? (
-                                            <Spinner animation="border" size="sm" />
-                                        ) : (
-                                            <StopCircleFill />
-                                        )}
-                                    </Button>
-                                )}
+                                        : null}
                             </>
                             :
                             <Button
@@ -1661,8 +1718,32 @@ const History = () => {
                                                     select
                                                 </Dropdown.Toggle>
                                                 <Dropdown.Menu>
-                                                    {/* <Dropdown.Item
-                                                     */}
+                                                    {isTrainingActive(training) && (
+                                                        <Dropdown.Item
+                                                            disabled={stoppingTrainingIds.has(training.id)}
+                                                            onClick={() => handleStopTraining(training)}
+                                                        >
+                                                            {stoppingTrainingIds.has(training.id) ? (
+                                                                <Spinner animation="border" size="sm" className="me-2" />
+                                                            ) : (
+                                                                <StopCircleFill className="me-2" />
+                                                            )}
+                                                            Stop
+                                                        </Dropdown.Item>
+                                                    )}
+                                                    {isTrainingReady(training) && (
+                                                        <Dropdown.Item
+                                                            disabled={restartingTrainingIds.has(training.id)}
+                                                            onClick={() => handleRestartTraining(training)}
+                                                        >
+                                                            {restartingTrainingIds.has(training.id) ? (
+                                                                <Spinner animation="border" size="sm" className="me-2" />
+                                                            ) : (
+                                                                <ArrowClockwise className="me-2" />
+                                                            )}
+                                                            Retry
+                                                        </Dropdown.Item>
+                                                    )}
                                                     <Dropdown.Item
                                                         disabled={!isTrainingDeletable(training)}
                                                         className="text-danger"
