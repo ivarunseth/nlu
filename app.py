@@ -1,10 +1,10 @@
 from gevent import monkey
 monkey.patch_all()
 
-from server import create_application
+from server import create_application_server
 
 
-application, socketio = app, socket = create_application() 
+application, socketio = app, socket = create_application_server() 
 
 
 if __name__ == '__main__':

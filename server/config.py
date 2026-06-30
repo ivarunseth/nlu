@@ -24,6 +24,16 @@ class Config(object):
     REQUEST_STATS_WINDOW = 15
     TOKEN_EXPIRY = 720
 
+    INFERENCE_PORT = int(os.environ.get('INFERENCE_PORT', 5002))
+    INFERENCE_BATCH_SIZE = int(os.environ.get('INFERENCE_BATCH_SIZE', 32))
+    INFERENCE_SLEEP = float(os.environ.get('INFERENCE_SLEEP', 0.005))
+    INFERENCE_IDLE_TIMEOUT = float(os.environ.get('INFERENCE_IDLE_TIMEOUT', 300))
+    INFERENCE_HEARTBEAT_INTERVAL = float(os.environ.get('INFERENCE_HEARTBEAT_INTERVAL', 5))
+    INFERENCE_REQUEST_TIMEOUT = float(os.environ.get('INFERENCE_REQUEST_TIMEOUT', 30))
+    INFERENCE_POLL_INTERVAL = float(os.environ.get('INFERENCE_POLL_INTERVAL', 0.01))
+    INFERENCE_OUTPUT_TTL = int(os.environ.get('INFERENCE_OUTPUT_TTL', 300))
+    INFERENCE_START_TTL = int(os.environ.get('INFERENCE_START_TTL', 120))
+
 
 class DevelopmentConfig(Config):
     DEBUG = True

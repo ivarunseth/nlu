@@ -1,8 +1,8 @@
 from flask import g, session
 
-from ..auth import basic_auth, token_auth
+from ...auth import basic_auth, token_auth
 
-from .. import db
+from ... import db
 from . import api
 
 

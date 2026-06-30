@@ -32,7 +32,7 @@ class WorkerShutdownError(Exception):
 
 
 class WorkerConfig(object):
-    
+
     broker_url = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
     broker_connection_retry_on_startup = True
     result_backend = os.environ.get(
@@ -45,19 +45,6 @@ class WorkerConfig(object):
     }
     result_extended = True
     result_persistent = True
-    include = ['server.tasks.training', 'server.tasks.prediction']
-    task_routes = {
-        'server.tasks.training.*': {
-            'queue': 'training',
-            'routing_key': 'training'
-        }
-    }
-    task_queues = (
-        Queue('training', Exchange('default', type='direct'), routing_key='training', durable=True),
-        Queue('development', Exchange('default', type='direct'), routing_key='development', durable=True),
-        Queue('staging', Exchange('default', type='direct'), routing_key='staging', durable=True),
-        Queue('production', Exchange('default', type='direct'), routing_key='production', durable=True)
-    )
     accept_content = ['json', 'application/json']
     task_serializer = 'json'
     result_serializer = 'json'
@@ -69,9 +56,7 @@ class WorkerConfig(object):
     task_acks_late = True
     task_acks_on_failure_or_timeout = True
     task_reject_on_worker_lost = True
-    task_default_routing_key = 'training'
     task_default_exchange = 'default'
-    task_default_queue = 'training'
 
 
 class WorkerResult(AsyncResult):
@@ -157,8 +142,9 @@ class WorkerTask(Task):
             return False
         return result.is_aborted()
 
-    def check_status(self):
-        if self.is_aborted():
+    def check_status(self, **kwargs):
+        task_id = kwargs.get('task_id', self.request.id)
+        if self.is_aborted(task_id=task_id):
             raise TaskAbortedError('Task has been aborted')
         if shutting_down:
             raise WorkerShutdownError('Worker is shutting down')
@@ -216,18 +202,40 @@ class WorkerTask(Task):
                 lock.release()
 
 
-def create_worker():
+def _queues(*names):
+    return tuple(Queue(name, Exchange('default', type='direct'), routing_key=name, durable=True) for name in names)
 
-    worker = Celery(__name__)
 
+def create_worker(name, include, queues, **kwargs):
+    worker = Celery(name)
     worker.config_from_object(WorkerConfig)
-
+    worker.conf.update(
+        include=include,
+        task_queues=_queues(*queues),
+        task_default_queue=queues[0],
+        task_default_routing_key=queues[0],
+        **kwargs,
+    )
     worker.Task = WorkerTask
-
     return worker
 
 
-worker = create_worker()
+sage = create_worker(
+    'sage',
+    include=['server.tasks.training'],
+    queues=('training',),
+)
+
+
+triton = create_worker(
+    'triton',
+    include=['server.tasks.inference'],
+    queues=(
+        'development', 
+        'testing', 
+        'production',
+    ),
+)
 
 
 def on_worker_shutting_down(*args, **kwargs):

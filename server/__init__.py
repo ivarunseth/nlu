@@ -34,7 +34,7 @@ redis = StrictRedis(host=os.environ.get('REDIS_HOST', 'localhost'),
 store = Storage()
 
 
-def create_application(config_name=os.environ.get('FLASK_ENV', 'development')):
+def create_application_server(config_name=os.environ.get('FLASK_ENV', 'development')):
     app = Flask(__name__)
     app.config.from_object(flask_config[config_name])
 
@@ -54,10 +54,21 @@ def create_application(config_name=os.environ.get('FLASK_ENV', 'development')):
     from .events import Event
     socketio.on_namespace(Event('/'))
 
-    from .views import api as api_blueprint, before_app_first_request
-    app.register_blueprint(api_blueprint, url_prefix='/api')
+    from .views import api as api_bp, before_app_first_request
+    app.register_blueprint(api_bp, url_prefix='/api')
 
     if 'db' not in sys.argv:
         before_app_first_request(app)
 
     return app, socketio
+
+
+def create_triton_server(config_name=os.environ.get('FLASK_ENV', 'production')):
+    app = Flask(__name__)
+    app.config.from_object(flask_config[config_name])
+    app.config['ENVIRONMENT'] = config_name
+
+    from .views import triton as triton_bp
+    app.register_blueprint(triton_bp, url_prefix='/api')
+
+    return app
