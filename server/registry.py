@@ -40,26 +40,24 @@ class Route:
 
 class Registry:
 
-    def __init__(self, redis: StrictRedis):
+    def __init__(self, redis: StrictRedis, environment: str):
         self.redis = redis
+        self.environment = environment
 
-    @staticmethod
-    def _route_key(model_id): return f'route:{model_id}'
+    def _key(self, *parts):
+        return ':'.join((self.environment, *parts))
 
-    @staticmethod
-    def _alive_key(model_id): return f'instance:{model_id}:alive'
+    def _route_key(self, model_id): return self._key('route', model_id)
 
-    @staticmethod
-    def _starting_key(model_id): return f'instance:{model_id}:starting'
+    def _alive_key(self, model_id): return self._key('instance', model_id, 'alive')
 
-    @staticmethod
-    def _lock_key(model_id): return f'instance:{model_id}:lock'
+    def _starting_key(self, model_id): return self._key('instance', model_id, 'starting')
 
-    @staticmethod
-    def _inputs_key(model_id): return f'inputs:{model_id}'
+    def _lock_key(self, model_id): return self._key('instance', model_id, 'lock')
 
-    @staticmethod
-    def _output_key(model_id, request_id): return f'outputs:{model_id}:{request_id}'
+    def _inputs_key(self, model_id): return self._key('inputs', model_id)
+
+    def _output_key(self, model_id, request_id): return self._key('outputs', model_id, request_id)
 
     def publish_route(self, model_id, route: Route):
         self.redis.delete(self._route_key(model_id))
@@ -158,7 +156,7 @@ _lock = threading.Lock()
 
 def registry_for(environment, redis=None) -> Registry:
     if redis is not None:
-        return Registry(redis)
+        return Registry(redis, environment)
 
     with _lock:
         cached = _registries.get(environment)
@@ -172,6 +170,6 @@ def registry_for(environment, redis=None) -> Registry:
             from . import redis as shared
             client = shared
 
-        registry = Registry(client)
+        registry = Registry(client, environment)
         _registries[environment] = registry
         return registry

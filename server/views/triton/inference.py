@@ -1,15 +1,3 @@
-"""
-The prediction endpoint.
-
-The contract is deliberately minimal and identical in every environment: a
-caller needs the model id and nothing else. There are no version or instance
-ids in the URL — the environment is encoded by *which host* the request reaches,
-and the published artifact for that environment is resolved from Redis.
-
-    POST /api/models/<model_id>/predict
-    { "query": "<text>" }            ->  200 { ...prediction... }
-"""
-
 import hashlib
 
 from flask import current_app, request, abort

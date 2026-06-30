@@ -8,7 +8,7 @@ from . import api
 
 @api.get('/models/<modelId>/instances')
 @token_auth.login_required
-def get_instances(modelId, trainingId):
+def get_instances(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
     if model is None:
         abort(404, 'Model not found: %s' % modelId)
@@ -17,7 +17,7 @@ def get_instances(modelId, trainingId):
     if training_id:
         training = model.trainings.filter_by(id=training_id).first()
         if training is None:
-            abort(404, 'Training not found: %s' % trainingId)
+            abort(404, 'Training not found: %s' % training_id)
         instances = instances.filter_by(training=training)
     return {'instances': [instance.to_dict() for instance in instances.all()]}, 200
 
@@ -31,7 +31,8 @@ def create_instance(modelId):
     training_id = request.args.get('training_id')
     if not training_id:
         abort(400, 'training_id is required')
-    model.publish(training_id, request.get_json() or {})
+    config = request.get_json() or {}
+    model.publish(training_id, config, prewarm=True)
     db.session.commit()
     return {'instances': [instance.to_dict() for instance in model.instances.all()]}, 200
 

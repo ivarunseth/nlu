@@ -3,6 +3,8 @@ import json
 import shutil
 import numpy as np
 import tensorflow as tf
+import onnxruntime as ort
+
 
 class BaseModel:
     """
@@ -114,13 +116,14 @@ class BaseModel:
             model.allocate_tensors()
             return model
         if save_format == 'onnx':
-            try:
-                from onnxruntime import InferenceSession
-            except ImportError as exc:
-                raise RuntimeError('ONNX inference requires onnxruntime.') from exc
-            return InferenceSession(
+            available = ort.get_available_providers()
+            providers = [provider for provider in (
+                'CUDAExecutionProvider',
+                'CPUExecutionProvider',
+            ) if provider in available]
+            return ort.InferenceSession(
                 os.path.join(path, 'model.onnx'),
-                providers=['CUDAExecutionProvider', 'CPUExecutionProvider']
+                providers=providers or None,
             )
         raise ValueError(f'Invalid save format: {save_format}.')
 
@@ -151,7 +154,7 @@ class BaseModel:
             outputs = [model.get_tensor(detail['index']) for detail in model.get_output_details()]
             return outputs[0] if len(outputs) == 1 else outputs
 
-        if hasattr(model, 'run'):
+        if isinstance(model, ort.InferenceSession):
             if not isinstance(inputs, dict):
                 input_names = [input_meta.name for input_meta in model.get_inputs()]
                 values = list(inputs) if isinstance(inputs, (list, tuple)) else [inputs]

@@ -2,6 +2,7 @@ import os
 import re
 import string
 import pickle
+import numpy as np
 import tensorflow as tf
 from transformers import create_optimizer
 from .base import BaseTextClassification
@@ -48,7 +49,7 @@ class DNNTextClassification(BaseTextClassification):
             )
             self.processor.adapt(cleaned)
         
-        return self.processor(cleaned).numpy()
+        return self.processor(cleaned).numpy().astype(np.int32)
 
     def build(self, num_classes, **kwargs):
         """
@@ -57,6 +58,7 @@ class DNNTextClassification(BaseTextClassification):
         self.parameters.update(kwargs)
         embedding_dims = self.parameters.get('embedding_dims', 64)
         dropout = self.parameters.get('dropout', 0.2)
+        sequence_length = self.parameters.get('sequence_length', 100)
         vocab_size = len(self.processor.get_vocabulary())
 
         output_layer = tf.keras.layers.Dense(num_classes, activation='softmax', name="dense_output")
@@ -74,6 +76,7 @@ class DNNTextClassification(BaseTextClassification):
             )
 
         model = tf.keras.models.Sequential([
+            tf.keras.layers.Input(shape=(sequence_length,), dtype=tf.int32),
             tf.keras.layers.Embedding(vocab_size, embedding_dims),
             tf.keras.layers.Dropout(dropout),
             tf.keras.layers.GlobalAveragePooling1D(),

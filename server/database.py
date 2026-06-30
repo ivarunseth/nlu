@@ -539,7 +539,7 @@ class Instance(db.Model):
         """
         from .registry import registry_for, Route
         registry_for(self.environment.name).publish_route(
-            self.model_id,
+            self.model.id,
             Route(
                 path=self.training.path,
                 model_type=self.model.type,
@@ -550,7 +550,7 @@ class Instance(db.Model):
         if prewarm:
             from .tasks.inference import model
             task = model.apply_async(
-                args=(self.model_id, self.training.path, self.model.type),
+                args=(self.model.id, self.training.path, self.model.type),
                 kwargs={**kwargs, 'environment': self.environment.name},
                 queue=self.environment.name,
                 countdown=3,
