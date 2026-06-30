@@ -35,7 +35,7 @@ const SignUp = () => {
                 data.append('email', email);
                 data.append('password', password);
                 const response = await axios.post('/api/users', data, {});
-                if (response.status === 200)
+                if (response.status === 201)
                     navigate('/signin', { state: {alert: {variant: "success", message: "You have successfully signed up. Welcome aboard!"}}})
             } catch (error) {
                 setAlert({ variant: 'danger', message: error.response.data.error });

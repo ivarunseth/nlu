@@ -160,6 +160,14 @@ const SignIn = () => {
                         >
                             Don't have an account?&nbsp;<Link to='/signup' style={{ textDecoration: 'none' }}>Sign up</Link>
                         </Form.Text>
+                        <Form.Text
+                            style={{
+                                display: 'flex',
+                                justifyContent: 'center'
+                            }}
+                        >
+                            <Link to='/forgot-password' style={{ textDecoration: 'none' }}>Forgot password?</Link>
+                        </Form.Text>
                     </Form>
                 </Col>
             </Row>
