@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import math
 from sklearn.metrics import confusion_matrix, accuracy_score, classification_report
 
 from ..base import BaseModel
@@ -28,6 +29,16 @@ class BaseTextClassification(BaseModel):
         """
         Generic training loop for text classification.
         """
+        if kwargs.get('pruning', False):
+            initial_sparsity = kwargs.get('initial_sparsity', 0)
+            final_sparsity = kwargs.get('final_sparsity', 0.5)
+            begin_step = kwargs.get('pruning_begin_step', 0)
+            end_step = kwargs.get('pruning_end_step', 1000)
+            if not 0 <= initial_sparsity < final_sparsity < 1:
+                raise ValueError('Pruning sparsity must satisfy 0 <= initial < final < 1.')
+            if begin_step < 0 or end_step <= begin_step:
+                raise ValueError('Pruning end step must be greater than its begin step.')
+
         self.parameters.update({
             'validation_split': validation_split,
             'epochs': epochs,
@@ -36,6 +47,8 @@ class BaseTextClassification(BaseModel):
         })
         y_encoded = self.preprocess_y(y)
         X_processed = self.preprocess_x(X)
+        train_samples = max(1, int(len(y_encoded) * (1 - validation_split)))
+        kwargs['num_train_steps'] = max(1, math.ceil(train_samples / batch_size) * epochs)
         
         num_classes = len(self.labels)
         self.model = self.build(num_classes=num_classes, **kwargs)
@@ -52,6 +65,9 @@ class BaseTextClassification(BaseModel):
                 patience=kwargs.get('patience', 3),
                 restore_best_weights=True
             ))
+        if kwargs.get('pruning', False):
+            import tensorflow_model_optimization as tfmot
+            callbacks.append(tfmot.sparsity.keras.UpdatePruningStep())
 
         self.history = self.model.fit(
             X_processed, y_encoded,
@@ -63,6 +79,11 @@ class BaseTextClassification(BaseModel):
         )
         
         self.parameters['epochs'] = len(self.history.history.get('loss', []))
+
+        if kwargs.get('pruning', False):
+            import tensorflow_model_optimization as tfmot
+            self.model = tfmot.sparsity.keras.strip_pruning(self.model)
+
         return self._history_to_dict(self.history)
 
     def predict(self, X, **kwargs):

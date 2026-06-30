@@ -74,14 +74,27 @@ class BERTTextClassification(BaseTextClassification):
         pooled_output = tf.keras.layers.GlobalAveragePooling1D()(outputs.last_hidden_state)
         
         dropout = tf.keras.layers.Dropout(self.parameters.get('dropout', 0.15))(pooled_output)
-        dense = tf.keras.layers.Dense(self.parameters.get('units', 768), activation='relu')(dropout)
-        
-        logits = tf.keras.layers.Dense(
-            num_classes, 
+        dense_layer = tf.keras.layers.Dense(self.parameters.get('units', 768), activation='relu')
+        output_layer = tf.keras.layers.Dense(
+            num_classes,
             activation='softmax',
             kernel_regularizer=tf.keras.regularizers.l2(self.parameters.get('l2', 0.01)),
             name='output'
-        )(dense)
+        )
+        if self.parameters.get('pruning', False):
+            import tensorflow_model_optimization as tfmot
+            schedule = tfmot.sparsity.keras.PolynomialDecay(
+                initial_sparsity=self.parameters.get('initial_sparsity', 0),
+                final_sparsity=self.parameters.get('final_sparsity', 0.5),
+                begin_step=self.parameters.get('pruning_begin_step', 0),
+                end_step=self.parameters.get('pruning_end_step', 1000),
+                frequency=self.parameters.get('pruning_frequency', 100)
+            )
+            dense_layer = tfmot.sparsity.keras.prune_low_magnitude(dense_layer, pruning_schedule=schedule)
+            output_layer = tfmot.sparsity.keras.prune_low_magnitude(output_layer, pruning_schedule=schedule)
+
+        dense = dense_layer(dropout)
+        logits = output_layer(dense)
 
         model = tf.keras.models.Model(inputs=[input_ids, attention_mask], outputs=logits)
         
