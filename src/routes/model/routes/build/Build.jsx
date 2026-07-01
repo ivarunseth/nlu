@@ -1,7 +1,7 @@
 import axios from "axios";
 import { useContext, useEffect, useState } from "react";
 import { Alert, Button, ButtonGroup, ButtonToolbar, Col, Form, Row } from "react-bootstrap";
-import { PlusLg } from "react-bootstrap-icons";
+import { Download, Pen, PlusLg, Trash } from "react-bootstrap-icons";
 import { useParams } from "react-router-dom";
 import { UserContext } from "../../../../contexts/UserContext";
 import AppPagination from "../../../../shared/components/AppPagination";
@@ -27,11 +27,30 @@ const Build = () => {
     const [showEditForm, setShowEditForm] = useState(false);
     const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
     const [currentLabel, setCurrentLabel] = useState(null);
+    const [labelsToDelete, setLabelsToDelete] = useState([]);
+    const [selectedIds, setSelectedIds] = useState(new Set());
     const [validated, setValidated] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [loading, setLoading] = useState(false);
     const [page, setPage] = useState(1);
     const [total, setTotal] = useState(0);
+
+    const selectedLabels = labels.filter((label) => selectedIds.has(label.id));
+
+    const toggleRowSelection = (id) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+        });
+    };
+
+    const toggleAllSelection = (visibleLabels) => {
+        setSelectedIds((prev) => {
+            const allSelected = visibleLabels.length > 0 && visibleLabels.every((label) => prev.has(label.id));
+            return allSelected ? new Set() : new Set(visibleLabels.map((label) => label.id));
+        });
+    };
 
     const debouncedQuery = useDebounce(query, 500);
 
@@ -139,13 +158,13 @@ const Build = () => {
         }
     };
 
-    const handleOpenDeleteConfirmation = (label) => {
-        setCurrentLabel(label);
+    const handleOpenDeleteConfirmation = (labelsForDeletion) => {
+        setLabelsToDelete(labelsForDeletion);
         setShowDeleteConfirmation(true);
     };
 
     const handleCloseDeleteConfirmation = () => {
-        setCurrentLabel(null);
+        setLabelsToDelete([]);
         setSubmitting(false);
         setShowDeleteConfirmation(false);
     };
@@ -154,26 +173,28 @@ const Build = () => {
         try {
             setSubmitting(true);
             const headers = { Authorization: `Bearer ${user.token}` };
-            await axios.delete(`/api/models/${modelId}/labels/${currentLabel.id}`, { headers });
+            const idsToDelete = labelsToDelete.map((label) => label.id);
+            await Promise.all(idsToDelete.map((id) => axios.delete(`/api/models/${modelId}/labels/${id}`, { headers })));
 
-            if (labels.length - 1 > 0) {
-                if (page === Math.ceil(total / PER_PAGE)) {
-                    setLabels((prevLabels) => prevLabels.filter((l) => l.id !== currentLabel.id));
-                    setTotal((prevTotal) => prevTotal - 1);
-                } else {
-                    setLoading(true);
-                    const params = { page, per_page: PER_PAGE };
-                    if (debouncedQuery !== "") params.query = debouncedQuery;
-                    const response = await axios.get(`/api/models/${modelId}/labels`, { params, headers });
-                    setLabels(response.data.labels);
-                    setTotal(response.data.total);
-                }
+            const remainingOnPage = labels.length - idsToDelete.length;
+            if (remainingOnPage > 0) {
+                setLoading(true);
+                const params = { page, per_page: PER_PAGE };
+                if (debouncedQuery !== "") params.query = debouncedQuery;
+                const response = await axios.get(`/api/models/${modelId}/labels`, { params, headers });
+                setLabels(response.data.labels);
+                setTotal(response.data.total);
             } else if (page > 1) {
                 setPage(page - 1);
             } else {
                 setLabels([]);
                 setTotal(0);
             }
+            setSelectedIds((prev) => {
+                const next = new Set(prev);
+                idsToDelete.forEach((id) => next.delete(id));
+                return next;
+            });
         } catch (error) {
             setAlert({ variant: "danger", message: error.response.data.message });
         } finally {
@@ -182,9 +203,19 @@ const Build = () => {
         }
     };
 
+    const handleBulkDownload = async () => {
+        for (const label of selectedLabels) {
+            await handleDownload(label);
+        }
+    };
+
     useEffect(() => {
         setPage(1);
     }, [debouncedQuery]);
+
+    useEffect(() => {
+        setSelectedIds(new Set());
+    }, [page, debouncedQuery]);
 
     useEffect(() => {
         if (user && modelId) {
@@ -226,6 +257,38 @@ const Build = () => {
                                 <PlusLg />&nbsp;create label
                             </Button>
                         </ButtonGroup>
+                        <ButtonGroup>
+                            <Button
+                                variant="light"
+                                className="border"
+                                title="Download selected"
+                                aria-label="Download selected"
+                                disabled={selectedLabels.length === 0}
+                                onClick={handleBulkDownload}
+                            >
+                                <Download />
+                            </Button>
+                            <Button
+                                variant="light"
+                                className="border"
+                                title="Edit selected"
+                                aria-label="Edit selected"
+                                disabled={selectedLabels.length !== 1}
+                                onClick={() => handleOpenEditForm(selectedLabels[0])}
+                            >
+                                <Pen />
+                            </Button>
+                            <Button
+                                variant="light"
+                                className="border text-danger"
+                                title="Delete selected"
+                                aria-label="Delete selected"
+                                disabled={selectedLabels.length === 0}
+                                onClick={() => handleOpenDeleteConfirmation(selectedLabels)}
+                            >
+                                <Trash />
+                            </Button>
+                        </ButtonGroup>
                     </ButtonToolbar>
                 </Col>
                 <Col>
@@ -247,11 +310,9 @@ const Build = () => {
                         labels={labels}
                         total={total}
                         query={debouncedQuery}
-                        page={page}
-                        perPage={PER_PAGE}
-                        onDownload={handleDownload}
-                        onEdit={handleOpenEditForm}
-                        onDelete={handleOpenDeleteConfirmation}
+                        selectedIds={selectedIds}
+                        onToggleRow={toggleRowSelection}
+                        onToggleAll={toggleAllSelection}
                     />
                     <AppPagination
                         page={page}
@@ -293,7 +354,7 @@ const Build = () => {
             <DeleteConfirmationModal
                 show={showDeleteConfirmation}
                 title="Delete label"
-                itemName={currentLabel?.name}
+                items={labelsToDelete.map((label) => label.name)}
                 itemType="label"
                 submitting={submitting}
                 onHide={handleCloseDeleteConfirmation}

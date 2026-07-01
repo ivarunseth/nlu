@@ -1,5 +1,5 @@
 import { useContext, useEffect, useState, useRef, useMemo } from "react";
-import { Alert, Button, Col, Row, Form, FormGroup, OverlayTrigger, Popover, Spinner, Table, Dropdown, Pagination, Modal, Tabs, Tab, Badge, Card, InputGroup } from "react-bootstrap";
+import { Alert, Button, ButtonGroup, ButtonToolbar, Col, Row, Form, FormGroup, OverlayTrigger, Popover, Spinner, Table, Pagination, Modal, Tabs, Tab, Badge, Card, InputGroup } from "react-bootstrap";
 import {
     BarChart,
     Bug,
@@ -1315,7 +1315,8 @@ const History = () => {
     const [showParameters, setShowParameters] = useState(false);
     const [trainingStep, setTrainingStep] = useState(0);
     const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
-    const [selectedTraining, setSelectedTraining] = useState(null);
+    const [trainingsToDelete, setTrainingsToDelete] = useState([]);
+    const [selectedIds, setSelectedIds] = useState(new Set());
     const [submitting, setSubmitting] = useState(false);
     const [startingTraining, setStartingTraining] = useState(false);
     const [stoppingTrainingIds, setStoppingTrainingIds] = useState(new Set());
@@ -1329,6 +1330,26 @@ const History = () => {
     const maxVisiblePages = 5;
 
     const debouncedQuery = useDebounce(query, 500);
+
+    const selectedTrainings = trainings.filter((training) => selectedIds.has(training.id));
+    const canStopSelected = selectedTrainings.length > 0 && selectedTrainings.every(isTrainingActive);
+    const canRetrySelected = selectedTrainings.length > 0 && selectedTrainings.every(isTrainingReady);
+    const canDeleteSelected = selectedTrainings.length > 0 && selectedTrainings.every(isTrainingDeletable);
+
+    const toggleRowSelection = (id) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+        });
+    };
+
+    const toggleAllSelection = (visibleTrainings) => {
+        setSelectedIds((prev) => {
+            const allSelected = visibleTrainings.length > 0 && visibleTrainings.every((training) => prev.has(training.id));
+            return allSelected ? new Set() : new Set(visibleTrainings.map((training) => training.id));
+        });
+    };
 
     const rooms = useRef(new Set())
     const hasActiveTraining = activeTrainings.length > 0;
@@ -1733,29 +1754,30 @@ const History = () => {
         }
     };
 
-    const handleOpenDeleteConfirmation = (training) => {
-        setSelectedTraining(training);
+    const handleOpenDeleteConfirmation = (trainingsForDeletion) => {
+        setTrainingsToDelete(trainingsForDeletion);
         setShowDeleteConfirmation(true);
     };
 
     const handleCloseDeleteConfirmation = () => {
-        setSelectedTraining(null);
+        setTrainingsToDelete([]);
         setShowDeleteConfirmation(false);
     }
 
-    const handleDelete = async (trainingId) => {
+    const handleDelete = async (trainingIds) => {
         try {
             setSubmitting(true);
             setLoading(true);
             const headers = { "Authorization": `Bearer ${user.token}` }
-            await axios.delete(`/api/models/${model.id}/trainings/${trainingId}`, { headers });
-            setActiveTrainings(prev => prev.filter(training => training.id !== trainingId));
-            if (trainings.length - 1 > 0) {
+            await Promise.all(trainingIds.map((trainingId) => axios.delete(`/api/models/${model.id}/trainings/${trainingId}`, { headers })));
+            setActiveTrainings(prev => prev.filter(training => !trainingIds.includes(training.id)));
+            const remainingOnPage = trainings.length - trainingIds.length;
+            if (remainingOnPage > 0) {
                 if (page === Math.ceil((total) / perPage)) {
-                    if (page === 1 && trainingId === currentTraining?.id)
-                        setCurrentTraining(trainings[1])
-                    setTrainings(prev => prev.filter((t) => t.id !== trainingId));
-                    setTotal(total - 1);
+                    if (page === 1 && trainingIds.includes(currentTraining?.id))
+                        setCurrentTraining(trainings.find((t) => !trainingIds.includes(t.id)) || null)
+                    setTrainings(prev => prev.filter((t) => !trainingIds.includes(t.id)));
+                    setTotal(total - trainingIds.length);
                 } else {
                     let params = { extended: '1', page: page, per_page: perPage };
                     if (debouncedQuery !== '')
@@ -1763,19 +1785,24 @@ const History = () => {
                     const response = await axios.get(`/api/models/${model.id}/trainings`, { params, headers });
                     setTrainings(response.data.trainings);
                     setTotal(response.data.total);
-                    if (trainingId === currentTraining?.id)
+                    if (trainingIds.includes(currentTraining?.id))
                         setCurrentTraining(response.data.trainings[0]);
                 }
             } else {
                 if (page > 1) {
                     setPage(page - 1);
                 } else {
-                    if (trainingId === currentTraining?.id)
+                    if (trainingIds.includes(currentTraining?.id))
                         setCurrentTraining(null);
                     setTrainings([]);
                     setTotal(0);
                 }
             }
+            setSelectedIds(prev => {
+                const next = new Set(prev);
+                trainingIds.forEach((id) => next.delete(id));
+                return next;
+            });
         } catch (error) {
             setAlert({ variant: 'danger', message: error.response.data.error });
         } finally {
@@ -1792,6 +1819,10 @@ const History = () => {
     useEffect(() => {
         setPage(1);
     }, [debouncedQuery])
+
+    useEffect(() => {
+        setSelectedIds(new Set());
+    }, [page, debouncedQuery]);
 
     useEffect(() => {
         if (user && modelId) {
@@ -1869,23 +1900,59 @@ const History = () => {
             </Row>
             <Row className="mt-4">
                 <Col>
-                    {hasActiveTraining ? (
-                        <Button variant="light" disabled className="border">
-                            <Spinner
-                                animation={activeTrainingStatus === 'STARTED' ? 'grow' : 'border'}
-                                size="sm"
-                            />
-                            &nbsp;{activeTrainingStatus === 'STARTED' ? 'training...' : 'pending...'}
-                        </Button>
-                    ) : (
-                        <Button
-                            variant="light"
-                            onClick={handleOpenStartTraining}
-                            className="border"
-                        >
-                            <PlusLg />&nbsp;create training
-                        </Button>
-                    )}
+                    <ButtonToolbar>
+                        <ButtonGroup className="me-2">
+                            {hasActiveTraining ? (
+                                <Button variant="light" disabled className="border">
+                                    <Spinner
+                                        animation={activeTrainingStatus === 'STARTED' ? 'grow' : 'border'}
+                                        size="sm"
+                                    />
+                                    &nbsp;{activeTrainingStatus === 'STARTED' ? 'training...' : 'pending...'}
+                                </Button>
+                            ) : (
+                                <Button
+                                    variant="light"
+                                    onClick={handleOpenStartTraining}
+                                    className="border"
+                                >
+                                    <PlusLg />&nbsp;create training
+                                </Button>
+                            )}
+                        </ButtonGroup>
+                        <ButtonGroup>
+                            <Button
+                                variant="light"
+                                className="border"
+                                title="Stop selected"
+                                aria-label="Stop selected"
+                                disabled={!canStopSelected || selectedTrainings.some((t) => stoppingTrainingIds.has(t.id))}
+                                onClick={() => setTrainingAction({ type: 'stop', trainings: selectedTrainings })}
+                            >
+                                <StopCircleFill />
+                            </Button>
+                            <Button
+                                variant="light"
+                                className="border"
+                                title="Retry selected"
+                                aria-label="Retry selected"
+                                disabled={!canRetrySelected || selectedTrainings.some((t) => restartingTrainingIds.has(t.id))}
+                                onClick={() => setTrainingAction({ type: 'retry', trainings: selectedTrainings })}
+                            >
+                                <ArrowClockwise />
+                            </Button>
+                            <Button
+                                variant="light"
+                                className="border text-danger"
+                                title="Delete selected"
+                                aria-label="Delete selected"
+                                disabled={!canDeleteSelected}
+                                onClick={() => handleOpenDeleteConfirmation(selectedTrainings)}
+                            >
+                                <Trash />
+                            </Button>
+                        </ButtonGroup>
+                    </ButtonToolbar>
                 </Col>
                 <Col>
                     <Form>
@@ -1910,20 +1977,26 @@ const History = () => {
                     >
                         <thead>
                             <tr>
-                                <th>#</th>
+                                <th style={{ width: '40px' }}>
+                                    <Form.Check
+                                        type="checkbox"
+                                        checked={trainings.length > 0 && trainings.every((training) => selectedIds.has(training.id))}
+                                        onChange={() => toggleAllSelection(trainings)}
+                                        disabled={loading || trainings.length === 0}
+                                    />
+                                </th>
                                 <th>Version</th>
                                 <th>Status</th>
                                 <th>Date Start</th>
                                 <th>Date Done</th>
                                 <th>Accuracy (%)</th>
-                                <th>Options</th>
                             </tr>
                         </thead>
                         <tbody>
                             {loading ? (
                                 <tr >
                                     <td
-                                        colSpan={7}
+                                        colSpan={6}
                                         style={{
                                             verticalAlign: 'middle'
                                         }}
@@ -1932,9 +2005,15 @@ const History = () => {
                                     </td>
                                 </tr>
                             ) : total > 0 ?
-                                trainings.map((training, index) => (
+                                trainings.map((training) => (
                                     <tr key={training.id}>
-                                        <td>{(page - 1) * perPage + index + 1}.</td>
+                                        <td>
+                                            <Form.Check
+                                                type="checkbox"
+                                                checked={selectedIds.has(training.id)}
+                                                onChange={() => toggleRowSelection(training.id)}
+                                            />
+                                        </td>
                                         <td>
                                             <Link to={`/models/${modelId}/history/${training.id}`} className="text-decoration-none">
                                                 {training.version}
@@ -1944,54 +2023,11 @@ const History = () => {
                                         <td>{training.created_at}</td>
                                         <td>{training.date_done}</td>
                                         <td>{training.status === 'SUCCESS' && getTrainingAccuracy(training) !== null && (getTrainingAccuracy(training) * 100).toFixed(2)}</td>
-                                        <td>
-                                            <Dropdown>
-                                                <Dropdown.Toggle size='sm' variant='light'>
-                                                    select
-                                                </Dropdown.Toggle>
-                                                <Dropdown.Menu>
-                                                    {isTrainingActive(training) && (
-                                                        <Dropdown.Item
-                                                            disabled={stoppingTrainingIds.has(training.id)}
-                                                            onClick={() => setTrainingAction({ type: 'stop', training })}
-                                                        >
-                                                            {stoppingTrainingIds.has(training.id) ? (
-                                                                <Spinner animation="border" size="sm" className="me-2" />
-                                                            ) : (
-                                                                <StopCircleFill className="me-2" />
-                                                            )}
-                                                            Stop
-                                                        </Dropdown.Item>
-                                                    )}
-                                                    {isTrainingReady(training) && (
-                                                        <Dropdown.Item
-                                                            disabled={restartingTrainingIds.has(training.id)}
-                                                            onClick={() => setTrainingAction({ type: 'retry', training })}
-                                                        >
-                                                            {restartingTrainingIds.has(training.id) ? (
-                                                                <Spinner animation="border" size="sm" className="me-2" />
-                                                            ) : (
-                                                                <ArrowClockwise className="me-2" />
-                                                            )}
-                                                            Retry
-                                                        </Dropdown.Item>
-                                                    )}
-                                                    <Dropdown.Item
-                                                        disabled={!isTrainingDeletable(training)}
-                                                        className="text-danger"
-                                                        onClick={() => handleOpenDeleteConfirmation(training)}
-                                                    >
-                                                        <Trash className="me-2" />
-                                                        Delete
-                                                    </Dropdown.Item>
-                                                </Dropdown.Menu>
-                                            </Dropdown>
-                                        </td>
                                     </tr>
                                 )) : query !== '' ? (
                                     <tr>
                                         <td
-                                            colSpan={7}
+                                            colSpan={6}
                                             style={{
                                                 verticalAlign: 'middle'
                                             }}
@@ -2002,7 +2038,7 @@ const History = () => {
                                 ) : (
                                     <tr>
                                         <td
-                                            colSpan={7}
+                                            colSpan={6}
                                             style={{
                                                 verticalAlign: 'middle'
                                             }}
@@ -2131,8 +2167,8 @@ const History = () => {
                 <Modal.Body>
                     <p className="small">
                         {trainingAction?.type === 'stop'
-                            ? 'Stop this training run? Progress from the active run will be interrupted.'
-                            : 'Retry this training? The existing results for this version will be replaced.'}
+                            ? `Stop ${trainingAction.trainings.length > 1 ? `these ${trainingAction.trainings.length} training runs` : 'this training run'}? Progress from the active run will be interrupted.`
+                            : `Retry ${trainingAction?.trainings.length > 1 ? `these ${trainingAction.trainings.length} trainings` : 'this training'}? The existing results for ${trainingAction?.trainings.length > 1 ? 'these versions' : 'this version'} will be replaced.`}
                     </p>
                     <div className="d-flex justify-content-end gap-2">
                         <Button variant="light" size="sm" className="border small" onClick={() => setTrainingAction(null)}>CANCEL</Button>
@@ -2143,8 +2179,8 @@ const History = () => {
                             onClick={async () => {
                                 const action = trainingAction;
                                 setTrainingAction(null);
-                                if (action?.type === 'stop') await handleStopTraining(action.training);
-                                if (action?.type === 'retry') await handleRestartTraining(action.training);
+                                if (action?.type === 'stop') await Promise.all(action.trainings.map((training) => handleStopTraining(training)));
+                                if (action?.type === 'retry') await Promise.all(action.trainings.map((training) => handleRestartTraining(training)));
                             }}
                         >
                             {trainingAction?.type === 'stop' ? 'STOP' : 'RETRY'}
@@ -2157,14 +2193,23 @@ const History = () => {
                     <Modal.Title className="small fw-bold text-muted">Delete training</Modal.Title>
                 </Modal.Header>
                 <Modal.Body>
-                    <p className="small">Are you sure you want to delete this training record?</p>
+                    {trainingsToDelete.length > 1 ? (
+                        <>
+                            <p className="small">Are you sure you want to delete these {trainingsToDelete.length} training records?</p>
+                            <ul className="small text-muted">
+                                {trainingsToDelete.map((training) => <li key={training.id}>v{training.version}</li>)}
+                            </ul>
+                        </>
+                    ) : (
+                        <p className="small">Are you sure you want to delete this training record?</p>
+                    )}
                     <div className="d-flex justify-content-end gap-2">
                         <Button variant="light" size="sm" onClick={handleCloseDeleteConfirmation} className="border small">CANCEL</Button>
                         <Button
                             variant="danger"
                             size="sm"
                             disabled={submitting}
-                            onClick={() => handleDelete(selectedTraining.id)}
+                            onClick={() => handleDelete(trainingsToDelete.map((training) => training.id))}
                             className="small"
                         >
                             {submitting ? (

@@ -1,5 +1,5 @@
-import { Dropdown, Spinner, Table } from "react-bootstrap";
-import { Download, InfoCircle, Pen, Trash } from "react-bootstrap-icons";
+import { Form, Spinner, Table } from "react-bootstrap";
+import { InfoCircle } from "react-bootstrap-icons";
 import { Link } from "react-router-dom";
 
 const ModelsTable = ({
@@ -7,90 +7,79 @@ const ModelsTable = ({
     models,
     total,
     query,
-    page,
-    perPage,
-    onDownload,
-    onEdit,
-    onDelete
-}) => (
-    <Table
-        responsive
-        hover
-        style={{
-            minHeight: "33vh",
-            textAlign: "center"
-        }}
-    >
-        <thead>
-            <tr>
-                <th>#</th>
-                <th>name</th>
-                <th>created at</th>
-                <th>updated at</th>
-                <th>options</th>
-            </tr>
-        </thead>
-        <tbody>
-            {loading ? (
+    selectedIds,
+    onToggleRow,
+    onToggleAll
+}) => {
+    const allSelected = models.length > 0 && models.every((model) => selectedIds.has(model.id));
+
+    return (
+        <Table
+            responsive
+            hover
+            style={{
+                minHeight: "33vh",
+                textAlign: "center"
+            }}
+        >
+            <thead>
                 <tr>
-                    <td colSpan={5} style={{ verticalAlign: "middle" }}>
-                        <Spinner animation="border" size="lg" />
-                    </td>
+                    <th style={{ width: "40px" }}>
+                        <Form.Check
+                            type="checkbox"
+                            checked={allSelected}
+                            onChange={() => onToggleAll(models)}
+                            disabled={loading || models.length === 0}
+                        />
+                    </th>
+                    <th>name</th>
+                    <th>created at</th>
+                    <th>updated at</th>
                 </tr>
-            ) : total > 0 ? models.map((model, index) => (
-                <tr key={model.id}>
-                    <td>{(page - 1) * perPage + index + 1}.</td>
-                    <td>
-                        <Link
-                            to={`/models/${model.id}/build`}
-                            style={{ textDecorationLine: "none" }}
-                        >
-                            {model.name}
-                        </Link>
-                    </td>
-                    <td>{model.created_at}</td>
-                    <td>{model.updated_at}</td>
-                    <td>
-                        <Dropdown>
-                            <Dropdown.Toggle size="sm" variant="light">
-                                select
-                            </Dropdown.Toggle>
-                            <Dropdown.Menu>
-                                <Dropdown.Item onClick={() => onDownload(model)}>
-                                    <Download />
-                                    &nbsp;
-                                    Download
-                                </Dropdown.Item>
-                                <Dropdown.Item onClick={() => onEdit(model)}>
-                                    <Pen />
-                                    &nbsp;
-                                    Edit
-                                </Dropdown.Item>
-                                <Dropdown.Divider />
-                                <Dropdown.Item onClick={() => onDelete(model)}>
-                                    <Trash />
-                                    &nbsp;
-                                    Delete
-                                </Dropdown.Item>
-                            </Dropdown.Menu>
-                        </Dropdown>
-                    </td>
-                </tr>
-            )) : query !== "" ? (
-                <tr>
-                    <td colSpan={5} style={{ verticalAlign: "middle" }}>
-                        <i className="bi bi-ban" />&nbsp;could not find the model you are looking for.
-                    </td>
-                </tr>
-            ) : (
-                <tr>
-                    <td colSpan={5} style={{ verticalAlign: "middle" }}>
-                        <InfoCircle />&nbsp;looks like you have no models.
-                    </td>
-                </tr>
-            )}
-        </tbody>
-    </Table>
-);
+            </thead>
+            <tbody>
+                {loading ? (
+                    <tr>
+                        <td colSpan={4} style={{ verticalAlign: "middle" }}>
+                            <Spinner animation="border" size="lg" />
+                        </td>
+                    </tr>
+                ) : total > 0 ? models.map((model) => (
+                    <tr key={model.id}>
+                        <td>
+                            <Form.Check
+                                type="checkbox"
+                                checked={selectedIds.has(model.id)}
+                                onChange={() => onToggleRow(model.id)}
+                            />
+                        </td>
+                        <td>
+                            <Link
+                                to={`/models/${model.id}/build`}
+                                style={{ textDecorationLine: "none" }}
+                            >
+                                {model.name}
+                            </Link>
+                        </td>
+                        <td>{model.created_at}</td>
+                        <td>{model.updated_at}</td>
+                    </tr>
+                )) : query !== "" ? (
+                    <tr>
+                        <td colSpan={4} style={{ verticalAlign: "middle" }}>
+                            <i className="bi bi-ban" />&nbsp;could not find the model you are looking for.
+                        </td>
+                    </tr>
+                ) : (
+                    <tr>
+                        <td colSpan={4} style={{ verticalAlign: "middle" }}>
+                            <InfoCircle />&nbsp;looks like you have no models.
+                        </td>
+                    </tr>
+                )}
+            </tbody>
+        </Table>
+    );
+};
 
 export default ModelsTable;

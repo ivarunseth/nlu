@@ -3,7 +3,7 @@ import { Button, Modal, Spinner } from "react-bootstrap";
 const DeleteConfirmationModal = ({
     show,
     title,
-    itemName,
+    items = [],
     itemType,
     submitting,
     onHide,
@@ -14,7 +14,16 @@ const DeleteConfirmationModal = ({
             <Modal.Title>{title}</Modal.Title>
         </Modal.Header>
         <Modal.Body>
-            <p>Are you sure you want to delete the {itemType} "{itemName}"?</p>
+            {items.length > 1 ? (
+                <>
+                    <p>Are you sure you want to delete these {items.length} {itemType}s?</p>
+                    <ul className="small text-muted">
+                        {items.map((name) => <li key={name}>{name}</li>)}
+                    </ul>
+                </>
+            ) : (
+                <p>Are you sure you want to delete the {itemType} "{items[0]}"?</p>
+            )}
             <Button
                 type="submit"
                 variant="danger"

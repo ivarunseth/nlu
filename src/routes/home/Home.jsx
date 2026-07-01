@@ -1,7 +1,7 @@
 import axios from "axios";
 import { useContext, useEffect, useState } from "react";
-import { Alert, Button, Col, Container, Form, Row } from "react-bootstrap";
-import { PlusLg } from "react-bootstrap-icons";
+import { Alert, Button, ButtonGroup, ButtonToolbar, Col, Container, Form, Row } from "react-bootstrap";
+import { Download, Pen, PlusLg, Trash } from "react-bootstrap-icons";
 import { UserContext } from "../../contexts/UserContext";
 import AppPagination from "../../shared/components/AppPagination";
 import DeleteConfirmationModal from "../../shared/components/DeleteConfirmationModal";
@@ -27,11 +27,30 @@ const Home = () => {
     const [showEditForm, setShowEditForm] = useState(false);
     const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
     const [currentModel, setCurrentModel] = useState(null);
+    const [modelsToDelete, setModelsToDelete] = useState([]);
+    const [selectedIds, setSelectedIds] = useState(new Set());
     const [validated, setValidated] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [loading, setLoading] = useState(false);
     const [page, setPage] = useState(1);
     const [total, setTotal] = useState(0);
+
+    const selectedModels = models.filter((model) => selectedIds.has(model.id));
+
+    const toggleRowSelection = (id) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+        });
+    };
+
+    const toggleAllSelection = (visibleModels) => {
+        setSelectedIds((prev) => {
+            const allSelected = visibleModels.length > 0 && visibleModels.every((model) => prev.has(model.id));
+            return allSelected ? new Set() : new Set(visibleModels.map((model) => model.id));
+        });
+    };
 
     const debouncedQuery = useDebounce(query, 500);
 
@@ -143,13 +162,13 @@ const Home = () => {
         }
     };
 
-    const handleOpenDeleteConfirmation = (model) => {
-        setCurrentModel(model);
+    const handleOpenDeleteConfirmation = (modelsForDeletion) => {
+        setModelsToDelete(modelsForDeletion);
         setShowDeleteConfirmation(true);
     };
 
     const handleCloseDeleteConfirmation = () => {
-        setCurrentModel(null);
+        setModelsToDelete([]);
         setShowDeleteConfirmation(false);
     };
 
@@ -157,26 +176,28 @@ const Home = () => {
         try {
             setSubmitting(true);
             const headers = { Authorization: `Bearer ${user.token}` };
-            await axios.delete(`/api/models/${currentModel.id}`, { headers });
+            const idsToDelete = modelsToDelete.map((model) => model.id);
+            await Promise.all(idsToDelete.map((id) => axios.delete(`/api/models/${id}`, { headers })));
 
-            if (models.length - 1 > 0) {
-                if (page === Math.ceil(total / PER_PAGE)) {
-                    setModels((prevModels) => prevModels.filter((m) => m.id !== currentModel.id));
-                    setTotal((prevTotal) => prevTotal - 1);
-                } else {
-                    setLoading(true);
-                    const params = { page, per_page: PER_PAGE };
-                    if (debouncedQuery !== "") params.query = debouncedQuery;
-                    const response = await axios.get("/api/models", { params, headers });
-                    setModels(response.data.models);
-                    setTotal(response.data.total);
-                }
+            const remainingOnPage = models.length - idsToDelete.length;
+            if (remainingOnPage > 0) {
+                setLoading(true);
+                const params = { page, per_page: PER_PAGE };
+                if (debouncedQuery !== "") params.query = debouncedQuery;
+                const response = await axios.get("/api/models", { params, headers });
+                setModels(response.data.models);
+                setTotal(response.data.total);
             } else if (page > 1) {
                 setPage(page - 1);
             } else {
                 setModels([]);
                 setTotal(0);
             }
+            setSelectedIds((prev) => {
+                const next = new Set(prev);
+                idsToDelete.forEach((id) => next.delete(id));
+                return next;
+            });
         } catch (error) {
             setAlert({ variant: "danger", message: error.response.data.message });
         } finally {
@@ -186,9 +207,19 @@ const Home = () => {
         }
     };
 
+    const handleBulkDownload = async () => {
+        for (const model of selectedModels) {
+            await handleDownload(model);
+        }
+    };
+
     useEffect(() => {
         setPage(1);
     }, [debouncedQuery]);
+
+    useEffect(() => {
+        setSelectedIds(new Set());
+    }, [page, debouncedQuery]);
 
     useEffect(() => {
         if (user) {
@@ -221,13 +252,49 @@ const Home = () => {
             </Row>
             <Row className="mt-4">
                 <Col>
-                    <Button
-                        variant="light"
-                        style={{ border: "1px solid #dee2e6" }}
-                        onClick={() => setShowCreateForm(true)}
-                    >
-                        <PlusLg />&nbsp;create model
-                    </Button>
+                    <ButtonToolbar>
+                        <ButtonGroup className="me-2">
+                            <Button
+                                variant="light"
+                                style={{ border: "1px solid #dee2e6" }}
+                                onClick={() => setShowCreateForm(true)}
+                            >
+                                <PlusLg />&nbsp;create model
+                            </Button>
+                        </ButtonGroup>
+                        <ButtonGroup>
+                            <Button
+                                variant="light"
+                                className="border"
+                                title="Download selected"
+                                aria-label="Download selected"
+                                disabled={selectedModels.length === 0}
+                                onClick={handleBulkDownload}
+                            >
+                                <Download />
+                            </Button>
+                            <Button
+                                variant="light"
+                                className="border"
+                                title="Edit selected"
+                                aria-label="Edit selected"
+                                disabled={selectedModels.length !== 1}
+                                onClick={() => handleOpenEditForm(selectedModels[0])}
+                            >
+                                <Pen />
+                            </Button>
+                            <Button
+                                variant="light"
+                                className="border text-danger"
+                                title="Delete selected"
+                                aria-label="Delete selected"
+                                disabled={selectedModels.length === 0}
+                                onClick={() => handleOpenDeleteConfirmation(selectedModels)}
+                            >
+                                <Trash />
+                            </Button>
+                        </ButtonGroup>
+                    </ButtonToolbar>
                 </Col>
                 <Col>
                     <Form>
@@ -247,11 +314,9 @@ const Home = () => {
                         models={models}
                         total={total}
                         query={debouncedQuery}
-                        page={page}
-                        perPage={PER_PAGE}
-                        onDownload={handleDownload}
-                        onEdit={handleOpenEditForm}
-                        onDelete={handleOpenDeleteConfirmation}
+                        selectedIds={selectedIds}
+                        onToggleRow={toggleRowSelection}
+                        onToggleAll={toggleAllSelection}
                     />
                     <AppPagination
                         page={page}
@@ -302,7 +367,7 @@ const Home = () => {
             <DeleteConfirmationModal
                 show={showDeleteConfirmation}
                 title="Delete model"
-                itemName={currentModel?.name}
+                items={modelsToDelete.map((model) => model.name)}
                 itemType="model"
                 submitting={submitting}
                 onHide={handleCloseDeleteConfirmation}
