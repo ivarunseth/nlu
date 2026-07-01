@@ -1,15 +1,12 @@
-import React, { useContext, useState, useEffect, useRef } from "react";
-import { Alert, Form, InputGroup, Button, Spinner, Row, Col, Container } from "react-bootstrap";
+import React, { useState, useRef } from "react";
+import { Alert, Button, Container, Form, InputGroup, Spinner, Row, Col } from "react-bootstrap";
 import { Eye, EyeSlash } from "react-bootstrap-icons";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { UserContext } from "../contexts/UserContext";
+import { Link, useNavigate } from "react-router-dom";
+import axios from "axios";
 
-const SignIn = () => {
+const SignUp = () => {
 
-    const location = useLocation();
     const navigate = useNavigate();
-
-    const { user, signIn } = useContext(UserContext);
 
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -23,7 +20,7 @@ const SignIn = () => {
     const emailInput = useRef(null);
     const passwordInput = useRef(null);
 
-    const handleSignIn = async (e) => {
+    const handleSignUp = async (e) => {
         e.preventDefault();
         const valid = e.currentTarget.checkValidity()
         setValidated(true);
@@ -32,40 +29,35 @@ const SignIn = () => {
             return;
         }
         if (email !== '' && password !== '') {
-            setSubmitting(true);
+            setSubmitting(true)
             try {
-                await signIn(email, password);
+                let data = new FormData();
+                data.append('email', email);
+                data.append('password', password);
+                const response = await axios.post('/api/users', data, {});
+                if (response.status === 201)
+                    navigate('/signin', { state: {alert: {variant: "success", message: "You have successfully signed up. Welcome aboard!"}}})
             } catch (error) {
                 setAlert({ variant: 'danger', message: error.response.data.error });
             } finally {
                 setValidated(false);
+                setEmail('')
                 setPassword('')
-                setSubmitting(false);
+                setSubmitting(false)
             }
         }
     };
 
-    useEffect(() => {
-        if (user)
-            navigate('/');
-    }, [user, navigate]);
-
-    useEffect(() => {
-        if (location.state && location.state.alert) {
-            setAlert(location.state.alert);
-        }
-    }, [location.state]);
-
     return (
         <Container fluid className="d-flex flex-column justify-content-center align-items-center vh-100">
-            <Row style={{ width: "25rem" }}>
+            <Row style={{width: "25rem"}}>
                 <Col>
                     {alert && <Alert variant={alert.variant} onClose={() => setAlert(null)} dismissible>{alert.message}</Alert>}
                 </Col>
             </Row>
-            <Row style={{ width: "25rem" }}>
+            <Row style={{width: "25rem"}}>
                 <Col>
-                    <Form noValidate validated={validated} onSubmit={handleSignIn}>
+                    <Form noValidate validated={validated} onSubmit={handleSignUp}>
                         <Form.Group className="mb-3">
                             <InputGroup hasValidation>
                                 <Form.Floating>
@@ -125,31 +117,29 @@ const SignIn = () => {
                                     {showPassword ? <EyeSlash /> : <Eye />}
                                 </InputGroup.Text>
                             </InputGroup>
+                            <Form.Text id="passwordHelpBlock" muted>
+                                Your password must be 8-20 characters long, contain letters and numbers,
+                                and must not contain spaces, special characters, or emoji.
+                            </Form.Text>
                         </Form.Group>
-                        <Form.Text>
-                            <Link style={{ textDecoration: 'none' }}>Forgot password?</Link>
-                        </Form.Text>
-                        <div className="d-grid gap-2 my-3">
-                            <Button
-                                type="submit"
-                                variant="dark"
+                        <div className="d-grid gap-2 mb-3">
+                            <Button 
+                                type="submit" 
+                                variant="dark" 
                                 disabled={submitting}
                             >
-                                {submitting ? (
-                                    <>
-                                        <Spinner
-                                            animation="border"
-                                            size="sm"
-                                        />
-                                        &nbsp;
-                                        Signing in...
-                                    </>
-                                ) : (
-                                    <span>
-                                        Sign in
-                                    </span>
-
-                                )}
+                            {submitting ? (
+                                <>
+                                    <Spinner 
+                                        animation="border"
+                                        size="sm"
+                                    />
+                                    &nbsp;
+                                    Signing up
+                                </>
+                            ) : (
+                                'Sign up'
+                            )}
                             </Button>
                         </div>
                         <Form.Text
@@ -158,7 +148,7 @@ const SignIn = () => {
                                 justifyContent: 'center'
                             }}
                         >
-                            Don't have an account?&nbsp;<Link to='/signup' style={{ textDecoration: 'none' }}>Sign up</Link>
+                            Already have an account?&nbsp;<Link to='/signin' style={{ textDecoration: 'none' }}>Sign In</Link>
                         </Form.Text>
                     </Form>
                 </Col>
@@ -167,4 +157,4 @@ const SignIn = () => {
     );
 };
 
-export default SignIn;
+export default SignUp;

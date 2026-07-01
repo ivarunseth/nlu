@@ -1,7 +1,8 @@
 import React, { useContext, useState, useEffect, useRef } from "react";
 import { Alert, Form, InputGroup, Button, Spinner, Row, Col, Container } from "react-bootstrap";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { UserContext } from "../contexts/UserContext";
+import { UserContext } from "../../contexts/UserContext";
+import axios from "axios";
 
 const ForgotPassword = () => {
 
@@ -19,7 +20,7 @@ const ForgotPassword = () => {
 
     const emailInput = useRef(null);
 
-    const handleSignIn = async (e) => {
+    const handleForgotPassword = async (e) => {
         e.preventDefault();
         const valid = e.currentTarget.checkValidity()
         setValidated(true);
@@ -30,9 +31,13 @@ const ForgotPassword = () => {
         if (email !== '') {
             setSubmitting(true);
             try {
-                // await signIn(email, password);
+                let data = new FormData();
+                data.append('email', email);
+                await axios.post('/api/users/forgot-password', data);
+                setAlert({ variant: 'success', message: 'If an account with that email exists, you will receive a password reset link shortly.' });
+                setEmail('');
             } catch (error) {
-                setAlert({ variant: 'danger', message: error.response.data.error });
+                setAlert({ variant: 'danger', message: error.response?.data?.error || 'Something went wrong. Please try again.' });
             } finally {
                 setValidated(false);
                 setSubmitting(false);
@@ -60,7 +65,7 @@ const ForgotPassword = () => {
             </Row>
             <Row style={{ width: "25rem" }}>
                 <Col>
-                    <Form noValidate validated={validated} onSubmit={handleSignIn}>
+                    <Form noValidate validated={validated} onSubmit={handleForgotPassword}>
                         <Form.Group className="mb-3">
                             <InputGroup hasValidation>
                                 <Form.Floating>

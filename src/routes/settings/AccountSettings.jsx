@@ -1,6 +1,6 @@
 import React, { useState, useContext } from "react";
 import { Form, Button, Container, Row, Col } from 'react-bootstrap';
-import { UserContext } from "../contexts/UserContext";
+import { UserContext } from "../../contexts/UserContext";
 
 function AccountSettings() {
     const { user, setUser } = useContext(UserContext);

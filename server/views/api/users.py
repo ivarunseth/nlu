@@ -1,9 +1,9 @@
-from flask import request, abort, g
+from flask import request, abort, g, current_app
 
-from ..auth import token_auth, token_optional_auth
-from ..database import User
+from ...auth import token_auth, token_optional_auth
+from ...database import User
 
-from .. import db
+from ... import db
 from . import api
 
 
@@ -47,6 +47,22 @@ def get_user(userId):
     if user is None:
         abort(404, 'User not found: %s' % userId)
     return user.to_dict(), 200
+
+
+@api.post('/users/forgot-password')
+def forgot_password():
+    """
+    Request a password reset.
+    Always returns 200 to avoid leaking which emails are registered.
+    """
+    email = request.form.get('email', '').strip()
+    if email:
+        user = User.query.filter_by(email=email).first()
+        if user:
+            # TODO: generate a reset token and send a reset email when email
+            # infrastructure is available. For now we silently acknowledge.
+            current_app.logger.info('Password reset requested for %s', email)
+    return '', 200
 
 
 @api.put('/users/<userId>')

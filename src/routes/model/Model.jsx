@@ -1,14 +1,19 @@
-import { useContext, useEffect, useState } from 'react';
+import { lazy, Suspense, useContext, useEffect, useState } from 'react';
 import { Container, Row, Col, Nav } from 'react-bootstrap';
 import { Translate, ClockHistory, ClipboardCheck, RocketTakeoff, Activity } from 'react-bootstrap-icons';
 import { Routes, Route, Link, useLocation, useParams } from 'react-router-dom';
-import { SocketProvider } from '../contexts/SocketContext';
-import { ModelContext, ModelProvider } from '../contexts/ModelContext';
-import { UserContext } from '../contexts/UserContext';
-import Build from './Build';
-import Utterances from './Utterances';
-import History, { TrainingVersion } from './History';
+import { SocketProvider } from '../../contexts/SocketContext';
+import { ModelContext, ModelProvider } from '../../contexts/ModelContext';
+import { UserContext } from '../../contexts/UserContext';
 import axios from 'axios';
+
+const Build = lazy(() => import('./routes/build/Build'));
+const Utterances = lazy(() => import('./routes/utterances/Utterances'));
+const History = lazy(() => import('./routes/history/History'));
+const Test = lazy(() => import('./routes/test/Test'));
+const TrainingVersion = lazy(() => import('./routes/history/History').then((module) => ({
+    default: module.TrainingVersion
+})));
 
 const ModelContent = () => {
     const { modelId } = useParams();
@@ -73,7 +78,7 @@ const ModelContent = () => {
 
     return (
         <>
-            <Row className='align-items-center gy-2 gx-3' style={{ minHeight: '48px' }}>
+            <Row className='page-context-bar align-items-center gx-3 row-gap-2'>
                 <Col xs={12} md={4} xl={5} className='d-flex align-items-center'>
                     <nav
                         aria-label='breadcrumb'
@@ -160,12 +165,15 @@ const ModelContent = () => {
                     </Nav>
                 </Col>
             </Row>
-            <Routes>
-                <Route path="build" element={<Build />} />
-                <Route path="history" element={<History />} />
-                <Route path="history/:trainingId" element={<TrainingVersion />} />
-                <Route path="build/:labelId/utterances" element={<Utterances />} />
-            </Routes>
+            <Suspense fallback={null}>
+                <Routes>
+                    <Route path="build" element={<Build />} />
+                    <Route path="history" element={<History />} />
+                    <Route path="history/:trainingId" element={<TrainingVersion />} />
+                    <Route path="test" element={<Test />} />
+                    <Route path="build/:labelId/utterances" element={<Utterances />} />
+                </Routes>
+            </Suspense>
         </>
     );
 }

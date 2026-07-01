@@ -2,11 +2,11 @@ from flask import request, g, current_app, abort, send_file
 from celery import states
 from sqlalchemy import cast, String
 
-from ..auth import token_auth
-from ..database import Training
-from ..tasks import training as training_tasks
+from ...auth import token_auth
+from ...database import Training
+from ...tasks import training as training_tasks
 
-from .. import db, store
+from ... import db, store
 from . import api
 
 
@@ -119,18 +119,6 @@ def stop_training(modelId, trainingId):
     db.session.commit()
     return training.to_dict(extended=True), 200
 
-
-@api.post('/models/<modelId>/trainings/<trainingId>/publish')
-@token_auth.login_required
-def publish(modelId, trainingId):
-    model = g.current_user.models.filter_by(id=modelId).first()
-    if model is None:
-        abort(404, 'Model not found: %s' % modelId)
-    training = model.trainings.filter_by(id=trainingId).first()
-    if training is None:
-        abort(404, 'Training not found: %s' % trainingId)
-    instance = model.publish({current_app.config['ENV']: True})
-    return instance.to_dict(extended=True), 204
 
 
 @api.delete('/models/<modelId>/trainings/<trainingId>')

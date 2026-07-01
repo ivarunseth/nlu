@@ -1,18 +1,20 @@
 import { useContext, useEffect, useState, useRef, useMemo } from "react";
-import { Alert, Button, ButtonGroup, Col, Row, Form, FormGroup, OverlayTrigger, Popover, Spinner, Table, Dropdown, Pagination, Modal, Tabs, Tab, Badge, Card, InputGroup } from "react-bootstrap";
+import { Alert, Button, ButtonGroup, ButtonToolbar, Col, Row, Form, FormGroup, OverlayTrigger, Popover, Spinner, Table, Pagination, Modal, Tabs, Tab, Badge, Card, InputGroup } from "react-bootstrap";
 import {
     BarChart,
     Bug,
     Clipboard,
     Download,
-    FileDiff,
-    FileText,
-    Grid,
+    PlusSlashMinus,
+    Stack,
+    Grid3x3Gap,
     InfoCircle,
     Sliders,
     Trash,
     QuestionCircle,
     ArrowClockwise,
+    ChevronLeft,
+    ChevronRight,
     Hash,
     Activity,
     Calendar3,
@@ -21,7 +23,13 @@ import {
     GraphUp,
     ZoomIn,
     ArrowRepeat,
-    StopCircleFill
+    StopCircleFill,
+    PlusLg,
+    BarChartFill,
+    Sliders2,
+    Grid3x3GapFill,
+    BugFill,
+    ListColumnsReverse
 } from "react-bootstrap-icons";
 import {
     LineChart,
@@ -39,11 +47,11 @@ import {
     ReferenceArea,
     LabelList
 } from 'recharts';
-import { UserContext } from "../contexts/UserContext";
-import { ModelContext } from "../contexts/ModelContext";
-import { useSocket } from "../contexts/SocketContext";
+import { UserContext } from "../../../../contexts/UserContext";
+import { ModelContext } from "../../../../contexts/ModelContext";
+import { useSocket } from "../../../../contexts/SocketContext";
 import { Link, useParams } from "react-router-dom";
-import useDebounce from '../useDebounce';
+import useDebounce from "../../../../shared/hooks/useDebounce";
 import axios from "axios";
 
 const SubstringDiffLine = ({ text, otherText, type }) => {
@@ -214,6 +222,7 @@ const ARCHITECTURES_BY_MODEL = {
 const ARCHITECTURE_DEFAULTS = {
     deep_neural_network: {
         architecture: { default: 'deep_neural_network' },
+        test_split: { default: 0.2, min: 0, max: 0.5, step: 0.05 },
         validation_split: { default: 0.1, min: 0, max: 0.5, step: 0.05 },
         epochs: { default: 200, min: 1, max: 1000, step: 1 },
         batch_size: { default: 32, min: 4, max: 128, step: 4 },
@@ -221,13 +230,23 @@ const ARCHITECTURE_DEFAULTS = {
         sequence_length: { default: 100, min: 16, max: 512, step: 8 },
         embedding_dims: { default: 64, min: 16, max: 512, step: 8 },
         dropout: { default: 0.2, min: 0, max: 1, step: 0.05 },
+        learning_rate: { default: 0.001, min: 0.000001, max: 0.01, step: 0.000001 },
+        weight_decay_rate: { default: 0, min: 0, max: 0.1, step: 0.001 },
+        num_warmup_steps: { default: 0, min: 0, max: 5000, step: 10 },
         early_stopping: { default: true },
         monitor: { default: 'val_loss' },
         patience: { default: 10, min: 1, max: 50, step: 1 },
+        pruning: { default: false },
+        initial_sparsity: { default: 0, min: 0, max: 0.9, step: 0.05 },
+        final_sparsity: { default: 0.5, min: 0.1, max: 0.95, step: 0.05 },
+        pruning_begin_step: { default: 0, min: 0, max: 10000, step: 100 },
+        pruning_end_step: { default: 1000, min: 100, max: 50000, step: 100 },
+        pruning_frequency: { default: 100, min: 1, max: 1000, step: 1 },
         save_format: { default: 'tf' }
     },
     recurrent_neural_network: {
         architecture: { default: 'recurrent_neural_network' },
+        test_split: { default: 0.2, min: 0, max: 0.5, step: 0.05 },
         validation_split: { default: 0.1, min: 0, max: 0.5, step: 0.05 },
         epochs: { default: 100, min: 1, max: 1000, step: 1 },
         batch_size: { default: 32, min: 4, max: 128, step: 4 },
@@ -236,6 +255,9 @@ const ARCHITECTURE_DEFAULTS = {
         embedding_dims: { default: 64, min: 16, max: 512, step: 8 },
         lstm_dims: { default: 100, min: 16, max: 512, step: 8 },
         dropout: { default: 0.2, min: 0, max: 1, step: 0.05 },
+        learning_rate: { default: 0.001, min: 0.000001, max: 0.01, step: 0.000001 },
+        weight_decay_rate: { default: 0, min: 0, max: 0.1, step: 0.001 },
+        num_warmup_steps: { default: 0, min: 0, max: 5000, step: 10 },
         early_stopping: { default: true },
         monitor: { default: 'val_loss' },
         patience: { default: 10, min: 1, max: 50, step: 1 },
@@ -244,6 +266,7 @@ const ARCHITECTURE_DEFAULTS = {
     transformer: {
         architecture: { default: 'transformer' },
         pretrained_model: { default: PRETRAINED_MODELS[0] },
+        test_split: { default: 0.2, min: 0, max: 0.5, step: 0.05 },
         validation_split: { default: 0.1, min: 0, max: 0.5, step: 0.05 },
         epochs: { default: 5, min: 1, max: 100, step: 1 },
         batch_size: { default: 16, min: 4, max: 128, step: 4 },
@@ -258,6 +281,12 @@ const ARCHITECTURE_DEFAULTS = {
         early_stopping: { default: true },
         monitor: { default: 'val_loss' },
         patience: { default: 3, min: 1, max: 50, step: 1 },
+        pruning: { default: false },
+        initial_sparsity: { default: 0, min: 0, max: 0.9, step: 0.05 },
+        final_sparsity: { default: 0.5, min: 0.1, max: 0.95, step: 0.05 },
+        pruning_begin_step: { default: 0, min: 0, max: 10000, step: 100 },
+        pruning_end_step: { default: 1000, min: 100, max: 50000, step: 100 },
+        pruning_frequency: { default: 100, min: 1, max: 1000, step: 1 },
         save_format: { default: 'tf' }
     }
 };
@@ -271,6 +300,31 @@ const getDefaultParameters = (modelType = 'text_classification') => {
     });
     return params;
 };
+
+const getTrainingStartParameters = (modelType = 'text_classification', training = null) => {
+    const previousParameters = training?.kwargs || {};
+    const availableArchitectures = ARCHITECTURES_BY_MODEL[modelType] || ARCHITECTURES_BY_MODEL.text_classification;
+    const architecture = availableArchitectures.includes(previousParameters.architecture)
+        ? previousParameters.architecture
+        : availableArchitectures[0];
+    const defaults = {};
+    Object.entries(ARCHITECTURE_DEFAULTS[architecture]).forEach(([key, metadata]) => {
+        defaults[key] = metadata.default;
+    });
+    return {
+        ...defaults,
+        ...previousParameters,
+        architecture
+    };
+};
+
+const TRAINING_FORM_STEPS = [
+    { key: 'data', label: 'Data' },
+    { key: 'model', label: 'Model' },
+    { key: 'schedule', label: 'Schedule' },
+    { key: 'callbacks', label: 'Callbacks' },
+    { key: 'export', label: 'Export' }
+];
 
 const TRAINING_ACTIVE_STATUSES = ['PENDING', 'RECEIVED', 'STARTED'];
 const TRAINING_DONE_STATUSES = ['SUCCESS', 'FAILURE', 'ABORTED', 'REVOKED'];
@@ -910,7 +964,7 @@ const TrainingInspector = ({ training, previousTraining, trainingData, previousT
             <Tabs defaultActiveKey={defaultTab} className="border-bottom border-light-subtle custom-tabs">
                 <Tab
                     eventKey="changes"
-                    title={<TabTitle icon={<FileDiff />}>Data</TabTitle>}
+                    title={<TabTitle icon={<PlusSlashMinus />}>Data</TabTitle>}
                 >
                     <div className="p-3">
                         <div className="border border-light-subtle rounded overflow-hidden">
@@ -925,7 +979,7 @@ const TrainingInspector = ({ training, previousTraining, trainingData, previousT
                 </Tab>
                 <Tab
                     eventKey="reports"
-                    title={<TabTitle icon={<Clipboard />}>Reports</TabTitle>}
+                    title={<TabTitle icon={<ListColumnsReverse />}>Reports</TabTitle>}
                     disabled={training.status !== 'SUCCESS'}
                 >
                     <div className="p-3">
@@ -934,7 +988,7 @@ const TrainingInspector = ({ training, previousTraining, trainingData, previousT
                 </Tab>
                 <Tab
                     eventKey="matrix"
-                    title={<TabTitle icon={<Grid />}>Matrix</TabTitle>}
+                    title={<TabTitle icon={<Grid3x3GapFill />}>Matrix</TabTitle>}
                     disabled={training.status !== 'SUCCESS'}
                 >
                     <div className="p-3">
@@ -943,7 +997,7 @@ const TrainingInspector = ({ training, previousTraining, trainingData, previousT
                 </Tab>
                 <Tab
                     eventKey="summary"
-                    title={<TabTitle icon={<FileText />}>Summary</TabTitle>}
+                    title={<TabTitle icon={<Stack />}>Layers</TabTitle>}
                     disabled={!hasSummary && training.status !== 'SUCCESS'}
                 >
                     <div className="p-3">
@@ -952,7 +1006,7 @@ const TrainingInspector = ({ training, previousTraining, trainingData, previousT
                 </Tab>
                 <Tab
                     eventKey="plots"
-                    title={<TabTitle icon={<BarChart />}>Plots</TabTitle>}
+                    title={<TabTitle icon={<BarChartFill />}>Plots</TabTitle>}
                     disabled={!hasHistory && training.status !== 'SUCCESS'}
                 >
                     <div className="p-3">
@@ -961,7 +1015,7 @@ const TrainingInspector = ({ training, previousTraining, trainingData, previousT
                 </Tab>
                 <Tab
                     eventKey="parameters"
-                    title={<TabTitle icon={<Sliders />}>Parameters</TabTitle>}
+                    title={<TabTitle icon={<Sliders2 />}>Parameters</TabTitle>}
                 >
                     <div className="p-3">
                         <TrainingParameters training={training} />
@@ -969,7 +1023,7 @@ const TrainingInspector = ({ training, previousTraining, trainingData, previousT
                 </Tab>
                 <Tab
                     eventKey="traceback"
-                    title={<TabTitle icon={<Bug />}>Error</TabTitle>}
+                    title={<TabTitle icon={<BugFill />}>Error</TabTitle>}
                     disabled={training.status !== 'FAILURE'}
                 >
                     <div className="p-3">
@@ -998,6 +1052,7 @@ const TrainingVersion = () => {
     const [stoppingTraining, setStoppingTraining] = useState(false);
     const [restartingTraining, setRestartingTraining] = useState(false);
     const [showRestartConfirmation, setShowRestartConfirmation] = useState(false);
+    const [showStopConfirmation, setShowStopConfirmation] = useState(false);
     const roomRef = useRef(null);
     const trainingStatusRef = useRef(null);
     const trainingTaskId = training?.task_id;
@@ -1047,6 +1102,7 @@ const TrainingVersion = () => {
             setAlert({ variant: 'danger', message: error.response?.data?.error || error.message });
         } finally {
             setStoppingTraining(false);
+            setShowStopConfirmation(false);
         }
     };
 
@@ -1161,7 +1217,7 @@ const TrainingVersion = () => {
     }, [user, socket, trainingTaskId]);
 
     return (
-        <div className="pb-5 container-fluid">
+        <div className="pb-5">
             <Row className="mt-4">
                 <Col>
                     {alert && <Alert variant={alert.variant} onClose={() => setAlert(null)} dismissible>{alert.message}</Alert>}
@@ -1175,7 +1231,7 @@ const TrainingVersion = () => {
                 <>
                     <MetricStrip
                         training={training}
-                        onStopTraining={handleStopTraining}
+                        onStopTraining={() => setShowStopConfirmation(true)}
                         stoppingTraining={stoppingTraining}
                         onRestartTraining={() => setShowRestartConfirmation(true)}
                         restartingTraining={restartingTraining}
@@ -1186,13 +1242,27 @@ const TrainingVersion = () => {
                         trainingData={trainingData}
                         previousTrainingData={previousTrainingData}
                     />
+                    <Modal centered show={showStopConfirmation} onHide={() => setShowStopConfirmation(false)}>
+                        <Modal.Header closeButton>
+                            <Modal.Title className="small fw-bold text-muted">Stop training</Modal.Title>
+                        </Modal.Header>
+                        <Modal.Body>
+                            <p className="small">Stop this training run? Progress from the active run will be interrupted.</p>
+                            <div className="d-flex justify-content-end gap-2">
+                                <Button variant="light" size="sm" className="border small" onClick={() => setShowStopConfirmation(false)} disabled={stoppingTraining}>CANCEL</Button>
+                                <Button variant="danger" size="sm" className="small" onClick={handleStopTraining} disabled={stoppingTraining}>
+                                    {stoppingTraining ? <><Spinner animation="border" size="sm" />&nbsp;STOPPING...</> : 'STOP'}
+                                </Button>
+                            </div>
+                        </Modal.Body>
+                    </Modal>
                     <Modal centered show={showRestartConfirmation} onHide={handleCloseRestartConfirmation}>
                         <Modal.Header closeButton>
-                            <Modal.Title className="small fw-bold text-muted">Restart training</Modal.Title>
+                            <Modal.Title className="small fw-bold text-muted">Retry training</Modal.Title>
                         </Modal.Header>
                         <Modal.Body>
                             <p className="small">
-                                Restarting this training will erase the current training results and replace them with the new run.
+                                Retrying this training will erase the current training results and replace them with the new run.
                             </p>
                             <div className="d-flex justify-content-end gap-2">
                                 <Button
@@ -1212,9 +1282,9 @@ const TrainingVersion = () => {
                                     className="small"
                                 >
                                     {restartingTraining ? (
-                                        <><Spinner animation="border" size="sm" />&nbsp;RESTARTING...</>
+                                        <><Spinner animation="border" size="sm" />&nbsp;RETRYING...</>
                                     ) : (
-                                        'RESTART'
+                                        'RETRY'
                                     )}
                                 </Button>
                             </div>
@@ -1243,11 +1313,15 @@ const History = () => {
     const [currentTraining, setCurrentTraining] = useState(null);
     const [activeTrainings, setActiveTrainings] = useState([]);
     const [showParameters, setShowParameters] = useState(false);
+    const [trainingStep, setTrainingStep] = useState(0);
     const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
-    const [selectedTraining, setSelectedTraining] = useState(null);
+    const [trainingsToDelete, setTrainingsToDelete] = useState([]);
+    const [selectedIds, setSelectedIds] = useState(new Set());
     const [submitting, setSubmitting] = useState(false);
+    const [startingTraining, setStartingTraining] = useState(false);
     const [stoppingTrainingIds, setStoppingTrainingIds] = useState(new Set());
     const [restartingTrainingIds, setRestartingTrainingIds] = useState(new Set());
+    const [trainingAction, setTrainingAction] = useState(null);
     const [loading, setLoading] = useState(false);
     const [page, setPage] = useState(1);
     const pageRef = useRef(page);
@@ -1256,6 +1330,26 @@ const History = () => {
     const maxVisiblePages = 5;
 
     const debouncedQuery = useDebounce(query, 500);
+
+    const selectedTrainings = trainings.filter((training) => selectedIds.has(training.id));
+    const canStopSelected = selectedTrainings.length > 0 && selectedTrainings.every(isTrainingActive);
+    const canRetrySelected = selectedTrainings.length > 0 && selectedTrainings.every(isTrainingReady);
+    const canDeleteSelected = selectedTrainings.length > 0 && selectedTrainings.every(isTrainingDeletable);
+
+    const toggleRowSelection = (id) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+        });
+    };
+
+    const toggleAllSelection = (visibleTrainings) => {
+        setSelectedIds((prev) => {
+            const allSelected = visibleTrainings.length > 0 && visibleTrainings.every((training) => prev.has(training.id));
+            return allSelected ? new Set() : new Set(visibleTrainings.map((training) => training.id));
+        });
+    };
 
     const rooms = useRef(new Set())
     const hasActiveTraining = activeTrainings.length > 0;
@@ -1311,8 +1405,10 @@ const History = () => {
     };
 
     useEffect(() => {
-        setParameters(getDefaultParameters(model?.type));
-    }, [model?.type]);
+        if (!showParameters) {
+            setParameters(getTrainingStartParameters(model?.type, currentTraining));
+        }
+    }, [model?.type, currentTraining?.id, showParameters]);
 
     const architectureOptions = ARCHITECTURES_BY_MODEL[model?.type || 'text_classification'] || ['deep_neural_network'];
     const monitorOptions = paramters.architecture === 'transformer' && model?.type !== 'text_classification'
@@ -1343,6 +1439,18 @@ const History = () => {
         setParameters(prev => ({ ...prev, [field]: value }));
     };
 
+    const handleOpenStartTraining = () => {
+        setParameters(getTrainingStartParameters(model?.type, currentTraining));
+        setTrainingStep(0);
+        setShowParameters(true);
+    };
+
+    const handleCloseStartTraining = () => {
+        if (startingTraining) return;
+        setShowParameters(false);
+        setTrainingStep(0);
+    };
+
     const renderNumberControl = (field, label, options = {}) => {
         const metadata = ARCHITECTURE_DEFAULTS[paramters.architecture]?.[field] || {};
         const {
@@ -1354,21 +1462,11 @@ const History = () => {
         } = options;
 
         return (
-            <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
-                <Form.Label column sm="4" className="small fw-bold text-muted">
-                    {label}&nbsp;<QuestionCircle />
-                </Form.Label>
-                <Col sm="6">
-                    <Form.Range
-                        disabled={disabled}
-                        min={min}
-                        max={max}
-                        step={step}
-                        value={paramters[field]}
-                        onChange={(e) => updateParameter(field, parse(e.target.value))}
-                    />
-                </Col>
-                <Col sm="2">
+            <FormGroup className="mb-4">
+                <div className="d-flex justify-content-between align-items-center gap-3 mb-2">
+                    <Form.Label className="small fw-semibold text-muted mb-0">
+                        {label}
+                    </Form.Label>
                     <Form.Control
                         disabled={disabled}
                         type='number'
@@ -1376,16 +1474,195 @@ const History = () => {
                         max={max}
                         step={step}
                         value={paramters[field]}
-                        className="form-control-sm"
+                        className="form-control-sm text-end"
+                        style={{ width: '7rem' }}
                         onChange={(e) => updateParameter(field, parse(e.target.value))}
                     />
-                </Col>
+                </div>
+                <Form.Range
+                    disabled={disabled}
+                    min={min}
+                    max={max}
+                    step={step}
+                    value={paramters[field]}
+                    onChange={(e) => updateParameter(field, parse(e.target.value))}
+                />
             </FormGroup>
         );
     };
 
-    const handleTrain = async () => {
+    const activeTrainingFormStep = TRAINING_FORM_STEPS[trainingStep];
+    const canGoToPreviousTrainingStep = trainingStep > 0 && !startingTraining;
+    const canGoToNextTrainingStep = trainingStep < TRAINING_FORM_STEPS.length - 1 && !startingTraining;
+
+    const goToTrainingStep = (step) => {
+        if (startingTraining) return;
+        setTrainingStep(Math.min(Math.max(step, 0), TRAINING_FORM_STEPS.length - 1));
+    };
+
+    const renderStartTrainingStep = () => {
+        if (trainingStep === 0) {
+            return (
+                <>
+                    {/* <p className="small text-muted mb-3">
+                        {currentTraining?.kwargs
+                            ? `Using parameters from version ${currentTraining.version}.`
+                            : 'Using default parameters for the first training run.'}
+                    </p> */}
+                    {renderNumberControl('test_split', 'Train split *')}
+                    {renderNumberControl('validation_split', 'Validation split')}
+                </>
+            );
+        }
+
+        if (trainingStep === 1) {
+            return (
+                <>
+                    <FormGroup className="mb-4">
+                        <Form.Label className="small fw-semibold text-muted">
+                            Architecture
+                        </Form.Label>
+                        <Form.Select
+                            value={paramters.architecture}
+                            onChange={(e) => handleArchitectureChange(e.target.value)}
+                            className="form-select-sm"
+                        >
+                            {architectureOptions.map((architecture) => (
+                                <option key={architecture} value={architecture}>{architecture}</option>
+                            ))}
+                        </Form.Select>
+                    </FormGroup>
+                    {paramters.architecture === 'transformer' && (
+                        <>
+                            <FormGroup className="mb-4">
+                                <Form.Label className="small fw-semibold text-muted">Pretrained model</Form.Label>
+                                <Form.Select value={paramters.pretrained_model} onChange={(e) => updateParameter('pretrained_model', e.target.value)} className="form-select-sm">
+                                    {PRETRAINED_MODELS.map((pretrainedModel) => <option key={pretrainedModel} value={pretrainedModel}>{pretrainedModel}</option>)}
+                                </Form.Select>
+                            </FormGroup>
+                            <FormGroup className="mb-4">
+                                <div className="d-flex justify-content-between align-items-center">
+                                    <Form.Label className="small fw-semibold text-muted mb-0">Trainable encoder</Form.Label>
+                                    <Form.Check type="switch" checked={Boolean(paramters.trainable)} onChange={(e) => updateParameter('trainable', e.target.checked)} />
+                                </div>
+                            </FormGroup>
+                        </>
+                    )}
+                    {paramters.architecture === 'transformer'
+                        ? renderNumberControl('max_seq_len', 'Sequence length')
+                        : renderNumberControl('sequence_length', 'Sequence length')}
+                    {['deep_neural_network', 'recurrent_neural_network'].includes(paramters.architecture) && renderNumberControl('max_tokens', 'Max tokens')}
+                    {['deep_neural_network', 'recurrent_neural_network'].includes(paramters.architecture) && renderNumberControl('embedding_dims', 'Embedding dimension')}
+                    {paramters.architecture === 'recurrent_neural_network' && renderNumberControl('lstm_dims', 'LSTM dimensions')}
+                    {paramters.architecture === 'transformer' && model?.type !== 'named_entity_recognition' && renderNumberControl('units', 'Dense units')}
+                    {paramters.architecture !== 'transformer' || model?.type !== 'named_entity_recognition'
+                        ? renderNumberControl('dropout', 'Dropout rate')
+                        : null}
+                </>
+            );
+        }
+
+        if (trainingStep === 2) {
+            return (
+                <>
+                    {renderNumberControl('epochs', 'Epochs')}
+                    {renderNumberControl('batch_size', 'Batch size')}
+                    {renderNumberControl('learning_rate', 'Learning rate')}
+                </>
+            );
+        }
+
+        if (trainingStep === 3) {
+            return (
+                <>
+                <FormGroup className="mb-4">
+                    <div className="d-flex justify-content-between align-items-center">
+                        <Form.Label className="small fw-semibold text-muted mb-0">
+                            Early stopping
+                        </Form.Label>
+                        <Form.Check
+                            type='switch'
+                            onChange={(e) => updateParameter('early_stopping', e.target.checked)}
+                            checked={paramters.early_stopping}
+                        />
+                    </div>
+                </FormGroup>
+                {paramters.early_stopping && (
+                    <>
+                        <FormGroup className="mb-4">
+                            <Form.Label className="small fw-semibold text-muted">
+                                Monitor
+                            </Form.Label>
+                            <Form.Select
+                                value={paramters.monitor}
+                                onChange={(e) => updateParameter('monitor', e.target.value)}
+                                className="form-select-sm"
+                            >
+                                {monitorOptions.map(([value, label]) => (
+                                    <option key={value} value={value}>{label}</option>
+                                ))}
+                            </Form.Select>
+                        </FormGroup>
+                        {renderNumberControl('patience', 'Patience')}
+                    </>
+                )}
+                {model?.type === 'text_classification' && (
+                    <>
+                        <FormGroup className="mb-4">
+                            <div className="d-flex justify-content-between align-items-center">
+                                <Form.Label className="small fw-semibold text-muted mb-0">Pruning</Form.Label>
+                                <Form.Check type="switch" checked={Boolean(paramters.pruning)} onChange={(e) => updateParameter('pruning', e.target.checked)} />
+                            </div>
+                        </FormGroup>
+                        {paramters.pruning && (
+                            <>
+                                {renderNumberControl('initial_sparsity', 'Initial sparsity')}
+                                {renderNumberControl('final_sparsity', 'Final sparsity')}
+                                {renderNumberControl('pruning_begin_step', 'Begin step')}
+                                {renderNumberControl('pruning_end_step', 'End step')}
+                                {renderNumberControl('pruning_frequency', 'Update frequency')}
+                            </>
+                        )}
+                    </>
+                )}
+                {renderNumberControl('weight_decay_rate', 'Weight decay')}
+                {renderNumberControl('num_warmup_steps', 'Warmup steps')}
+                </>
+            );
+        }
+
+        return (
+            <>
+                <FormGroup className="mb-4">
+                    <Form.Label className="small fw-semibold text-muted">
+                        Save format
+                    </Form.Label>
+                    <Form.Select
+                        value={paramters.save_format}
+                        onChange={(e) => updateParameter('save_format', e.target.value)}
+                        className="form-select-sm"
+                    >
+                        <option value='tf'>tf</option>
+                        <option value='saved_model'>saved_model</option>
+                        <option value='h5'>h5</option>
+                        <option value='weights'>weights</option>
+                        <option value='tflite'>tflite</option>
+                        <option value='onnx'>onnx</option>
+                    </Form.Select>
+                </FormGroup>
+            </>
+        );
+    };
+
+    const handleTrain = async (event) => {
+        event?.preventDefault();
+        if (trainingStep < TRAINING_FORM_STEPS.length - 1) {
+            goToTrainingStep(trainingStep + 1);
+            return;
+        }
+
         try {
+            setStartingTraining(true);
             const headers = { "Authorization": `Bearer ${user.token}` };
             let response = await axios.post(`/api/models/${modelId}/trainings`, {}, { headers });
             response = await axios.post(`/api/models/${modelId}/trainings/${response.data.id}/start`, paramters, { headers });
@@ -1396,13 +1673,17 @@ const History = () => {
                     setTrainings(prev => [response.data, ...prev.slice(0, -1)]);
                 } else {
                     setTrainings(prev => [response.data, ...prev]);
-                    setTotal(total + 1)
                 }
+                setTotal(prev => prev + 1);
             } else {
                 setPage(1);
             }
+            setShowParameters(false);
+            setTrainingStep(0);
         } catch (error) {
             setAlert({ variant: 'danger', message: error.response?.data?.error || error.message });
+        } finally {
+            setStartingTraining(false);
         }
     };
 
@@ -1473,29 +1754,30 @@ const History = () => {
         }
     };
 
-    const handleOpenDeleteConfirmation = (training) => {
-        setSelectedTraining(training);
+    const handleOpenDeleteConfirmation = (trainingsForDeletion) => {
+        setTrainingsToDelete(trainingsForDeletion);
         setShowDeleteConfirmation(true);
     };
 
     const handleCloseDeleteConfirmation = () => {
-        setSelectedTraining(null);
+        setTrainingsToDelete([]);
         setShowDeleteConfirmation(false);
     }
 
-    const handleDelete = async (trainingId) => {
+    const handleDelete = async (trainingIds) => {
         try {
             setSubmitting(true);
             setLoading(true);
             const headers = { "Authorization": `Bearer ${user.token}` }
-            await axios.delete(`/api/models/${model.id}/trainings/${trainingId}`, { headers });
-            setActiveTrainings(prev => prev.filter(training => training.id !== trainingId));
-            if (trainings.length - 1 > 0) {
+            await Promise.all(trainingIds.map((trainingId) => axios.delete(`/api/models/${model.id}/trainings/${trainingId}`, { headers })));
+            setActiveTrainings(prev => prev.filter(training => !trainingIds.includes(training.id)));
+            const remainingOnPage = trainings.length - trainingIds.length;
+            if (remainingOnPage > 0) {
                 if (page === Math.ceil((total) / perPage)) {
-                    if (page === 1 && trainingId === currentTraining?.id)
-                        setCurrentTraining(trainings[1])
-                    setTrainings(prev => prev.filter((t) => t.id !== trainingId));
-                    setTotal(total - 1);
+                    if (page === 1 && trainingIds.includes(currentTraining?.id))
+                        setCurrentTraining(trainings.find((t) => !trainingIds.includes(t.id)) || null)
+                    setTrainings(prev => prev.filter((t) => !trainingIds.includes(t.id)));
+                    setTotal(total - trainingIds.length);
                 } else {
                     let params = { extended: '1', page: page, per_page: perPage };
                     if (debouncedQuery !== '')
@@ -1503,19 +1785,24 @@ const History = () => {
                     const response = await axios.get(`/api/models/${model.id}/trainings`, { params, headers });
                     setTrainings(response.data.trainings);
                     setTotal(response.data.total);
-                    if (trainingId === currentTraining?.id)
+                    if (trainingIds.includes(currentTraining?.id))
                         setCurrentTraining(response.data.trainings[0]);
                 }
             } else {
                 if (page > 1) {
                     setPage(page - 1);
                 } else {
-                    if (trainingId === currentTraining?.id)
+                    if (trainingIds.includes(currentTraining?.id))
                         setCurrentTraining(null);
                     setTrainings([]);
                     setTotal(0);
                 }
             }
+            setSelectedIds(prev => {
+                const next = new Set(prev);
+                trainingIds.forEach((id) => next.delete(id));
+                return next;
+            });
         } catch (error) {
             setAlert({ variant: 'danger', message: error.response.data.error });
         } finally {
@@ -1532,6 +1819,10 @@ const History = () => {
     useEffect(() => {
         setPage(1);
     }, [debouncedQuery])
+
+    useEffect(() => {
+        setSelectedIds(new Set());
+    }, [page, debouncedQuery]);
 
     useEffect(() => {
         if (user && modelId) {
@@ -1601,7 +1892,7 @@ const History = () => {
     }, [user, socket, activeTrainingTaskKey]);
 
     return (
-        <div className="container-fluid">
+        <div>
             <Row className="mt-4">
                 <Col>
                     {alert && <Alert variant={alert.variant} onClose={() => setAlert(null)} dismissible>{alert.message}</Alert>}
@@ -1609,51 +1900,59 @@ const History = () => {
             </Row>
             <Row className="mt-4">
                 <Col>
-                    <ButtonGroup>
-                        <Button
-                            variant="light"
-                            className="border"
-                            onClick={() => setShowParameters(true)}
-                        >
-                            <Sliders />
-                        </Button>
-                        {hasActiveTraining ?
-                            <>
-                                {activeTrainingStatus === 'PENDING' || activeTrainingStatus === 'RECEIVED' ?
-                                    <Button
-                                        variant="light"
-                                        disabled
-                                        className="border"
-                                    >
-                                        <Spinner
-                                            animation="border"
-                                            size="sm"
-                                        />
-                                            &nbsp;pending...
-                                        </Button>
-                                    : activeTrainingStatus === 'STARTED' ?
-                                        <Button
-                                            variant="light"
-                                            disabled
-                                            className="border"
-                                        >
-                                            <Spinner
-                                                animation="grow"
-                                                size="sm"
-                                            />
-                                            &nbsp;training...
-                                        </Button>
-                                        : null}
-                            </>
-                            :
+                    <ButtonToolbar>
+                        <ButtonGroup className="me-2">
+                            {hasActiveTraining ? (
+                                <Button variant="light" disabled className="border">
+                                    <Spinner
+                                        animation={activeTrainingStatus === 'STARTED' ? 'grow' : 'border'}
+                                        size="sm"
+                                    />
+                                    &nbsp;{activeTrainingStatus === 'STARTED' ? 'training...' : 'pending...'}
+                                </Button>
+                            ) : (
+                                <Button
+                                    variant="light"
+                                    onClick={handleOpenStartTraining}
+                                    className="border"
+                                >
+                                    <PlusLg />&nbsp;create training
+                                </Button>
+                            )}
+                        </ButtonGroup>
+                        <ButtonGroup>
                             <Button
                                 variant="light"
-                                onClick={handleTrain}
                                 className="border"
+                                title="Stop selected"
+                                aria-label="Stop selected"
+                                disabled={!canStopSelected || selectedTrainings.some((t) => stoppingTrainingIds.has(t.id))}
+                                onClick={() => setTrainingAction({ type: 'stop', trainings: selectedTrainings })}
                             >
-                                <ArrowClockwise />&nbsp;start training
-                            </Button>}
-                    </ButtonGroup>
+                                <StopCircleFill />
+                            </Button>
+                            <Button
+                                variant="light"
+                                className="border"
+                                title="Retry selected"
+                                aria-label="Retry selected"
+                                disabled={!canRetrySelected || selectedTrainings.some((t) => restartingTrainingIds.has(t.id))}
+                                onClick={() => setTrainingAction({ type: 'retry', trainings: selectedTrainings })}
+                            >
+                                <ArrowClockwise />
+                            </Button>
+                            <Button
+                                variant="light"
+                                className="border text-danger"
+                                title="Delete selected"
+                                aria-label="Delete selected"
+                                disabled={!canDeleteSelected}
+                                onClick={() => handleOpenDeleteConfirmation(selectedTrainings)}
+                            >
+                                <Trash />
+                            </Button>
+                        </ButtonGroup>
+                    </ButtonToolbar>
                 </Col>
                 <Col>
                     <Form>
@@ -1678,20 +1977,26 @@ const History = () => {
                     >
                         <thead>
                             <tr>
-                                <th>#</th>
+                                <th style={{ width: '40px' }}>
+                                    <Form.Check
+                                        type="checkbox"
+                                        checked={trainings.length > 0 && trainings.every((training) => selectedIds.has(training.id))}
+                                        onChange={() => toggleAllSelection(trainings)}
+                                        disabled={loading || trainings.length === 0}
+                                    />
+                                </th>
                                 <th>Version</th>
                                 <th>Status</th>
                                 <th>Date Start</th>
                                 <th>Date Done</th>
                                 <th>Accuracy (%)</th>
-                                <th>Options</th>
                             </tr>
                         </thead>
                         <tbody>
                             {loading ? (
                                 <tr >
                                     <td
-                                        colSpan={7}
+                                        colSpan={6}
                                         style={{
                                             verticalAlign: 'middle'
                                         }}
@@ -1700,9 +2005,15 @@ const History = () => {
                                     </td>
                                 </tr>
                             ) : total > 0 ?
-                                trainings.map((training, index) => (
+                                trainings.map((training) => (
                                     <tr key={training.id}>
-                                        <td>{(page - 1) * perPage + index + 1}.</td>
+                                        <td>
+                                            <Form.Check
+                                                type="checkbox"
+                                                checked={selectedIds.has(training.id)}
+                                                onChange={() => toggleRowSelection(training.id)}
+                                            />
+                                        </td>
                                         <td>
                                             <Link to={`/models/${modelId}/history/${training.id}`} className="text-decoration-none">
                                                 {training.version}
@@ -1712,54 +2023,11 @@ const History = () => {
                                         <td>{training.created_at}</td>
                                         <td>{training.date_done}</td>
                                         <td>{training.status === 'SUCCESS' && getTrainingAccuracy(training) !== null && (getTrainingAccuracy(training) * 100).toFixed(2)}</td>
-                                        <td>
-                                            <Dropdown>
-                                                <Dropdown.Toggle size='sm' variant='light'>
-                                                    select
-                                                </Dropdown.Toggle>
-                                                <Dropdown.Menu>
-                                                    {isTrainingActive(training) && (
-                                                        <Dropdown.Item
-                                                            disabled={stoppingTrainingIds.has(training.id)}
-                                                            onClick={() => handleStopTraining(training)}
-                                                        >
-                                                            {stoppingTrainingIds.has(training.id) ? (
-                                                                <Spinner animation="border" size="sm" className="me-2" />
-                                                            ) : (
-                                                                <StopCircleFill className="me-2" />
-                                                            )}
-                                                            Stop
-                                                        </Dropdown.Item>
-                                                    )}
-                                                    {isTrainingReady(training) && (
-                                                        <Dropdown.Item
-                                                            disabled={restartingTrainingIds.has(training.id)}
-                                                            onClick={() => handleRestartTraining(training)}
-                                                        >
-                                                            {restartingTrainingIds.has(training.id) ? (
-                                                                <Spinner animation="border" size="sm" className="me-2" />
-                                                            ) : (
-                                                                <ArrowClockwise className="me-2" />
-                                                            )}
-                                                            Retry
-                                                        </Dropdown.Item>
-                                                    )}
-                                                    <Dropdown.Item
-                                                        disabled={!isTrainingDeletable(training)}
-                                                        className="text-danger"
-                                                        onClick={() => handleOpenDeleteConfirmation(training)}
-                                                    >
-                                                        <Trash className="me-2" />
-                                                        Delete
-                                                    </Dropdown.Item>
-                                                </Dropdown.Menu>
-                                            </Dropdown>
-                                        </td>
                                     </tr>
                                 )) : query !== '' ? (
                                     <tr>
                                         <td
-                                            colSpan={7}
+                                            colSpan={6}
                                             style={{
                                                 verticalAlign: 'middle'
                                             }}
@@ -1770,7 +2038,7 @@ const History = () => {
                                 ) : (
                                     <tr>
                                         <td
-                                            colSpan={7}
+                                            colSpan={6}
                                             style={{
                                                 verticalAlign: 'middle'
                                             }}
@@ -1808,17 +2076,16 @@ const History = () => {
                         </Pagination>}
                 </Col>
             </Row>
-            <Modal size="lg" centered show={showParameters} onHide={() => setShowParameters(false)}>
-                <Modal.Header closeButton>
+            <Modal size="lg" centered show={showParameters} onHide={handleCloseStartTraining}>
+                <Modal.Header closeButton={!startingTraining}>
                     <Modal.Title className="small fw-bold text-muted">
-                        Parameters&nbsp;
-                        <OverlayTrigger
+                        Training&nbsp;<OverlayTrigger
                             placement='bottom'
                             overlay={
                                 <Popover>
-                                    <Popover.Header as="h3"><InfoCircle />&nbsp;Parameters</Popover.Header>
+                                    <Popover.Header as="h3"><InfoCircle />&nbsp;Start training</Popover.Header>
                                     <Popover.Body>
-                                        Configurations set before training which influence the learning process. <strong>Only saved after training is completed successfully.</strong>
+                                        Review the training configuration before creating a new training version.
                                     </Popover.Body>
                                 </Popover>
                             }
@@ -1827,122 +2094,98 @@ const History = () => {
                         </OverlayTrigger>
                     </Modal.Title>
                 </Modal.Header>
-                <Modal.Body>
-                    <Form>
-                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
-                            <Form.Label column sm="4" className="small fw-bold text-muted">
-                                Architecture&nbsp;<QuestionCircle />
-                            </Form.Label>
-                            <Col sm="4">
-                                <Form.Select
-                                    value={paramters.architecture}
-                                    onChange={(e) => handleArchitectureChange(e.target.value)}
-                                    className="form-select-sm"
-                                >
-                                    {architectureOptions.map((architecture) => (
-                                        <option key={architecture} value={architecture}>{architecture}</option>
-                                    ))}
-                                </Form.Select>
-                            </Col>
-                        </FormGroup>
-                        {paramters.architecture === 'transformer' && (
-                            <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
-                                <Form.Label column sm="4" className="small fw-bold text-muted">
-                                    Pretrained model&nbsp;<QuestionCircle />
-                                </Form.Label>
-                                <Col sm="6">
-                                    <Form.Select
-                                        value={paramters.pretrained_model}
-                                        onChange={(e) => updateParameter('pretrained_model', e.target.value)}
-                                        className="form-select-sm"
-                                    >
-                                        {PRETRAINED_MODELS.map((pretrainedModel) => (
-                                            <option key={pretrainedModel} value={pretrainedModel}>{pretrainedModel}</option>
-                                        ))}
-                                    </Form.Select>
-                                </Col>
-                            </FormGroup>
-                        )}
-                        {renderNumberControl('validation_split', 'Validation split')}
-                        {renderNumberControl('epochs', 'Epochs')}
-                        {renderNumberControl('batch_size', 'Batch size')}
-                        {['deep_neural_network', 'recurrent_neural_network'].includes(paramters.architecture) && renderNumberControl('max_tokens', 'Max tokens')}
-                        {['deep_neural_network', 'recurrent_neural_network'].includes(paramters.architecture) && renderNumberControl('sequence_length', 'Sequence length')}
-                        {['deep_neural_network', 'recurrent_neural_network'].includes(paramters.architecture) && renderNumberControl('embedding_dims', 'Embedding dimensions')}
-                        {paramters.architecture === 'recurrent_neural_network' && renderNumberControl('lstm_dims', 'LSTM dimensions')}
-                        {paramters.architecture === 'transformer' && renderNumberControl('max_seq_len', 'Max sequence length')}
-                        {paramters.architecture === 'transformer' && renderNumberControl('learning_rate', 'Learning rate')}
-                        {paramters.architecture === 'transformer' && renderNumberControl('weight_decay_rate', 'Weight decay')}
-                        {paramters.architecture === 'transformer' && renderNumberControl('num_warmup_steps', 'Warmup steps')}
-                        {paramters.architecture === 'transformer' && model?.type !== 'named_entity_recognition' && renderNumberControl('units', 'Dense units')}
-                        {paramters.architecture !== 'transformer' || model?.type !== 'named_entity_recognition'
-                            ? renderNumberControl('dropout', 'Dropout')
-                            : null}
-                        {paramters.architecture === 'transformer' && model?.type !== 'named_entity_recognition' && renderNumberControl('l2', 'L2 regularization')}
-                        {paramters.architecture === 'transformer' && (
-                            <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
-                                <Form.Label column sm="4" className="small fw-bold text-muted">
-                                    Trainable encoder&nbsp;<QuestionCircle />
-                                </Form.Label>
-                                <Col sm='8'>
-                                    <Form.Check
-                                        type='switch'
-                                        onChange={(e) => updateParameter('trainable', e.target.checked)}
-                                        checked={Boolean(paramters.trainable)}
-                                    />
-                                </Col>
-                            </FormGroup>
-                        )}
-                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
-                            <Form.Label column sm="4" className="small fw-bold text-muted">
-                                Early stopping&nbsp;<QuestionCircle />
-                            </Form.Label>
-                            <Col sm='8'>
-                                <Form.Check
-                                    type='switch'
-                                    onChange={(e) => updateParameter('early_stopping', e.target.checked)}
-                                    checked={paramters.early_stopping}
+                <Form onSubmit={handleTrain}>
+                    <Modal.Body>
+                        <Tabs
+                            activeKey={activeTrainingFormStep.key}
+                            onSelect={(key) => goToTrainingStep(TRAINING_FORM_STEPS.findIndex(step => step.key === key))}
+                            variant="underline"
+                            className="mb-4 small nav-justified"
+                        >
+                            {TRAINING_FORM_STEPS.map((step) => (
+                                <Tab
+                                    key={step.key}
+                                    eventKey={step.key}
+                                    title={step.label}
                                 />
-                            </Col>
-                        </FormGroup>
-                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
-                            <Form.Label column sm='4' className="small fw-bold text-muted">
-                                Monitor&nbsp;<QuestionCircle />
-                            </Form.Label>
-                            <Col sm='4'>
-                                <Form.Select
-                                    disabled={!paramters.early_stopping}
-                                    value={paramters.monitor}
-                                    onChange={(e) => updateParameter('monitor', e.target.value)}
-                                    className="form-select-sm"
+                            ))}
+                        </Tabs>
+                        <div style={{ minHeight: '22rem' }}>
+                            {renderStartTrainingStep()}
+                        </div>
+                        {trainingStep < TRAINING_FORM_STEPS.length - 1 ? (
+                            <div className="d-flex justify-content-between align-items-center mt-2">
+                                <Button
+                                    variant="link"
+                                    type="button"
+                                    aria-label="Previous section"
+                                    title="Previous section"
+                                    onClick={() => goToTrainingStep(trainingStep - 1)}
+                                    disabled={!canGoToPreviousTrainingStep}
+                                    className="text-decoration-none px-0"
                                 >
-                                    {monitorOptions.map(([value, label]) => (
-                                        <option key={value} value={value}>{label}</option>
-                                    ))}
-                                </Form.Select>
-                            </Col>
-                        </FormGroup>
-                        {renderNumberControl('patience', 'Patience', { disabled: !paramters.early_stopping })}
-                        <FormGroup className="mt-3 d-flex align-items-center justify-text-center" as={Row}>
-                            <Form.Label column sm='4' className="small fw-bold text-muted">
-                                Save format&nbsp;<QuestionCircle />
-                            </Form.Label>
-                            <Col sm='4'>
-                                <Form.Select
-                                    value={paramters.save_format}
-                                    onChange={(e) => updateParameter('save_format', e.target.value)}
-                                    className="form-select-sm"
+                                    <ChevronLeft size={24} />
+                                </Button>
+                                <Button
+                                    variant="link"
+                                    type="button"
+                                    aria-label="Next section"
+                                    title="Next section"
+                                    onClick={() => goToTrainingStep(trainingStep + 1)}
+                                    disabled={!canGoToNextTrainingStep}
+                                    className="text-decoration-none px-0"
                                 >
-                                    <option value='tf'>tf</option>
-                                    <option value='saved_model'>saved_model</option>
-                                    <option value='h5'>h5</option>
-                                    <option value='weights'>weights</option>
-                                    <option value='tflite'>tflite</option>
-                                    <option value='onnx'>onnx</option>
-                                </Form.Select>
-                            </Col>
-                        </FormGroup>
-                    </Form>
+                                    <ChevronRight size={24} />
+                                </Button>
+                            </div>
+                        ) : (
+                            <div className="d-flex justify-content-end mt-2">
+                                <Button
+                                    variant="primary"
+                                    size="sm"
+                                    type="submit"
+                                    className="small"
+                                    disabled={startingTraining}
+                                >
+                                    {startingTraining ? (
+                                        <><Spinner animation="border" size="sm" />&nbsp;STARTING...</>
+                                    ) : (
+                                        'START TRAINING'
+                                    )}
+                                </Button>
+                            </div>
+                        )}
+                    </Modal.Body>
+                </Form>
+            </Modal>
+            <Modal centered show={Boolean(trainingAction)} onHide={() => setTrainingAction(null)}>
+                <Modal.Header closeButton>
+                    <Modal.Title className="small fw-bold text-muted">
+                        {trainingAction?.type === 'stop' ? 'Stop training' : 'Retry training'}
+                    </Modal.Title>
+                </Modal.Header>
+                <Modal.Body>
+                    <p className="small">
+                        {trainingAction?.type === 'stop'
+                            ? `Stop ${trainingAction.trainings.length > 1 ? `these ${trainingAction.trainings.length} training runs` : 'this training run'}? Progress from the active run will be interrupted.`
+                            : `Retry ${trainingAction?.trainings.length > 1 ? `these ${trainingAction.trainings.length} trainings` : 'this training'}? The existing results for ${trainingAction?.trainings.length > 1 ? 'these versions' : 'this version'} will be replaced.`}
+                    </p>
+                    <div className="d-flex justify-content-end gap-2">
+                        <Button variant="light" size="sm" className="border small" onClick={() => setTrainingAction(null)}>CANCEL</Button>
+                        <Button
+                            variant={trainingAction?.type === 'stop' ? 'danger' : 'warning'}
+                            size="sm"
+                            className="small"
+                            onClick={async () => {
+                                const action = trainingAction;
+                                setTrainingAction(null);
+                                if (action?.type === 'stop') await Promise.all(action.trainings.map((training) => handleStopTraining(training)));
+                                if (action?.type === 'retry') await Promise.all(action.trainings.map((training) => handleRestartTraining(training)));
+                            }}
+                        >
+                            {trainingAction?.type === 'stop' ? 'STOP' : 'RETRY'}
+                        </Button>
+                    </div>
                 </Modal.Body>
             </Modal>
             <Modal centered show={showDeleteConfirmation} onHide={handleCloseDeleteConfirmation}>
@@ -1950,14 +2193,23 @@ const History = () => {
                     <Modal.Title className="small fw-bold text-muted">Delete training</Modal.Title>
                 </Modal.Header>
                 <Modal.Body>
-                    <p className="small">Are you sure you want to delete this training record?</p>
+                    {trainingsToDelete.length > 1 ? (
+                        <>
+                            <p className="small">Are you sure you want to delete these {trainingsToDelete.length} training records?</p>
+                            <ul className="small text-muted">
+                                {trainingsToDelete.map((training) => <li key={training.id}>v{training.version}</li>)}
+                            </ul>
+                        </>
+                    ) : (
+                        <p className="small">Are you sure you want to delete this training record?</p>
+                    )}
                     <div className="d-flex justify-content-end gap-2">
                         <Button variant="light" size="sm" onClick={handleCloseDeleteConfirmation} className="border small">CANCEL</Button>
                         <Button
                             variant="danger"
                             size="sm"
                             disabled={submitting}
-                            onClick={() => handleDelete(selectedTraining.id)}
+                            onClick={() => handleDelete(trainingsToDelete.map((training) => training.id))}
                             className="small"
                         >
                             {submitting ? (

@@ -2,7 +2,9 @@ import os
 import re
 import string
 import pickle
+import numpy as np
 import tensorflow as tf
+from transformers import create_optimizer
 from .base import BaseTextClassification
 
 class DNNTextClassification(BaseTextClassification):
@@ -18,7 +20,10 @@ class DNNTextClassification(BaseTextClassification):
             'max_tokens': 10000,
             'sequence_length': 100,
             'embedding_dims': 64,
-            'dropout': 0.2
+            'dropout': 0.2,
+            'learning_rate': 1e-3,
+            'weight_decay_rate': 0,
+            'num_warmup_steps': 0
         })
 
     def preprocess_x(self, X, progress=False):
@@ -44,7 +49,7 @@ class DNNTextClassification(BaseTextClassification):
             )
             self.processor.adapt(cleaned)
         
-        return self.processor(cleaned).numpy()
+        return self.processor(cleaned).numpy().astype(np.int32)
 
     def build(self, num_classes, **kwargs):
         """
@@ -53,17 +58,39 @@ class DNNTextClassification(BaseTextClassification):
         self.parameters.update(kwargs)
         embedding_dims = self.parameters.get('embedding_dims', 64)
         dropout = self.parameters.get('dropout', 0.2)
+        sequence_length = self.parameters.get('sequence_length', 100)
         vocab_size = len(self.processor.get_vocabulary())
 
+        output_layer = tf.keras.layers.Dense(num_classes, activation='softmax', name="dense_output")
+        if self.parameters.get('pruning', False):
+            import tensorflow_model_optimization as tfmot
+            output_layer = tfmot.sparsity.keras.prune_low_magnitude(
+                output_layer,
+                pruning_schedule=tfmot.sparsity.keras.PolynomialDecay(
+                    initial_sparsity=self.parameters.get('initial_sparsity', 0),
+                    final_sparsity=self.parameters.get('final_sparsity', 0.5),
+                    begin_step=self.parameters.get('pruning_begin_step', 0),
+                    end_step=self.parameters.get('pruning_end_step', 1000),
+                    frequency=self.parameters.get('pruning_frequency', 100)
+                )
+            )
+
         model = tf.keras.models.Sequential([
+            tf.keras.layers.Input(shape=(sequence_length,), dtype=tf.int32),
             tf.keras.layers.Embedding(vocab_size, embedding_dims),
             tf.keras.layers.Dropout(dropout),
             tf.keras.layers.GlobalAveragePooling1D(),
             tf.keras.layers.Dropout(dropout),
-            tf.keras.layers.Dense(num_classes, activation='softmax', name="dense_output")
+            output_layer
         ])
 
-        model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+        optimizer, _ = create_optimizer(
+            init_lr=self.parameters.get('learning_rate', 1e-3),
+            num_train_steps=self.parameters.get('num_train_steps', 1000),
+            weight_decay_rate=self.parameters.get('weight_decay_rate', 0),
+            num_warmup_steps=self.parameters.get('num_warmup_steps', 0)
+        )
+        model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
         return model
 
     def save(self, path, save_format='tf'):

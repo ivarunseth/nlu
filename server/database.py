@@ -18,7 +18,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.ext.associationproxy import association_proxy
 
 from . import db, store
-from .tasks import worker, WorkerResult, training, prediction
+from .tasks import sage, triton, WorkerResult, training
 
 from .utils import timestamp, format_timestamp, allowed_file
 
@@ -361,8 +361,8 @@ class Training(db.Model):
     instances = db.relationship('Instance', cascade="all,delete", back_populates='training', lazy='dynamic')
 
     def _get_task(self):
-        return WorkerResult(self.task_id, app=worker) if self.task_id else None
-    
+        return WorkerResult(self.task_id, app=sage) if self.task_id else None
+
     def start(self, **kwargs):
         task = self._get_task()
         if task:
@@ -495,7 +495,7 @@ class Instance(db.Model):
         return Instance(environment=environment, model=model, training=training)
 
     def _get_task(self):
-        return None if not self.task_id else WorkerResult(id=self.task_id, app=worker)
+        return None if not self.task_id else WorkerResult(id=self.task_id, app=triton)
 
     def ready(self, task=None):
         task = task or self._get_task()
@@ -524,16 +524,39 @@ class Instance(db.Model):
         if task:
             task.forget()
             self.task_id = None
+        # Make the model unroutable in its environment. A resident serving task
+        # notices the missing route on its next loop and shuts itself down.
+        from .registry import registry_for
+        registry_for(self.environment.name).revoke_route(self.model_id)
 
-    def start(self, **kwargs):
-        task = prediction.predict.apply_async(
-            args=(self.training.path, self.model.type, self.task_id,), 
-            kwargs={**kwargs, 'bucket': current_app.config['STORAGE_BUCKET']},
-            queue=self.environment.name,
-            countdown=3
+    def start(self, prewarm=False, **kwargs):
+        """
+        Publish this model into its environment's inference data plane.
+
+        Publishing only writes the route (model -> artifact) into the
+        environment's Redis; the serving task is started lazily by the first
+        prediction request. Pass ``prewarm=True`` to launch it eagerly.
+        """
+        from .registry import registry_for, Route
+        registry_for(self.environment.name).publish_route(
+            self.model.id,
+            Route(
+                path=self.training.path,
+                model_type=self.model.type,
+                version=str(self.training.version),
+            ),
         )
-        self.task_id = task.id
-        
+
+        if prewarm:
+            from .tasks.inference import model
+            task = model.apply_async(
+                args=(self.model.id, self.training.path, self.model.type),
+                kwargs={**kwargs, 'environment': self.environment.name},
+                queue=self.environment.name,
+                countdown=3,
+            )
+            self.task_id = task.id
+
     def from_dict(self, data, partial_update=False):
         for field in ['environment_id', 'domain_id', 'model_id']:
             try:
@@ -547,6 +570,7 @@ class Instance(db.Model):
             'id': self.id,
             'environment': self.environment.name,
             'model_id': self.model_id,
+            'training_id': self.training_id,
             'task_id': self.task_id,
             'date_receive': format_timestamp(self.date_receive),
             'date_updated': format_timestamp(self.date_updated)

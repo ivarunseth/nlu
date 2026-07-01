@@ -32,7 +32,7 @@ class RNNNamedEntityRecognition(BaseNamedEntityRecognition):
                 output_sequence_length=self.parameters.get('sequence_length', 128)
             )
             self.processor.adapt(X)
-        return self.processor(X).numpy()
+        return self.processor(X).numpy().astype(np.int32)
 
     def tokenize_and_align(self, X, y):
         """
@@ -58,8 +58,10 @@ class RNNNamedEntityRecognition(BaseNamedEntityRecognition):
         embedding_dims = self.parameters.get('embedding_dims', 64)
         lstm_dims = self.parameters.get('lstm_dims', 100)
         dropout = self.parameters.get('dropout', 0.2)
+        sequence_length = self.parameters.get('sequence_length', 128)
 
         model = tf.keras.Sequential([
+            tf.keras.layers.Input(shape=(sequence_length,), dtype=tf.int32),
             tf.keras.layers.Embedding(input_dim=vocab_size, output_dim=embedding_dims),
             tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(lstm_dims, return_sequences=True)),
