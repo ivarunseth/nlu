@@ -95,7 +95,8 @@ const ForgotPassword = () => {
                         <div className="d-grid gap-2 my-3">
                             <Button
                                 type="submit"
-                                variant="dark"
+                                variant="light"
+                                className="border"
                                 disabled={submitting}
                             >
                                 {submitting ? (

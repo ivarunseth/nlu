@@ -23,38 +23,47 @@ function AccountSettings() {
                 <Col md={6}>
                     <h2>Account Settings</h2>
                     <Form onSubmit={handleSave}>
-                        <Form.Group controlId="formEmail">
-                            <Form.Label>Email address</Form.Label>
-                            <Form.Control
-                                type="email"
-                                placeholder="Enter email"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                required
-                            />
+                        <Form.Group className="mb-3">
+                            <Form.Floating>
+                                <Form.Control
+                                    id="formEmail"
+                                    type="email"
+                                    placeholder="Enter email"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    required
+                                />
+                                <Form.Label htmlFor="formEmail">Email address</Form.Label>
+                            </Form.Floating>
                         </Form.Group>
 
-                        <Form.Group controlId="formUsername">
-                            <Form.Label>Username</Form.Label>
-                            <Form.Control
-                                type="text"
-                                placeholder="Enter username"
-                                value={username}
-                                onChange={(e) => setUsername(e.target.value)}
-                            />
+                        <Form.Group className="mb-3">
+                            <Form.Floating>
+                                <Form.Control
+                                    id="formUsername"
+                                    type="text"
+                                    placeholder="Enter username"
+                                    value={username}
+                                    onChange={(e) => setUsername(e.target.value)}
+                                />
+                                <Form.Label htmlFor="formUsername">Username</Form.Label>
+                            </Form.Floating>
                         </Form.Group>
 
-                        <Form.Group controlId="formPassword">
-                            <Form.Label>Password</Form.Label>
-                            <Form.Control
-                                type="password"
-                                placeholder="Password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                            />
+                        <Form.Group className="mb-3">
+                            <Form.Floating>
+                                <Form.Control
+                                    id="formPassword"
+                                    type="password"
+                                    placeholder="Password"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                />
+                                <Form.Label htmlFor="formPassword">Password</Form.Label>
+                            </Form.Floating>
                         </Form.Group>
 
-                        <Button variant="primary" type="submit">
+                        <Button variant="light" className="border" type="submit">
                             Save Changes
                         </Button>
                     </Form>

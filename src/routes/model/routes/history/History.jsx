@@ -960,80 +960,82 @@ const TrainingInspector = ({ training, previousTraining, trainingData, previousT
     const hasHistory = Boolean(report?.history && Object.keys(report.history).length > 0);
 
     return (
-        <div className="border border-light-subtle rounded mt-4 bg-white overflow-hidden">
-            <Tabs defaultActiveKey={defaultTab} className="border-bottom border-light-subtle custom-tabs">
-                <Tab
-                    eventKey="changes"
-                    title={<TabTitle icon={<PlusSlashMinus />}>Data</TabTitle>}
-                >
-                    <div className="p-3">
-                        <div className="border border-light-subtle rounded overflow-hidden">
-                            <SimpleDiffViewer
-                                oldValue={previousTrainingData}
-                                newValue={trainingData}
-                                oldVersion={previousTraining?.version || '0'}
-                                newVersion={training.version}
-                            />
+        <Card className="border-0 mt-4 overflow-hidden">
+            <Card.Body className="p-0">
+                <Tabs defaultActiveKey={defaultTab} className="border-bottom border-light-subtle custom-tabs mb-3">
+                    <Tab
+                        eventKey="changes"
+                        title={<TabTitle icon={<PlusSlashMinus />}>Data</TabTitle>}
+                    >
+                        <div className="pt-3">
+                            <div className="border border-light-subtle rounded overflow-hidden">
+                                <SimpleDiffViewer
+                                    oldValue={previousTrainingData}
+                                    newValue={trainingData}
+                                    oldVersion={previousTraining?.version || '0'}
+                                    newVersion={training.version}
+                                />
+                            </div>
                         </div>
-                    </div>
-                </Tab>
-                <Tab
-                    eventKey="reports"
-                    title={<TabTitle icon={<ListColumnsReverse />}>Reports</TabTitle>}
-                    disabled={training.status !== 'SUCCESS'}
-                >
-                    <div className="p-3">
-                        <ReportsPanel training={training} />
-                    </div>
-                </Tab>
-                <Tab
-                    eventKey="matrix"
-                    title={<TabTitle icon={<Grid3x3GapFill />}>Matrix</TabTitle>}
-                    disabled={training.status !== 'SUCCESS'}
-                >
-                    <div className="p-3">
-                        <ConfusionMatrixPanel training={training} />
-                    </div>
-                </Tab>
-                <Tab
-                    eventKey="summary"
-                    title={<TabTitle icon={<Stack />}>Layers</TabTitle>}
-                    disabled={!hasSummary && training.status !== 'SUCCESS'}
-                >
-                    <div className="p-3">
-                        <TrainingSummary training={training} />
-                    </div>
-                </Tab>
-                <Tab
-                    eventKey="plots"
-                    title={<TabTitle icon={<BarChartFill />}>Plots</TabTitle>}
-                    disabled={!hasHistory && training.status !== 'SUCCESS'}
-                >
-                    <div className="p-3">
-                        <TrainingPlots training={training} />
-                    </div>
-                </Tab>
-                <Tab
-                    eventKey="parameters"
-                    title={<TabTitle icon={<Sliders2 />}>Parameters</TabTitle>}
-                >
-                    <div className="p-3">
-                        <TrainingParameters training={training} />
-                    </div>
-                </Tab>
-                <Tab
-                    eventKey="traceback"
-                    title={<TabTitle icon={<BugFill />}>Error</TabTitle>}
-                    disabled={training.status !== 'FAILURE'}
-                >
-                    <div className="p-3">
-                        <pre className="p-3 mb-0 bg-danger bg-opacity-10 text-danger border-0 rounded small overflow-auto" style={{ height: 'calc(100vh - 400px)' }}>
-                            {training.traceback || 'No traceback available.'}
-                        </pre>
-                    </div>
-                </Tab>
-            </Tabs>
-        </div>
+                    </Tab>
+                    <Tab
+                        eventKey="summary"
+                        title={<TabTitle icon={<Stack />}>Layers</TabTitle>}
+                        disabled={!hasSummary && training.status !== 'SUCCESS'}
+                    >
+                        <div className="pt-3">
+                            <TrainingSummary training={training} />
+                        </div>
+                    </Tab>
+                    <Tab
+                        eventKey="parameters"
+                        title={<TabTitle icon={<Sliders2 />}>Parameters</TabTitle>}
+                    >
+                        <div className="pt-3">
+                            <TrainingParameters training={training} />
+                        </div>
+                    </Tab>
+                    <Tab
+                        eventKey="plots"
+                        title={<TabTitle icon={<BarChartFill />}>Plots</TabTitle>}
+                        disabled={!hasHistory && training.status !== 'SUCCESS'}
+                    >
+                        <div className="pt-3">
+                            <TrainingPlots training={training} />
+                        </div>
+                    </Tab>
+                    <Tab
+                        eventKey="reports"
+                        title={<TabTitle icon={<ListColumnsReverse />}>Reports</TabTitle>}
+                        disabled={training.status !== 'SUCCESS'}
+                    >
+                        <div className="pt-3">
+                            <ReportsPanel training={training} />
+                        </div>
+                    </Tab>
+                    <Tab
+                        eventKey="matrix"
+                        title={<TabTitle icon={<Grid3x3GapFill />}>Matrix</TabTitle>}
+                        disabled={training.status !== 'SUCCESS'}
+                    >
+                        <div className="pt-3">
+                            <ConfusionMatrixPanel training={training} />
+                        </div>
+                    </Tab>
+                    <Tab
+                        eventKey="traceback"
+                        title={<TabTitle icon={<BugFill />}>Error</TabTitle>}
+                        disabled={training.status !== 'FAILURE'}
+                    >
+                        <div className="pt-3">
+                            <pre className="p-3 mb-0 bg-danger bg-opacity-10 text-danger border-0 rounded small overflow-auto" style={{ height: 'calc(100vh - 400px)' }}>
+                                {training.traceback || 'No traceback available.'}
+                            </pre>
+                        </div>
+                    </Tab>
+                </Tabs>
+            </Card.Body>
+        </Card>
     );
 };
 
@@ -2141,10 +2143,10 @@ const History = () => {
                         ) : (
                             <div className="d-flex justify-content-end mt-2">
                                 <Button
-                                    variant="primary"
+                                    variant="light"
                                     size="sm"
                                     type="submit"
-                                    className="small"
+                                    className="small border"
                                     disabled={startingTraining}
                                 >
                                     {startingTraining ? (

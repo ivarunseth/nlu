@@ -26,19 +26,22 @@ const ModelFormModal = ({
         <Modal.Body>
             <Form noValidate validated={validated} onSubmit={onSubmit}>
                 <Form.Group className="mb-3">
-                    <Form.Label>Name</Form.Label>
                     <InputGroup hasValidation>
-                        <Form.Control
-                            type="text"
-                            placeholder="Enter a name..."
-                            value={name}
-                            onChange={(e) => onNameChange(e.target.value)}
-                            autoFocus
-                            required
-                        />
-                        <Form.Control.Feedback type="invalid">
-                            Please enter a name.
-                        </Form.Control.Feedback>
+                        <Form.Floating>
+                            <Form.Control
+                                id="model-name"
+                                type="text"
+                                placeholder="Enter a name..."
+                                value={name}
+                                onChange={(e) => onNameChange(e.target.value)}
+                                autoFocus
+                                required
+                            />
+                            <Form.Label htmlFor="model-name">Name</Form.Label>
+                            <Form.Control.Feedback type="invalid">
+                                Please enter a name.
+                            </Form.Control.Feedback>
+                        </Form.Floating>
                     </InputGroup>
                     <Form.Text muted>
                         Choose a unique name for your model.
@@ -46,12 +49,14 @@ const ModelFormModal = ({
                 </Form.Group>
                 {showType && (
                     <Form.Group className="mb-3">
-                        <Form.Label>Type</Form.Label>
-                        <Form.Select value={type} onChange={(e) => onTypeChange(e.target.value)}>
-                            <option value="text_classification">Text classification</option>
-                            <option value="token_classification">Token classification</option>
-                            <option value="language_understanding">Language understanding</option>
-                        </Form.Select>
+                        <Form.Floating>
+                            <Form.Select id="model-type" value={type} onChange={(e) => onTypeChange(e.target.value)}>
+                                <option value="text_classification">Text classification</option>
+                                <option value="token_classification">Token classification</option>
+                                <option value="language_understanding">Language understanding</option>
+                            </Form.Select>
+                            <Form.Label htmlFor="model-type">Type</Form.Label>
+                        </Form.Floating>
                         <Form.Text muted>
                             Select the type that matches the model you want to create.
                         </Form.Text>
@@ -80,17 +85,20 @@ const ModelFormModal = ({
                     </Form.Text>
                 </Form.Group>
                 <Form.Group className="mb-3">
-                    <Form.Label>Description</Form.Label>
-                    <Form.Control
-                        as="textarea"
-                        rows={3}
-                        placeholder="Enter a description..."
-                        value={description}
-                        onChange={(e) => onDescriptionChange(e.target.value)}
-                    />
+                    <Form.Floating>
+                        <Form.Control
+                            id="model-description"
+                            as="textarea"
+                            placeholder="Enter a description..."
+                            value={description}
+                            onChange={(e) => onDescriptionChange(e.target.value)}
+                            style={{ height: "100px" }}
+                        />
+                        <Form.Label htmlFor="model-description">Description</Form.Label>
+                    </Form.Floating>
                 </Form.Group>
                 <div className="d-grid gap-2">
-                    <Button type="submit" variant="primary" disabled={submitting}>
+                    <Button type="submit" variant="light" className="border" disabled={submitting}>
                         {submitting ? (
                             <>
                                 <Spinner animation="border" size="sm" />

@@ -6,23 +6,37 @@ import {
     ExclamationTriangle,
     InfoCircle,
     Lightning,
-    PlayFill,
+    Play,
     Braces,
     CardText,
-    RocketTakeoff,
+    Cpu,
     Hdd,
     Stack,
     Stopwatch,
     Send,
+    SendCheck,
+    SendDash,
+    SendSlash,
+    SendExclamation,
     Reply,
     FolderCheck,
-    Folder
+    Folder,
+    ArrowClockwise,
+    Stop
 } from "react-bootstrap-icons";
 import { useParams } from "react-router-dom";
 import { UserContext } from "../../../../contexts/UserContext";
 import axios from "axios";
 
 const ENVIRONMENT = "development";
+
+// Parse the "dd/mm/yyyy - HH:MM:SS" local-time strings the API returns into a Date.
+const parseApiDate = (value) => {
+    const match = /^(\d{2})\/(\d{2})\/(\d{4})\s*-\s*(\d{2}):(\d{2}):(\d{2})$/.exec(value || "");
+    if (!match) return null;
+    const [, day, month, year, hour, minute, second] = match;
+    return new Date(+year, +month - 1, +day, +hour, +minute, +second);
+};
 
 const EmptyState = ({ icon, children }) => (
     <div
@@ -56,9 +70,17 @@ const MetricStrip = ({ environment, deployedVersion, versionCount, latency }) =>
         {
             label: "Deployed version",
             value: deployedVersion != null
-                ? <span className="font-monospace">v{deployedVersion}</span>
+                ? (
+                    <span className="d-flex align-items-center justify-content-between">
+                        <span className="font-monospace">v{deployedVersion}</span>
+                        <span className="d-inline-flex align-items-center gap-2">
+                            <StatusDot color="var(--bs-success)" />
+                            <span className="text-success fw-medium">live</span>
+                        </span>
+                    </span>
+                )
                 : <span className="text-muted">none</span>,
-            icon: <RocketTakeoff />
+            icon: <Cpu />
         },
         { label: "Trained versions", value: versionCount, icon: <Folder /> },
         {
@@ -72,10 +94,10 @@ const MetricStrip = ({ environment, deployedVersion, versionCount, latency }) =>
         <Row className="g-3">
             {items.map((item, index) => (
                 <Col key={index} xs={6} lg={3}>
-                    <Card className="border-light h-100">
+                    <Card className="h-100">
                         <Card.Body className="p-3 d-flex align-items-center">
                             <div className="text-primary me-3 fs-4 lh-1">{item.icon}</div>
-                            <div>
+                            <div className="flex-grow-1">
                                 <div className="text-muted small fw-bold" style={{ fontSize: "0.65rem" }}>{item.label}</div>
                                 <div className="text-dark small fw-medium">{item.value ?? "-"}</div>
                             </div>
@@ -160,24 +182,23 @@ const PredictionView = ({ prediction, query }) => {
         );
     }
 
-    // Text classification: { label, score }
-    if (typeof prediction === "object" && !Array.isArray(prediction) && "label" in prediction) {
+    // Text classification: { labels: [{ name, score }, ...] } ranked by score.
+    if (typeof prediction === "object" && !Array.isArray(prediction) && Array.isArray(prediction.labels)) {
         return (
             <div>
-                <div className="mb-4">
-                    <SectionLabel>Predicted label</SectionLabel>
-                    <div className="d-flex align-items-center gap-2 mt-2">
-                        <Badge bg="primary" className="fs-6 fw-medium px-3 py-2">{prediction.label}</Badge>
-                    </div>
-                </div>
-                {"score" in prediction && (
-                    <div>
-                        <SectionLabel>Confidence</SectionLabel>
-                        <div className="mt-2">
-                            <ScoreBar score={prediction.score} />
+                <SectionLabel>{prediction.labels.length > 1 ? "Predicted labels" : "Predicted label"}</SectionLabel>
+                <div className="mt-3 d-flex flex-column gap-3">
+                    {prediction.labels.map((item, index) => (
+                        <div key={index}>
+                            <div className="d-flex align-items-center gap-2 mb-2">
+                                <Badge bg={index === 0 ? "primary" : "light"} text={index === 0 ? undefined : "dark"} className="fw-medium px-3 py-2 border">
+                                    {item.name}
+                                </Badge>
+                            </div>
+                            <ScoreBar score={item.score} />
                         </div>
-                    </div>
-                )}
+                    ))}
+                </div>
             </div>
         );
     }
@@ -219,9 +240,38 @@ const PredictionView = ({ prediction, query }) => {
     return <pre className="p-3 mb-0 bg-light border-0 rounded small">{JSON.stringify(prediction, null, 2)}</pre>;
 };
 
+// Classic JSON syntax-highlight palette (keys / strings / numbers / booleans / null).
+const JSON_COLORS = {
+    key: "#d63384",
+    string: "#198754",
+    number: "#fd7e14",
+    boolean: "#0d6efd",
+    null: "#6c757d"
+};
+
+const highlightJson = (json) => json
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(
+        /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false)\b|\bnull\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g,
+        (match) => {
+            let type = "number";
+            if (/^"/.test(match)) {
+                type = /:$/.test(match) ? "key" : "string";
+            } else if (/true|false/.test(match)) {
+                type = "boolean";
+            } else if (/null/.test(match)) {
+                type = "null";
+            }
+            return `<span style="color:${JSON_COLORS[type]}">${match}</span>`;
+        }
+    );
+
 const JsonView = ({ data }) => {
     const [copied, setCopied] = useState(false);
     const json = useMemo(() => JSON.stringify(data, null, 2), [data]);
+    const html = useMemo(() => highlightJson(json), [json]);
 
     const handleCopy = async () => {
         try {
@@ -244,9 +294,11 @@ const JsonView = ({ data }) => {
                 {copied ? <ClipboardCheck className="text-success" /> : <Clipboard />}
                 <span className="small">{copied ? "Copied" : "Copy"}</span>
             </Button>
-            <pre className="p-3 mb-0 bg-light border-0 rounded small overflow-auto" style={{ maxHeight: "calc(100vh - 460px)", minHeight: "260px" }}>
-                {json}
-            </pre>
+            <pre
+                className="p-3 mb-0 bg-light border-0 rounded small overflow-auto"
+                style={{ maxHeight: "calc(100vh - 460px)", minHeight: "260px" }}
+                dangerouslySetInnerHTML={{ __html: html }}
+            />
         </div>
     );
 };
@@ -258,13 +310,18 @@ const Test = () => {
     const [trainings, setTrainings] = useState([]);
     const [selectedTrainingId, setSelectedTrainingId] = useState("");
     const [deployedTrainingId, setDeployedTrainingId] = useState(null);
+    const [deployedAt, setDeployedAt] = useState(null);
     const [deploying, setDeploying] = useState(false);
+    const [stopping, setStopping] = useState(false);
 
     const [query, setQuery] = useState("");
+    const [top, setTop] = useState(1);
+    const [labelCount, setLabelCount] = useState(0);
     const [result, setResult] = useState(null);
     const [latency, setLatency] = useState(null);
     const [alert, setAlert] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [sendError, setSendError] = useState(false);
 
     const versionOf = useMemo(() => {
         const map = {};
@@ -274,6 +331,18 @@ const Test = () => {
 
     const deployedVersion = deployedTrainingId != null ? versionOf[String(deployedTrainingId)] : null;
     const isDeployed = deployedTrainingId != null;
+    const busy = deploying || stopping;
+    // Whether the version chosen in the dropdown is the one currently serving.
+    const selectedIsDeployed = isDeployed && String(deployedTrainingId) === String(selectedTrainingId);
+
+    // The running instance is stale if its version was retrained after it was deployed.
+    const deployedStale = useMemo(() => {
+        if (!isDeployed || deployedAt == null) return false;
+        const training = trainings.find((item) => String(item.id) === String(deployedTrainingId));
+        const trainedAt = parseApiDate(training?.date_done);
+        const receivedAt = parseApiDate(deployedAt);
+        return trainedAt != null && receivedAt != null && trainedAt.getTime() > receivedAt.getTime();
+    }, [isDeployed, deployedAt, deployedTrainingId, trainings]);
 
     // Load the model's trained versions and whatever is currently in development.
     useEffect(() => {
@@ -282,9 +351,10 @@ const Test = () => {
 
         const load = async () => {
             try {
-                const [trainingsResponse, instancesResponse] = await Promise.all([
+                const [trainingsResponse, instancesResponse, labelsResponse] = await Promise.all([
                     axios.get(`/api/models/${modelId}/trainings`, { params: { per_page: 100 }, headers }),
-                    axios.get(`/api/models/${modelId}/instances`, { headers })
+                    axios.get(`/api/models/${modelId}/instances`, { headers }),
+                    axios.get(`/api/models/${modelId}/labels`, { params: { per_page: 1 }, headers })
                 ]);
 
                 const successful = (trainingsResponse.data.trainings || [])
@@ -292,10 +362,13 @@ const Test = () => {
                     .sort((a, b) => b.version - a.version);
                 setTrainings(successful);
 
+                setLabelCount(labelsResponse.data.total || 0);
+
                 const deployed = (instancesResponse.data.instances || [])
                     .find((instance) => instance.environment === ENVIRONMENT);
                 if (deployed) {
                     setDeployedTrainingId(deployed.training_id);
+                    setDeployedAt(deployed.date_receive);
                     setSelectedTrainingId(String(deployed.training_id));
                 }
             } catch (error) {
@@ -305,25 +378,49 @@ const Test = () => {
         load();
     }, [user, modelId]);
 
-    const handleVersionChange = async (event) => {
-        const trainingId = event.target.value;
-        setSelectedTrainingId(trainingId);
-        if (!trainingId) return;
+    const handleVersionChange = (event) => {
+        setSelectedTrainingId(event.target.value);
+        setAlert(null);
+    };
 
+    // Deploy (or redeploy) the version currently selected in the dropdown.
+    const handleDeploy = async () => {
+        if (!selectedTrainingId || busy) return;
         setDeploying(true);
+        setAlert(null);
+        try {
+            const response = await axios.post(
+                `/api/models/${modelId}/instances`,
+                { [ENVIRONMENT]: true },
+                { params: { training_id: selectedTrainingId }, headers: { Authorization: `Bearer ${user.token}` } }
+            );
+            const deployed = (response.data.instances || []).find((instance) => instance.environment === ENVIRONMENT);
+            setDeployedTrainingId(deployed ? deployed.training_id : selectedTrainingId);
+            setDeployedAt(deployed ? deployed.date_receive : null);
+        } catch (error) {
+            setAlert({ variant: "danger", message: error.response?.data?.error || error.message });
+        } finally {
+            setDeploying(false);
+        }
+    };
+
+    // Stop and tear down whatever is deployed in the environment.
+    const handleStop = async () => {
+        if (!isDeployed || busy) return;
+        setStopping(true);
         setAlert(null);
         try {
             await axios.post(
                 `/api/models/${modelId}/instances`,
-                { [ENVIRONMENT]: true },
-                { params: { training_id: trainingId }, headers: { Authorization: `Bearer ${user.token}` } }
+                { [ENVIRONMENT]: false },
+                { params: { training_id: deployedTrainingId }, headers: { Authorization: `Bearer ${user.token}` } }
             );
-            setDeployedTrainingId(trainingId);
+            setDeployedTrainingId(null);
+            setDeployedAt(null);
         } catch (error) {
             setAlert({ variant: "danger", message: error.response?.data?.error || error.message });
-            setSelectedTrainingId(deployedTrainingId != null ? String(deployedTrainingId) : "");
         } finally {
-            setDeploying(false);
+            setStopping(false);
         }
     };
 
@@ -333,22 +430,24 @@ const Test = () => {
 
         setLoading(true);
         setAlert(null);
+        setSendError(false);
         const startedAt = performance.now();
         try {
             const response = await axios.post(
                 `/triton/models/${modelId}/infer`,
                 { query },
-                { headers: { Authorization: `Bearer ${user.token}` } }
+                { params: { top }, headers: { Authorization: `Bearer ${user.token}` } }
             );
             setResult({ query, prediction: response.data, version: deployedVersion });
             setLatency(Math.round(performance.now() - startedAt));
         } catch (error) {
             const status = error.response?.status;
             const data = error.response?.data;
+            setSendError(true);
             if (status === 404) {
                 setAlert({
                     variant: "warning",
-                    message: "The selected version isn't serving yet. Re-select it to redeploy, then try again."
+                    message: "The selected version isn't serving yet. Click reload to redeploy, then try again."
                 });
             } else if (data && (data.error || data.type)) {
                 setResult({ query, prediction: data, version: deployedVersion });
@@ -386,14 +485,6 @@ const Test = () => {
                         <CardHeading
                             icon={<Send />}
                             title="Request"
-                            right={isDeployed ? (
-                                <span className="d-inline-flex align-items-center gap-2 small fw-medium text-success">
-                                    <StatusDot color="var(--bs-success)" />
-                                    <span className="font-monospace">v{deployedVersion}</span> live
-                                </span>
-                            ) : (
-                                <Badge bg="secondary" className="fw-normal">none deployed</Badge>
-                            )}
                         />
                         <Card.Body className="p-3 d-flex flex-column">
                             {trainings.length === 0 ? (
@@ -405,26 +496,54 @@ const Test = () => {
                                 <>
                                     <Form.Group className="mb-3">
                                         <Form.Label className="mb-1"><SectionLabel>Version</SectionLabel></Form.Label>
-                                        <Form.Select
-                                            value={selectedTrainingId}
-                                            onChange={handleVersionChange}
-                                            disabled={deploying}
-                                            size="sm"
-                                        >
-                                            <option value="">Select a version to deploy…</option>
-                                            {trainings.map((training) => (
-                                                <option key={training.id} value={training.id}>
-                                                    v{training.version}
-                                                </option>
-                                            ))}
-                                        </Form.Select>
+                                        <div className="d-flex align-items-center gap-2">
+                                            <Form.Select
+                                                value={selectedTrainingId}
+                                                onChange={handleVersionChange}
+                                                disabled={busy}
+                                                size="sm"
+                                            >
+                                                <option value="">Select a version…</option>
+                                                {trainings.map((training) => (
+                                                    <option key={training.id} value={training.id}>
+                                                        v{training.version}
+                                                    </option>
+                                                ))}
+                                            </Form.Select>
+                                            <Button
+                                                variant="light"
+                                                size="sm"
+                                                className="border d-inline-flex align-items-center flex-shrink-0"
+                                                title={selectedIsDeployed ? "Stop deployed model" : "Load selected version"}
+                                                onClick={selectedIsDeployed ? handleStop : handleDeploy}
+                                                disabled={busy || !selectedTrainingId}
+                                            >
+                                                {selectedIsDeployed ? <Stop /> : <Play />}
+                                            </Button>
+                                            <Button
+                                                variant="light"
+                                                size="sm"
+                                                className="border d-inline-flex align-items-center flex-shrink-0"
+                                                title="Reload deployed version"
+                                                onClick={handleDeploy}
+                                                disabled={busy || !selectedIsDeployed}
+                                            >
+                                                <ArrowClockwise />
+                                            </Button>
+                                        </div>
                                         <div className="text-muted d-flex align-items-center gap-1 mt-1" style={{ fontSize: "0.7rem", minHeight: "16px" }}>
-                                            {deploying ? (
-                                                <><Spinner animation="border" size="sm" />&nbsp;Deploying to {ENVIRONMENT}…</>
+                                            {busy ? (
+                                                <><Spinner animation="border" size="sm" />&nbsp;{stopping ? "Stopping" : "Deploying"} in {ENVIRONMENT}…</>
                                             ) : (
-                                                <span>Selecting a version deploys it to {ENVIRONMENT}.</span>
+                                                <span>Deploy a version, then reload to push a freshly retrained model.</span>
                                             )}
                                         </div>
+                                        {deployedStale && !busy && (
+                                            <Alert variant="warning" className="d-flex align-items-start gap-2 small mb-0 mt-2 py-2">
+                                                <ExclamationTriangle className="mt-1 flex-shrink-0" />
+                                                <span>v{deployedVersion} was retrained after it was deployed. Click reload to serve the latest model.</span>
+                                            </Alert>
+                                        )}
                                     </Form.Group>
 
                                     <Form onSubmit={handleSubmit} className="d-flex flex-column flex-grow-1">
@@ -434,15 +553,30 @@ const Test = () => {
                                             rows={6}
                                             value={query}
                                             placeholder={isDeployed ? "Type a sentence to send to the model…" : "Deploy a version first to start testing."}
-                                            onChange={(event) => setQuery(event.target.value)}
+                                            onChange={(event) => { setQuery(event.target.value); setSendError(false); }}
                                             onKeyDown={(event) => {
                                                 if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
                                                     handleSubmit(event);
                                                 }
                                             }}
                                             className="mb-3 flex-grow-1"
-                                            disabled={loading || deploying || !isDeployed}
+                                            disabled={loading || busy || !isDeployed}
                                         />
+                                        {labelCount > 1 && (
+                                            <div className="mb-3">
+                                                <div className="d-flex align-items-center justify-content-between mb-1">
+                                                    <SectionLabel>Top labels</SectionLabel>
+                                                    <span className="font-monospace small text-dark">{top} / {labelCount}</span>
+                                                </div>
+                                                <Form.Range
+                                                    min={1}
+                                                    max={labelCount}
+                                                    value={top}
+                                                    onChange={(event) => setTop(Number(event.target.value))}
+                                                    disabled={loading || busy || !isDeployed}
+                                                />
+                                            </div>
+                                        )}
                                         <div className="d-flex align-items-center justify-content-between">
                                             <span className="text-muted d-inline-flex align-items-center gap-1" style={{ fontSize: "0.7rem" }}>
                                                 <kbd className="bg-light text-muted border px-1 py-0" style={{ fontSize: "0.65rem" }}>⌘/Ctrl</kbd>
@@ -450,11 +584,17 @@ const Test = () => {
                                                 <kbd className="bg-light text-muted border px-1 py-0" style={{ fontSize: "0.65rem" }}>Enter</kbd>
                                                 to run
                                             </span>
-                                            <Button type="submit" variant="primary" size="sm" disabled={loading || deploying || !isDeployed || !query.trim()} className="d-inline-flex align-items-center gap-1 px-3">
+                                            <Button type="submit" variant="light" size="sm" disabled={loading || busy || !isDeployed || !query.trim()} className="border d-inline-flex align-items-center gap-1 px-3">
                                                 {loading ? (
-                                                    <><Spinner animation="border" size="sm" />&nbsp;Running…</>
+                                                    <><Spinner animation="border" size="sm" />&nbsp;Sending</>
+                                                ) : !isDeployed ? (
+                                                    <><SendSlash />&nbsp;Send</>
+                                                ) : sendError ? (
+                                                    <><SendExclamation />&nbsp;Send</>
+                                                ) : !query.trim() ? (
+                                                    <><SendDash />&nbsp;Send</>
                                                 ) : (
-                                                    <><PlayFill />&nbsp;Run</>
+                                                    <><SendCheck />&nbsp;Send</>
                                                 )}
                                             </Button>
                                         </div>
@@ -470,23 +610,11 @@ const Test = () => {
                         <CardHeading
                             icon={<Reply />}
                             title="Response"
-                            right={
-                                <span className="d-inline-flex align-items-center gap-2">
-                                    {latency != null && result && (
-                                        <Badge bg="light" text="muted" className="border fw-normal font-monospace d-inline-flex align-items-center gap-1">
-                                            <Stopwatch size={10} /> {latency} ms
-                                        </Badge>
-                                    )}
-                                    {result?.version != null && (
-                                        <Badge bg="light" text="dark" className="border fw-normal font-monospace">v{result.version}</Badge>
-                                    )}
-                                </span>
-                            }
                         />
                         <Card.Body className="p-3">
                             <Tabs defaultActiveKey="result" className="border-bottom border-light-subtle custom-tabs mb-3">
                                 <Tab eventKey="result" title={<TabTitle icon={<CardText />}>Result</TabTitle>}>
-                                    <div className="pt-3">
+                                    <div className="pt-3 pe-3 overflow-auto" style={{ maxHeight: "calc(100vh - 460px)", minHeight: "260px" }}>
                                         <PredictionView prediction={result?.prediction} query={result?.query} />
                                     </div>
                                 </Tab>

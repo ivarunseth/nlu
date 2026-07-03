@@ -21,19 +21,22 @@ const LabelFormModal = ({
         <Modal.Body>
             <Form noValidate validated={validated} onSubmit={onSubmit}>
                 <Form.Group className="mb-3">
-                    <Form.Label>Name</Form.Label>
                     <InputGroup hasValidation>
-                        <Form.Control
-                            type="text"
-                            placeholder="Enter a name..."
-                            value={name}
-                            onChange={(e) => onNameChange(e.target.value)}
-                            autoFocus
-                            required
-                        />
-                        <Form.Control.Feedback type="invalid">
-                            Please enter a name.
-                        </Form.Control.Feedback>
+                        <Form.Floating>
+                            <Form.Control
+                                id="label-name"
+                                type="text"
+                                placeholder="Enter a name..."
+                                value={name}
+                                onChange={(e) => onNameChange(e.target.value)}
+                                autoFocus
+                                required
+                            />
+                            <Form.Label htmlFor="label-name">Name</Form.Label>
+                            <Form.Control.Feedback type="invalid">
+                                Please enter a name.
+                            </Form.Control.Feedback>
+                        </Form.Floating>
                     </InputGroup>
                     <Form.Text muted>
                         Choose a unique name for the label.
@@ -62,7 +65,7 @@ const LabelFormModal = ({
                     </Form.Text>
                 </Form.Group>
                 <div className="d-grid gap-2">
-                    <Button type="submit" variant="primary" disabled={submitting}>
+                    <Button type="submit" variant="light" className="border" disabled={submitting}>
                         {submitting ? (
                             <>
                                 <Spinner animation="border" size="sm" />

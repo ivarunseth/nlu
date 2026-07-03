@@ -123,9 +123,10 @@ const SignUp = () => {
                             </Form.Text>
                         </Form.Group>
                         <div className="d-grid gap-2 mb-3">
-                            <Button 
-                                type="submit" 
-                                variant="dark" 
+                            <Button
+                                type="submit"
+                                variant="light"
+                                className="border"
                                 disabled={submitting}
                             >
                             {submitting ? (
