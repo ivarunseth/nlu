@@ -4,7 +4,7 @@ import { Github, Twitter, Linkedin } from 'react-bootstrap-icons';
 
 const Footer = () => {
     return (
-        <footer className="bg-light border-top mt-auto py-4">
+        <footer className="bg-body-tertiary border-top mt-auto py-4">
             <Container fluid>
                 <Row className="align-items-center gy-3">
                     <Col xs={12} md={4} className="text-center text-md-start">

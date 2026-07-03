@@ -1,6 +1,8 @@
 import React, { useState, useContext } from "react";
-import { Form, Button, Container, Row, Col } from 'react-bootstrap';
+import { Form, Button, Card, Container, Row, Col } from 'react-bootstrap';
+import { PersonGear } from "react-bootstrap-icons";
 import { UserContext } from "../../contexts/UserContext";
+import { CardHeading } from "../../shared/components/SectionCard";
 
 function AccountSettings() {
     const { user, setUser } = useContext(UserContext);
@@ -19,54 +21,61 @@ function AccountSettings() {
 
     return (
         <Container fluid>
-            <Row className="justify-content-md-center">
+            <div className="page-context-bar" aria-hidden="true" />
+            <Row className="justify-content-md-center mt-4">
                 <Col md={6}>
-                    <h2>Account Settings</h2>
-                    <Form onSubmit={handleSave}>
-                        <Form.Group className="mb-3">
-                            <Form.Floating>
-                                <Form.Control
-                                    id="formEmail"
-                                    type="email"
-                                    placeholder="Enter email"
-                                    value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
-                                    required
-                                />
-                                <Form.Label htmlFor="formEmail">Email address</Form.Label>
-                            </Form.Floating>
-                        </Form.Group>
+                    <Card className="border-light overflow-hidden">
+                        <CardHeading icon={<PersonGear />} title="Account settings" />
+                        <Card.Body className="p-3">
+                            <Form onSubmit={handleSave}>
+                                <Form.Group className="mb-3">
+                                    <Form.Floating>
+                                        <Form.Control
+                                            id="formEmail"
+                                            type="email"
+                                            placeholder="Enter email"
+                                            value={email}
+                                            onChange={(e) => setEmail(e.target.value)}
+                                            required
+                                        />
+                                        <Form.Label htmlFor="formEmail">Email address</Form.Label>
+                                    </Form.Floating>
+                                </Form.Group>
 
-                        <Form.Group className="mb-3">
-                            <Form.Floating>
-                                <Form.Control
-                                    id="formUsername"
-                                    type="text"
-                                    placeholder="Enter username"
-                                    value={username}
-                                    onChange={(e) => setUsername(e.target.value)}
-                                />
-                                <Form.Label htmlFor="formUsername">Username</Form.Label>
-                            </Form.Floating>
-                        </Form.Group>
+                                <Form.Group className="mb-3">
+                                    <Form.Floating>
+                                        <Form.Control
+                                            id="formUsername"
+                                            type="text"
+                                            placeholder="Enter username"
+                                            value={username}
+                                            onChange={(e) => setUsername(e.target.value)}
+                                        />
+                                        <Form.Label htmlFor="formUsername">Username</Form.Label>
+                                    </Form.Floating>
+                                </Form.Group>
 
-                        <Form.Group className="mb-3">
-                            <Form.Floating>
-                                <Form.Control
-                                    id="formPassword"
-                                    type="password"
-                                    placeholder="Password"
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                />
-                                <Form.Label htmlFor="formPassword">Password</Form.Label>
-                            </Form.Floating>
-                        </Form.Group>
+                                <Form.Group className="mb-3">
+                                    <Form.Floating>
+                                        <Form.Control
+                                            id="formPassword"
+                                            type="password"
+                                            placeholder="Password"
+                                            value={password}
+                                            onChange={(e) => setPassword(e.target.value)}
+                                        />
+                                        <Form.Label htmlFor="formPassword">Password</Form.Label>
+                                    </Form.Floating>
+                                </Form.Group>
 
-                        <Button variant="light" className="border" type="submit">
-                            Save Changes
-                        </Button>
-                    </Form>
+                                <div className="d-flex justify-content-end">
+                                    <Button variant="light" size="sm" className="border small" type="submit">
+                                        SAVE CHANGES
+                                    </Button>
+                                </div>
+                            </Form>
+                        </Card.Body>
+                    </Card>
                 </Col>
             </Row>
         </Container>

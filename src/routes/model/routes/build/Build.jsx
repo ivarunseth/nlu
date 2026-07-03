@@ -251,7 +251,7 @@ const Build = () => {
                         <ButtonGroup className="me-2">
                             <Button
                                 variant="light"
-                                style={{ border: "1px solid #dee2e6" }}
+                                className="border"
                                 onClick={() => setShowCreateForm(true)}
                             >
                                 <PlusLg />&nbsp;create label
@@ -314,13 +314,15 @@ const Build = () => {
                         onToggleRow={toggleRowSelection}
                         onToggleAll={toggleAllSelection}
                     />
-                    <AppPagination
-                        page={page}
-                        total={total}
-                        perPage={PER_PAGE}
-                        maxVisiblePages={MAX_VISIBLE_PAGES}
-                        onPageChange={setPage}
-                    />
+                    <div className="mt-3">
+                        <AppPagination
+                            page={page}
+                            total={total}
+                            perPage={PER_PAGE}
+                            maxVisiblePages={MAX_VISIBLE_PAGES}
+                            onPageChange={setPage}
+                        />
+                    </div>
                 </Col>
             </Row>
             <LabelFormModal

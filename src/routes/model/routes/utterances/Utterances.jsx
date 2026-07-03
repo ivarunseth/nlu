@@ -168,14 +168,15 @@ const Utterances = () => {
                         onEdit={handleEdit}
                         onDelete={handleDelete}
                     />
-                    <br />
-                    <AppPagination
-                        page={page}
-                        total={total}
-                        perPage={PER_PAGE}
-                        maxVisiblePages={MAX_VISIBLE_PAGES}
-                        onPageChange={setPage}
-                    />
+                    <div className="mt-3">
+                        <AppPagination
+                            page={page}
+                            total={total}
+                            perPage={PER_PAGE}
+                            maxVisiblePages={MAX_VISIBLE_PAGES}
+                            onPageChange={setPage}
+                        />
+                    </div>
                 </Col>
             </Row>
         </>

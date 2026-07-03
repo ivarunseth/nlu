@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Badge, Button, Card, Col, Form, Row, Spinner, Tab, Tabs } from "react-bootstrap";
 import {
     Clipboard,
@@ -26,6 +26,8 @@ import {
 } from "react-bootstrap-icons";
 import { useParams } from "react-router-dom";
 import { UserContext } from "../../../../contexts/UserContext";
+import { useSocket } from "../../../../contexts/SocketContext";
+import { SectionLabel, CardHeading, EmptyState } from "../../../../shared/components/SectionCard";
 import axios from "axios";
 
 const ENVIRONMENT = "development";
@@ -38,24 +40,6 @@ const parseApiDate = (value) => {
     return new Date(+year, +month - 1, +day, +hour, +minute, +second);
 };
 
-const EmptyState = ({ icon, children }) => (
-    <div
-        className="d-flex align-items-center justify-content-center text-muted"
-        style={{ minHeight: "260px", border: "1px solid #dee2e6", borderRadius: "4px", background: "#fff" }}
-    >
-        <div className="text-center px-3">
-            <div className="fs-3 mb-2 opacity-50">{icon || <InfoCircle />}</div>
-            <p className="mb-0 small fw-bold">{children}</p>
-        </div>
-    </div>
-);
-
-const SectionLabel = ({ children }) => (
-    <span className="small fw-bold text-muted text-uppercase" style={{ fontSize: "0.65rem", letterSpacing: "0.04em" }}>
-        {children}
-    </span>
-);
-
 const TabTitle = ({ icon, children }) => (
     <span className="d-inline-flex align-items-center gap-2">
         {icon}
@@ -63,19 +47,37 @@ const TabTitle = ({ icon, children }) => (
     </span>
 );
 
+const getInstanceStatus = (instance) => {
+    switch (instance?.status) {
+        case "PENDING":
+        case "RECEIVED": return { label: "STARTING", bg: "info" };
+        case "STARTED": return { label: "SERVING", bg: "success" };
+        case "FAILURE": return { label: "FAILED", bg: "danger" };
+        default: return { label: "STANDBY", bg: "secondary" };
+    }
+};
+
 // Compact dashboard-style strip mirroring the History detail view.
-const MetricStrip = ({ environment, deployedVersion, versionCount, latency }) => {
+const MetricStrip = ({
+    environment,
+    deployedVersion,
+    deployedInstance,
+    versionCount,
+    latency
+}) => {
+    const status = deployedInstance
+        ? getInstanceStatus(deployedInstance)
+        : null;
     const items = [
         { label: "Environment", value: <span className="font-monospace text-lowercase">{environment}</span>, icon: <Hdd /> },
         {
             label: "Deployed version",
-            value: deployedVersion != null
+            value: deployedVersion && deployedInstance 
                 ? (
                     <span className="d-flex align-items-center justify-content-between">
                         <span className="font-monospace">v{deployedVersion}</span>
                         <span className="d-inline-flex align-items-center gap-2">
-                            <StatusDot color="var(--bs-success)" />
-                            <span className="text-success fw-medium">live</span>
+                            {status && (<Badge bg={status.bg}>{status.label}</Badge>)}
                         </span>
                     </span>
                 )
@@ -99,7 +101,7 @@ const MetricStrip = ({ environment, deployedVersion, versionCount, latency }) =>
                             <div className="text-primary me-3 fs-4 lh-1">{item.icon}</div>
                             <div className="flex-grow-1">
                                 <div className="text-muted small fw-bold" style={{ fontSize: "0.65rem" }}>{item.label}</div>
-                                <div className="text-dark small fw-medium">{item.value ?? "-"}</div>
+                                <div className="text-body-emphasis small fw-medium">{item.value ?? "-"}</div>
                             </div>
                         </Card.Body>
                     </Card>
@@ -116,27 +118,17 @@ const StatusDot = ({ color }) => (
     />
 );
 
-const CardHeading = ({ icon, title, right }) => (
-    <div className="d-flex align-items-center justify-content-between px-3 py-2 bg-light border-bottom border-light-subtle">
-        <span className="d-inline-flex align-items-center gap-2 text-dark">
-            <span className="text-primary lh-1">{icon}</span>
-            <SectionLabel>{title}</SectionLabel>
-        </span>
-        {right}
-    </div>
-);
-
 const ScoreBar = ({ score }) => {
     const percent = Math.max(0, Math.min(100, (score || 0) * 100));
     return (
         <div className="d-flex align-items-center gap-3">
-            <div className="flex-grow-1 bg-light rounded-pill" style={{ height: "10px", overflow: "hidden" }}>
+            <div className="flex-grow-1 bg-body-secondary rounded-pill" style={{ height: "10px", overflow: "hidden" }}>
                 <div
                     className="bg-primary h-100 rounded-pill"
                     style={{ width: `${percent}%`, transition: "width 0.4s ease" }}
                 />
             </div>
-            <span className="font-monospace fw-bold text-dark" style={{ minWidth: "64px", textAlign: "right" }}>
+            <span className="font-monospace fw-bold text-body-emphasis" style={{ minWidth: "64px", textAlign: "right" }}>
                 {percent.toFixed(2)}%
             </span>
         </div>
@@ -150,12 +142,12 @@ const TokenTags = ({ query, tags }) => {
     return (
         <div className="d-flex flex-wrap gap-2">
             {items.map((item, index) => (
-                <div key={index} className="border border-light-subtle rounded text-center bg-white" style={{ minWidth: "60px" }}>
+                <div key={index} className="border border-light-subtle rounded text-center bg-body" style={{ minWidth: "60px" }}>
                     {item.token !== null && (
                         <div className="px-2 py-1 border-bottom border-light-subtle small fw-medium text-break">{item.token}</div>
                     )}
                     <div className="px-2 py-1">
-                        <Badge bg={item.tag && item.tag !== "O" ? "primary" : "light"} text={item.tag && item.tag !== "O" ? undefined : "muted"} className="font-monospace fw-normal">
+                        <Badge bg={item.tag && item.tag !== "O" ? "primary" : "secondary-subtle"} text={item.tag && item.tag !== "O" ? undefined : "muted"} className="font-monospace fw-normal">
                             {item.tag}
                         </Badge>
                     </div>
@@ -191,7 +183,7 @@ const PredictionView = ({ prediction, query }) => {
                     {prediction.labels.map((item, index) => (
                         <div key={index}>
                             <div className="d-flex align-items-center gap-2 mb-2">
-                                <Badge bg={index === 0 ? "primary" : "light"} text={index === 0 ? undefined : "dark"} className="fw-medium px-3 py-2 border">
+                                <Badge bg={index === 0 ? "primary" : "secondary-subtle"} text={index === 0 ? undefined : "body-emphasis"} className="fw-medium px-3 py-2 border">
                                     {item.name}
                                 </Badge>
                             </div>
@@ -237,16 +229,17 @@ const PredictionView = ({ prediction, query }) => {
         );
     }
 
-    return <pre className="p-3 mb-0 bg-light border-0 rounded small">{JSON.stringify(prediction, null, 2)}</pre>;
+    return <pre className="p-3 mb-0 bg-body-tertiary border-0 rounded small">{JSON.stringify(prediction, null, 2)}</pre>;
 };
 
-// Classic JSON syntax-highlight palette (keys / strings / numbers / booleans / null).
+// Classic JSON syntax-highlight palette (keys / strings / numbers / booleans /
+// null); per-theme values live in index.css.
 const JSON_COLORS = {
-    key: "#d63384",
-    string: "#198754",
-    number: "#fd7e14",
-    boolean: "#0d6efd",
-    null: "#6c757d"
+    key: "var(--app-json-key)",
+    string: "var(--app-json-string)",
+    number: "var(--app-json-number)",
+    boolean: "var(--app-json-boolean)",
+    null: "var(--app-json-null)"
 };
 
 const highlightJson = (json) => json
@@ -295,7 +288,7 @@ const JsonView = ({ data }) => {
                 <span className="small">{copied ? "Copied" : "Copy"}</span>
             </Button>
             <pre
-                className="p-3 mb-0 bg-light border-0 rounded small overflow-auto"
+                className="p-3 mb-0 bg-body-tertiary border-0 rounded small overflow-auto"
                 style={{ maxHeight: "calc(100vh - 460px)", minHeight: "260px" }}
                 dangerouslySetInnerHTML={{ __html: html }}
             />
@@ -306,11 +299,17 @@ const JsonView = ({ data }) => {
 const Test = () => {
     const { modelId } = useParams();
     const { user } = useContext(UserContext);
+    const socket = useSocket();
+    const rooms = useRef(new Set());
+
+    const INSTANCE_ACTIVE_STATUSES = ["PENDING", "RECEIVED", "STARTED"];
+    const INSTANCE_DONE_STATUSES = ["SUCCESS", "FAILURE", "ABORTED", "REVOKED"];
 
     const [trainings, setTrainings] = useState([]);
     const [selectedTrainingId, setSelectedTrainingId] = useState("");
     const [deployedTrainingId, setDeployedTrainingId] = useState(null);
     const [deployedAt, setDeployedAt] = useState(null);
+    const [deployedInstance, setDeployedInstance] = useState(null);
     const [deploying, setDeploying] = useState(false);
     const [stopping, setStopping] = useState(false);
 
@@ -367,6 +366,7 @@ const Test = () => {
                 const deployed = (instancesResponse.data.instances || [])
                     .find((instance) => instance.environment === ENVIRONMENT);
                 if (deployed) {
+                    setDeployedInstance(deployed);
                     setDeployedTrainingId(deployed.training_id);
                     setDeployedAt(deployed.date_receive);
                     setSelectedTrainingId(String(deployed.training_id));
@@ -377,6 +377,51 @@ const Test = () => {
         };
         load();
     }, [user, modelId]);
+
+    useEffect(() => {
+        if (
+            !user ||
+            !socket ||
+            !socket.connected ||
+            !deployedInstance?.task_id ||
+            !INSTANCE_ACTIVE_STATUSES.includes(deployedInstance.status)
+        ) {
+            return;
+        }
+
+        const activeRooms = rooms.current;
+
+        const handleStatus = (data) => {
+            if (!activeRooms.has(data.task_id)) return;
+
+            setDeployedInstance(prev =>
+                prev && prev.task_id === data.task_id
+                    ? { ...prev, ...data, task_id: prev.task_id }
+                    : prev
+            );
+
+            if (INSTANCE_DONE_STATUSES.includes(data.status)) {
+                socket.emit("leave", user.token, data.task_id);
+                activeRooms.delete(data.task_id);
+            }
+        };
+
+        socket.on("status", handleStatus);
+
+        if (!activeRooms.has(deployedInstance.task_id)) {
+            socket.emit("join", user.token, deployedInstance.task_id);
+            activeRooms.add(deployedInstance.task_id);
+        }
+
+        return () => {
+            socket.off("status", handleStatus);
+
+            if (activeRooms.has(deployedInstance.task_id)) {
+                socket.emit("leave", user.token, deployedInstance.task_id);
+                activeRooms.delete(deployedInstance.task_id);
+            }
+        };
+    }, [user, socket, deployedInstance]);
 
     const handleVersionChange = (event) => {
         setSelectedTrainingId(event.target.value);
@@ -395,6 +440,7 @@ const Test = () => {
                 { params: { training_id: selectedTrainingId }, headers: { Authorization: `Bearer ${user.token}` } }
             );
             const deployed = (response.data.instances || []).find((instance) => instance.environment === ENVIRONMENT);
+            setDeployedInstance(deployed);
             setDeployedTrainingId(deployed ? deployed.training_id : selectedTrainingId);
             setDeployedAt(deployed ? deployed.date_receive : null);
         } catch (error) {
@@ -415,6 +461,7 @@ const Test = () => {
                 { [ENVIRONMENT]: false },
                 { params: { training_id: deployedTrainingId }, headers: { Authorization: `Bearer ${user.token}` } }
             );
+            setDeployedInstance(null);
             setDeployedTrainingId(null);
             setDeployedAt(null);
         } catch (error) {
@@ -475,6 +522,7 @@ const Test = () => {
             <MetricStrip
                 environment={ENVIRONMENT}
                 deployedVersion={deployedVersion}
+                deployedInstance={deployedInstance}
                 versionCount={trainings.length}
                 latency={latency}
             />
@@ -566,7 +614,7 @@ const Test = () => {
                                             <div className="mb-3">
                                                 <div className="d-flex align-items-center justify-content-between mb-1">
                                                     <SectionLabel>Top labels</SectionLabel>
-                                                    <span className="font-monospace small text-dark">{top} / {labelCount}</span>
+                                                    <span className="font-monospace small text-body-emphasis">{top} / {labelCount}</span>
                                                 </div>
                                                 <Form.Range
                                                     min={1}
@@ -579,9 +627,9 @@ const Test = () => {
                                         )}
                                         <div className="d-flex align-items-center justify-content-between">
                                             <span className="text-muted d-inline-flex align-items-center gap-1" style={{ fontSize: "0.7rem" }}>
-                                                <kbd className="bg-light text-muted border px-1 py-0" style={{ fontSize: "0.65rem" }}>⌘/Ctrl</kbd>
+                                                <kbd className="bg-body-secondary text-muted border px-1 py-0" style={{ fontSize: "0.65rem" }}>⌘/Ctrl</kbd>
                                                 +
-                                                <kbd className="bg-light text-muted border px-1 py-0" style={{ fontSize: "0.65rem" }}>Enter</kbd>
+                                                <kbd className="bg-body-secondary text-muted border px-1 py-0" style={{ fontSize: "0.65rem" }}>Enter</kbd>
                                                 to run
                                             </span>
                                             <Button type="submit" variant="light" size="sm" disabled={loading || busy || !isDeployed || !query.trim()} className="border d-inline-flex align-items-center gap-1 px-3">

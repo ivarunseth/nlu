@@ -12,7 +12,7 @@ export const UserProvider = ({ children }) => {
 
     useEffect(() => {
         const storedUser = JSON.parse(localStorage.getItem("user"));
-        if (!user && !storedUser && location.pathname !== '/signup') {
+        if (!user && !storedUser && location.pathname !== '/signup' && location.pathname !== '/forgot-password') {
             navigate('/signin');
         } else if (!user && storedUser) {
             setUser(storedUser);

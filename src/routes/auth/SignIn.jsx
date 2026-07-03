@@ -127,7 +127,7 @@ const SignIn = () => {
                             </InputGroup>
                         </Form.Group>
                         <Form.Text>
-                            <Link style={{ textDecoration: 'none' }}>Forgot password?</Link>
+                            <Link to='/forgot-password' style={{ textDecoration: 'none' }}>Forgot password?</Link>
                         </Form.Text>
                         <div className="d-grid gap-2 my-3">
                             <Button
@@ -160,14 +160,6 @@ const SignIn = () => {
                             }}
                         >
                             Don't have an account?&nbsp;<Link to='/signup' style={{ textDecoration: 'none' }}>Sign up</Link>
-                        </Form.Text>
-                        <Form.Text
-                            style={{
-                                display: 'flex',
-                                justifyContent: 'center'
-                            }}
-                        >
-                            <Link to='/forgot-password' style={{ textDecoration: 'none' }}>Forgot password?</Link>
                         </Form.Text>
                     </Form>
                 </Col>

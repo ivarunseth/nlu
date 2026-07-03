@@ -29,7 +29,12 @@ import {
     Sliders2,
     Grid3x3GapFill,
     BugFill,
-    ListColumnsReverse
+    ListColumnsReverse,
+    ClockHistory,
+    Search,
+    ArrowCounterclockwise,
+    FiletypeCsv,
+    FiletypePng
 } from "react-bootstrap-icons";
 import {
     LineChart,
@@ -50,6 +55,8 @@ import {
 import { UserContext } from "../../../../contexts/UserContext";
 import { ModelContext } from "../../../../contexts/ModelContext";
 import { useSocket } from "../../../../contexts/SocketContext";
+import { CardHeading, EmptyMessage } from "../../../../shared/components/SectionCard";
+import downloadBlob from "../../../../shared/utils/downloadBlob";
 import { Link, useParams } from "react-router-dom";
 import useDebounce from "../../../../shared/hooks/useDebounce";
 import axios from "axios";
@@ -156,9 +163,9 @@ const SimpleDiffViewer = ({ oldValue, newValue, oldVersion, newVersion }) => {
     }
 
     return (
-        <div className="bg-white overflow-auto" style={{ height: 'calc(100vh - 400px)', minHeight: '400px' }} onScroll={handleScroll}>
+        <div className="bg-body overflow-auto" style={{ height: 'calc(100vh - 400px)', minHeight: '400px' }} onScroll={handleScroll}>
             <Table responsive size="sm" className="font-monospace small mb-0 table-fixed border-0">
-                <thead className="sticky-top bg-white">
+                <thead className="sticky-top bg-body">
                     <tr className="border-bottom border-light-subtle">
                         <th style={{ width: '50%' }} className="px-3 py-2 border-start-0 border-end border-light-subtle">
                             {oldVersion === '0' ? 'Initial' : `v${oldVersion}`}
@@ -196,7 +203,7 @@ const SimpleDiffViewer = ({ oldValue, newValue, oldVersion, newVersion }) => {
                 </tbody>
             </Table>
             {page < totalPages && (
-                <div className="p-3 text-center text-muted small border-top border-light-subtle bg-light">
+                <div className="p-3 text-center text-muted small border-top border-light-subtle bg-body-tertiary">
                     Scrolling for more...
                 </div>
             )}
@@ -409,7 +416,7 @@ const ReportTable = ({ title, report }) => {
             <h6 className="mt-3 small fw-bold text-muted">{title}</h6>
             {rows.length > 0 ? (
                 <Table responsive size="sm" className="small border border-light-subtle">
-                    <thead className="bg-light sticky-top" style={{ zIndex: 1 }}>
+                    <thead className="bg-body-tertiary sticky-top" style={{ zIndex: 1 }}>
                         <tr className="border-bottom border-light-subtle">
                             <th className="border-end border-light-subtle">Label</th>
                             <th className="border-end border-light-subtle">Precision</th>
@@ -430,7 +437,7 @@ const ReportTable = ({ title, report }) => {
                         ))}
                     </tbody>
                     {accuracy !== undefined && (
-                        <tfoot className="fw-bold bg-light">
+                        <tfoot className="fw-bold bg-body-tertiary">
                             <tr>
                                 <td className="border-end border-light-subtle">accuracy</td>
                                 <td colSpan={3} className="border-end border-light-subtle"></td>
@@ -440,7 +447,7 @@ const ReportTable = ({ title, report }) => {
                     )}
                 </Table>
             ) : (
-                <pre className="small bg-light p-3 rounded border border-light-subtle">{formatReport(report)}</pre>
+                <pre className="small bg-body-tertiary p-3 rounded border border-light-subtle">{formatReport(report)}</pre>
             )}
         </div>
     );
@@ -451,9 +458,9 @@ const EmptyState = ({ children }) => (
         className="d-flex align-items-center justify-content-center text-muted"
         style={{
             minHeight: '200px',
-            border: '1px solid #dee2e6',
+            border: '1px solid var(--bs-border-color)',
             borderRadius: '4px',
-            background: '#fff'
+            background: 'var(--bs-body-bg)'
         }}
     >
         <div className="text-center">
@@ -533,7 +540,7 @@ const MetricStrip = ({ training, onStopTraining, stoppingTraining, onRestartTrai
                             </div>
                             <div>
                                 <div className="text-muted small fw-bold" style={{ fontSize: '0.65rem' }}>{item.label}</div>
-                                <div className="text-dark small fw-medium">{item.value || '-'}</div>
+                                <div className="text-body-emphasis small fw-medium">{item.value || '-'}</div>
                             </div>
                             {item.action}
                         </Card.Body>
@@ -566,11 +573,11 @@ const ConfusionMatrix = ({ training, split }) => {
     return (
         <div className="w-100 p-1">
             <div className="d-flex gap-2 align-items-stretch">
-                <div className="flex-grow-1 overflow-auto rounded border border-light-subtle bg-white" style={{ maxHeight: 'calc(100vh - 380px)' }}>
+                <div className="flex-grow-1 overflow-auto rounded border border-light-subtle bg-body" style={{ maxHeight: 'calc(100vh - 380px)' }}>
                     <Table hover size="sm" className="mb-0 text-center align-middle font-monospace small">
-                        <thead className="sticky-top bg-white shadow-sm" style={{ zIndex: 10 }}>
+                        <thead className="sticky-top bg-body shadow-sm" style={{ zIndex: 10 }}>
                             <tr className="border-bottom border-light-subtle">
-                                <th className="border-end border-light-subtle bg-light text-center p-0" 
+                                <th className="border-end border-light-subtle bg-body-tertiary text-center p-0"
                                     style={{ 
                                         width: '120px', 
                                         minWidth: '120px', 
@@ -584,7 +591,7 @@ const ConfusionMatrix = ({ training, split }) => {
                                     </div>
                                 </th>
                                 {labels.map((label, i) => (
-                                    <th key={i} className="px-2 py-2 border-end border-light-subtle bg-white fw-bold text-muted" title={label} style={{ minWidth: '80px' }}>
+                                    <th key={i} className="px-2 py-2 border-end border-light-subtle bg-body fw-bold text-muted" title={label} style={{ minWidth: '80px' }}>
                                         <div className="text-truncate" style={{ maxWidth: '100px', fontSize: '0.7rem' }}>
                                             {label}
                                         </div>
@@ -595,7 +602,7 @@ const ConfusionMatrix = ({ training, split }) => {
                         <tbody>
                             {matrix.map((row, rowIndex) => (
                                 <tr key={rowIndex} className="border-bottom border-light-subtle">
-                                    <td className="border-end border-light-subtle fw-bold text-muted text-end px-2 py-2 text-truncate bg-light" 
+                                    <td className="border-end border-light-subtle fw-bold text-muted text-end px-2 py-2 text-truncate bg-body-tertiary"
                                         style={{ 
                                             width: '120px', 
                                             minWidth: '120px', 
@@ -609,8 +616,8 @@ const ConfusionMatrix = ({ training, split }) => {
                                     </td>
                                     {row.map((value, colIndex) => {
                                         const intensity = value / maxValue;
-                                        const bgColor = intensity === 0 ? '#fff' : `rgba(13, 110, 253, ${0.1 + intensity * 0.9})`;
-                                        const textColor = intensity > 0.5 ? '#fff' : '#000';
+                                        const bgColor = intensity === 0 ? 'var(--bs-body-bg)' : `rgba(13, 110, 253, ${0.1 + intensity * 0.9})`;
+                                        const textColor = intensity > 0.5 ? '#fff' : 'var(--bs-body-color)';
                                         const isDiagonal = rowIndex === colIndex;
                                         return (
                                             <td
@@ -620,7 +627,7 @@ const ConfusionMatrix = ({ training, split }) => {
                                                     color: textColor,
                                                     fontWeight: value > 0 ? 'bold' : 'normal',
                                                     transition: 'all 0.15s ease',
-                                                    outline: isDiagonal && value > 0 ? '1px solid rgba(0,0,0,0.1)' : undefined,
+                                                    outline: isDiagonal && value > 0 ? '1px solid var(--bs-border-color-translucent)' : undefined,
                                                     outlineOffset: '-1px',
                                                     fontSize: '0.75rem'
                                                 }}
@@ -660,6 +667,8 @@ const HistoryCharts = ({ history }) => {
     const [selectedMetrics, setSelectedMetrics] = useState(() => metrics);
     const [logScale, setLogScale] = useState(false);
     const [smoothing, setSmoothing] = useState(1);
+    const [showPoints, setShowPoints] = useState(false);
+    const chartWrapRef = useRef(null);
 
     // Zoom state
     const [refAreaLeft, setRefAreaLeft] = useState('');
@@ -729,46 +738,87 @@ const HistoryCharts = ({ history }) => {
         setRefAreaRight('');
     };
 
+    const downloadCsv = () => {
+        const cols = ['epoch', ...selectedMetrics];
+        const rows = data.map(row => cols.map(col => row[col] ?? '').join(','));
+        downloadBlob(new Blob([[cols.join(','), ...rows].join('\n')], { type: 'text/csv' }), 'metrics.csv');
+    };
+
+    const downloadPng = () => {
+        const svg = chartWrapRef.current?.querySelector('svg.recharts-surface');
+        if (!svg) return;
+        // Inline the theme-dependent styles recharts gets from CSS so the
+        // exported image matches what is on screen.
+        const clone = svg.cloneNode(true);
+        const sourceNodes = [svg, ...svg.querySelectorAll('*')];
+        const cloneNodes = [clone, ...clone.querySelectorAll('*')];
+        sourceNodes.forEach((node, i) => {
+            const style = getComputedStyle(node);
+            if (style.stroke !== 'none') cloneNodes[i].setAttribute('stroke', style.stroke);
+            if (style.fill !== 'none') cloneNodes[i].setAttribute('fill', style.fill);
+            if (node.tagName === 'text') {
+                cloneNodes[i].setAttribute('font-size', style.fontSize);
+                cloneNodes[i].setAttribute('font-family', style.fontFamily);
+                cloneNodes[i].setAttribute('font-weight', style.fontWeight);
+            }
+        });
+        const scale = 2;
+        const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml;charset=utf-8' }));
+        const image = new Image();
+        image.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = svg.clientWidth * scale;
+            canvas.height = svg.clientHeight * scale;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = getComputedStyle(document.body).backgroundColor;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+            URL.revokeObjectURL(url);
+            canvas.toBlob((blob) => blob && downloadBlob(blob, 'metrics.png'));
+        };
+        image.src = url;
+    };
+
     if (metrics.length === 0) return <EmptyState>No history data available.</EmptyState>;
 
     return (
-        <Row className="mt-2 g-3" style={{ height: 'calc(100vh - 350px)' }}>
-            <Col lg={2} className="h-100">
+        <Row className="mt-2 gx-3" style={{ height: 'calc(100vh - 350px)' }}>
+            <Col className="h-100">
                 <Card className="border-light h-100">
-                    <Card.Body className="p-3 d-flex flex-column">
-                        <Form.Check
-                            type="checkbox"
-                            id="select-all-metrics"
-                            label={<span className="small fw-bold text-muted">All Metrics</span>}
-                            checked={isAllSelected}
-                            onChange={(e) => handleAllToggle(e.target.checked)}
-                            className="mb-3"
-                        />
+                    <div className="d-flex flex-wrap align-items-center gap-2 px-3 py-2 bg-body-tertiary border-bottom border-light-subtle">
+                        <div className="d-flex flex-wrap align-items-center column-gap-2 row-gap-2">
+                            <Form.Check
+                                type="checkbox"
+                                id="select-all-metrics"
+                                label={<span className="small fw-bold text-muted">All</span>}
+                                checked={isAllSelected}
+                                onChange={(e) => handleAllToggle(e.target.checked)}
+                                className="mb-0"
+                            />
 
-                        <div className="flex-grow-1 overflow-auto mb-3">
                             {metrics.map((metric, index) => (
                                 <Form.Check
                                     key={metric}
-                                    type="radio"
+                                    type="checkbox"
                                     id={`metric-${metric}`}
                                     label={
-                                        <div className="d-flex align-items-center justify-content-between gap-2">
-                                            <span className="small text-truncate" title={metric}>{metric}</span>
-                                            <span 
-                                                style={{ 
-                                                    width: '8px', 
-                                                    height: '8px', 
-                                                    borderRadius: '50%', 
+                                        <span className="d-inline-flex align-items-center gap-1 small" title={metric}>
+                                            <span
+                                                style={{
+                                                    width: '8px',
+                                                    height: '8px',
+                                                    borderRadius: '50%',
                                                     backgroundColor: chartColors[index % chartColors.length],
                                                     display: 'inline-block',
                                                     flexShrink: 0
                                                 }}
                                             />
-                                        </div>
+                                            {metric}
+                                        </span>
                                     }
-                                    className="mb-2"
+                                    className="mb-0"
                                     checked={selectedMetrics.includes(metric)}
-                                    onClick={() => {
+                                    onChange={() => {
                                         if (selectedMetrics.includes(metric)) {
                                             if (selectedMetrics.length > 1) {
                                                 setSelectedMetrics(selectedMetrics.filter(m => m !== metric));
@@ -777,40 +827,52 @@ const HistoryCharts = ({ history }) => {
                                             setSelectedMetrics([...selectedMetrics, metric]);
                                         }
                                     }}
-                                    onChange={() => { }} // dummy to avoid react warning
                                 />
                             ))}
                         </div>
 
-                        <div className="mt-auto border-top pt-3">
-                            <Form.Group className="mb-3">
-                                <Form.Label className="small text-muted fw-bold mb-1 d-flex justify-content-between">
-                                    Smoothing <span>{smoothing}</span>
-                                </Form.Label>
-                                <Form.Range
-                                    min={1}
-                                    max={20}
-                                    step={1}
-                                    value={smoothing}
-                                    onChange={(e) => setSmoothing(parseInt(e.target.value))}
-                                />
-                            </Form.Group>
-
-                            <Form.Check
-                                type="switch"
-                                id="log-scale-y"
-                                label={<span className="small text-muted fw-bold">Log Scale Y</span>}
-                                checked={logScale}
-                                onChange={(e) => setLogScale(e.target.checked)}
+                        <div className="d-flex align-items-center gap-2 ms-xl-auto">
+                            <span className="small fw-bold text-muted">Smoothing</span>
+                            <Form.Range
+                                min={1}
+                                max={20}
+                                step={1}
+                                value={smoothing}
+                                onChange={(e) => setSmoothing(parseInt(e.target.value))}
+                                style={{ width: '80px' }}
                             />
+                            <span className="small text-muted font-monospace" style={{ minWidth: '2ch' }}>{smoothing}</span>
                         </div>
-                    </Card.Body>
-                </Card>
-            </Col>
-            <Col lg={10} className="h-100">
-                <Card className="border-light h-100">
+                        <Form.Check
+                            type="switch"
+                            id="show-points"
+                            label={<span className="small text-muted fw-bold">Points</span>}
+                            checked={showPoints}
+                            onChange={(e) => setShowPoints(e.target.checked)}
+                            className="mb-0"
+                        />
+                        <Form.Check
+                            type="switch"
+                            id="log-scale-y"
+                            label={<span className="small text-muted fw-bold">Log Y</span>}
+                            checked={logScale}
+                            onChange={(e) => setLogScale(e.target.checked)}
+                            className="mb-0"
+                        />
+                        <div className="d-flex align-items-center gap-2">
+                            <Button variant="light" size="sm" className="border d-inline-flex align-items-center" title="Reset zoom" onClick={zoomOut}>
+                                <ArrowCounterclockwise />
+                            </Button>
+                            <Button variant="light" size="sm" className="border d-inline-flex align-items-center" title="Download CSV" onClick={downloadCsv}>
+                                <FiletypeCsv />
+                            </Button>
+                            <Button variant="light" size="sm" className="border d-inline-flex align-items-center" title="Download PNG" onClick={downloadPng}>
+                                <FiletypePng />
+                            </Button>
+                        </div>
+                    </div>
                     <Card.Body className="p-3 d-flex flex-column">
-                        <div className="flex-grow-1" onDoubleClick={zoomOut}>
+                        <div className="flex-grow-1" onDoubleClick={zoomOut} ref={chartWrapRef}>
                             <ResponsiveContainer>
                                 <LineChart
                                     data={data}
@@ -819,7 +881,7 @@ const HistoryCharts = ({ history }) => {
                                     onMouseMove={(e) => e && refAreaLeft && setRefAreaRight(e.activeLabel)}
                                     onMouseUp={zoom}
                                 >
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
                                     <XAxis
                                         allowDataOverflow
                                         dataKey="epoch"
@@ -836,7 +898,7 @@ const HistoryCharts = ({ history }) => {
                                         label={{ value: 'Value', angle: -90, position: 'insideLeft', offset: 10, className: 'small fw-bold text-muted', style: { fontSize: '0.65rem' } }}
                                     />
                                     <RechartsTooltip
-                                        contentStyle={{ fontSize: '11px', border: '1px solid #dee2e6', borderRadius: '4px' }}
+                                        contentStyle={{ fontSize: '11px', border: '1px solid var(--bs-border-color)', borderRadius: '4px', backgroundColor: 'var(--bs-body-bg)', color: 'var(--bs-body-color)' }}
                                         itemStyle={{ padding: '1px 0' }}
                                     />
                                     {selectedMetrics.map((metric, index) => (
@@ -845,7 +907,7 @@ const HistoryCharts = ({ history }) => {
                                             type="monotone"
                                             dataKey={metric}
                                             stroke={chartColors[metrics.indexOf(metric) % chartColors.length]}
-                                            dot={false}
+                                            dot={showPoints ? { r: 2, strokeWidth: 0, fill: chartColors[metrics.indexOf(metric) % chartColors.length] } : false}
                                             activeDot={{ r: 4, strokeWidth: 0 }}
                                             strokeWidth={2}
                                             isAnimationActive={false}
@@ -898,7 +960,7 @@ const TrainingSummary = ({ training }) => {
     const report = getTrainingReport(training);
 
     return (
-        <pre className="p-3 mb-0 bg-light border-0 rounded small overflow-auto" style={{ height: 'calc(100vh - 400px)', whiteSpace: 'pre-wrap' }}>
+        <pre className="p-3 mb-0 bg-body-tertiary border-0 rounded small overflow-auto" style={{ height: 'calc(100vh - 400px)', whiteSpace: 'pre-wrap' }}>
             {report?.summary || 'No model summary available.'}
         </pre>
     );
@@ -1969,91 +2031,105 @@ const History = () => {
             </Row>
             <Row className="mt-4">
                 <Col>
-                    <Table
-                        responsive
-                        hover
-                        style={{
-                            minHeight: '33vh',
-                            textAlign: 'center'
-                        }}
-                    >
-                        <thead>
-                            <tr>
-                                <th style={{ width: '40px' }}>
-                                    <Form.Check
-                                        type="checkbox"
-                                        checked={trainings.length > 0 && trainings.every((training) => selectedIds.has(training.id))}
-                                        onChange={() => toggleAllSelection(trainings)}
-                                        disabled={loading || trainings.length === 0}
-                                    />
-                                </th>
-                                <th>Version</th>
-                                <th>Status</th>
-                                <th>Date Start</th>
-                                <th>Date Done</th>
-                                <th>Accuracy (%)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {loading ? (
-                                <tr >
-                                    <td
-                                        colSpan={6}
-                                        style={{
-                                            verticalAlign: 'middle'
-                                        }}
-                                    >
-                                        <Spinner animation='border' size='lg' />
-                                    </td>
-                                </tr>
-                            ) : total > 0 ?
-                                trainings.map((training) => (
-                                    <tr key={training.id}>
-                                        <td>
+                    <Card className="border-light overflow-hidden">
+                        <CardHeading
+                            icon={<ClockHistory />}
+                            title="Trainings"
+                            right={
+                                <span className="text-muted" style={{ fontSize: '0.7rem' }}>
+                                    {total} training{total === 1 ? '' : 's'}
+                                </span>
+                            }
+                        />
+                        <Card.Body className="p-0">
+                            <Table
+                                responsive
+                                hover
+                                className="mb-0 align-middle text-center"
+                                style={{ minHeight: '33vh' }}
+                            >
+                                <thead>
+                                    <tr>
+                                        <th style={{ width: '40px' }}>
                                             <Form.Check
                                                 type="checkbox"
-                                                checked={selectedIds.has(training.id)}
-                                                onChange={() => toggleRowSelection(training.id)}
+                                                checked={trainings.length > 0 && trainings.every((training) => selectedIds.has(training.id))}
+                                                onChange={() => toggleAllSelection(trainings)}
+                                                disabled={loading || trainings.length === 0}
                                             />
-                                        </td>
-                                        <td>
-                                            <Link to={`/models/${modelId}/history/${training.id}`} className="text-decoration-none">
-                                                {training.version}
-                                            </Link>
-                                        </td>
-                                        <td>{getTrainingStatusBadge(training.status)}</td>
-                                        <td>{training.created_at}</td>
-                                        <td>{training.date_done}</td>
-                                        <td>{training.status === 'SUCCESS' && getTrainingAccuracy(training) !== null && (getTrainingAccuracy(training) * 100).toFixed(2)}</td>
+                                        </th>
+                                        <th><Hash className="text-muted" />&nbsp;Version</th>
+                                        <th><Activity className="text-muted" />&nbsp;Status</th>
+                                        <th><Clock className="text-muted" />&nbsp;Started</th>
+                                        <th><Calendar3 className="text-muted" />&nbsp;Completed</th>
+                                        <th><GraphUp className="text-muted" />&nbsp;Accuracy (%)</th>
                                     </tr>
-                                )) : query !== '' ? (
-                                    <tr>
-                                        <td
-                                            colSpan={6}
-                                            style={{
-                                                verticalAlign: 'middle'
-                                            }}
-                                        >
-                                            <i className="bi bi-ban" />&nbsp;could not find the training you are looking for.
-                                        </td>
-                                    </tr>
-                                ) : (
-                                    <tr>
-                                        <td
-                                            colSpan={6}
-                                            style={{
-                                                verticalAlign: 'middle'
-                                            }}
-                                        >
-                                            <InfoCircle />&nbsp;looks like you have no trainings.
-                                        </td>
-                                    </tr>
-                                )}
-                        </tbody>
-                    </Table>
-                    <br></br>
+                                </thead>
+                                <tbody>
+                                    {loading ? (
+                                        <tr >
+                                            <td
+                                                colSpan={6}
+                                                style={{
+                                                    verticalAlign: 'middle'
+                                                }}
+                                            >
+                                                <Spinner animation='border' size='lg' />
+                                            </td>
+                                        </tr>
+                                    ) : total > 0 ?
+                                        trainings.map((training) => (
+                                            <tr key={training.id}>
+                                                <td>
+                                                    <Form.Check
+                                                        type="checkbox"
+                                                        checked={selectedIds.has(training.id)}
+                                                        onChange={() => toggleRowSelection(training.id)}
+                                                    />
+                                                </td>
+                                                <td>
+                                                    <Link to={`/models/${modelId}/history/${training.id}`} className="text-decoration-none font-monospace">
+                                                        v{training.version}
+                                                    </Link>
+                                                </td>
+                                                <td>{getTrainingStatusBadge(training.status)}</td>
+                                                <td className="small text-muted">{training.created_at}</td>
+                                                <td className="small text-muted">{training.date_done}</td>
+                                                <td className="font-monospace">{training.status === 'SUCCESS' && getTrainingAccuracy(training) !== null && (getTrainingAccuracy(training) * 100).toFixed(2)}</td>
+                                            </tr>
+                                        )) : query !== '' ? (
+                                            <tr>
+                                                <td
+                                                    colSpan={6}
+                                                    style={{
+                                                        verticalAlign: 'middle'
+                                                    }}
+                                                >
+                                                    <EmptyMessage icon={<Search />}>
+                                                        could not find the training you are looking for.
+                                                    </EmptyMessage>
+                                                </td>
+                                            </tr>
+                                        ) : (
+                                            <tr>
+                                                <td
+                                                    colSpan={6}
+                                                    style={{
+                                                        verticalAlign: 'middle'
+                                                    }}
+                                                >
+                                                    <EmptyMessage icon={<InfoCircle />}>
+                                                        looks like you have no trainings.
+                                                    </EmptyMessage>
+                                                </td>
+                                            </tr>
+                                        )}
+                                </tbody>
+                            </Table>
+                        </Card.Body>
+                    </Card>
                     {total > perPage &&
-                        <Pagination className="justify-content-start">
+                        <Pagination className="justify-content-start mt-3">
                             <Pagination.Prev
                                 onClick={() => setPage((prevPage) => Math.max(prevPage - 1, 1))}
                                 disabled={page === 1}
