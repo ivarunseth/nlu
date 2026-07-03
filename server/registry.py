@@ -16,6 +16,7 @@ class Route:
     path: str
     model_type: str
     version: str = ''
+    name: str = ''
 
     def to_mapping(self) -> dict:
         return {k: ('' if v is None else str(v)) for k, v in asdict(self).items()}
@@ -35,6 +36,7 @@ class Route:
             path=decoded['path'],
             model_type=decoded['model_type'],
             version=decoded.get('version', ''),
+            name=decoded.get('name', ''),
         )
 
 
@@ -44,80 +46,83 @@ class Registry:
         self.redis = redis
         self.environment = environment
 
-    def _key(self, *parts):
-        return ':'.join((self.environment, *parts))
+    def _key(self, *parts): return ':'.join((self.environment, *parts))
 
-    def _route_key(self, model_id): return self._key('route', model_id)
+    def _route(self, model_id): return self._key('route', model_id)
 
-    def _alive_key(self, model_id): return self._key('instance', model_id, 'alive')
+    def _alive(self, model_id): return self._key('instance', model_id, 'alive')
 
-    def _starting_key(self, model_id): return self._key('instance', model_id, 'starting')
+    def _starting(self, model_id): return self._key('instance', model_id, 'starting')
 
-    def _lock_key(self, model_id): return self._key('instance', model_id, 'lock')
+    def _lock(self, model_id): return self._key('instance', model_id, 'lock')
 
-    def _inputs_key(self, model_id): return self._key('inputs', model_id)
+    def _inputs(self, model_id): return self._key('inputs', model_id)
 
-    def _output_key(self, model_id, request_id): return self._key('outputs', model_id, request_id)
+    def _output(self, model_id, request_id): return self._key('output', model_id, request_id)
 
-    def publish_route(self, model_id, route: Route):
-        self.redis.delete(self._route_key(model_id))
-        self.redis.hset(self._route_key(model_id), mapping=route.to_mapping())
+    def publish(self, model_id, route: Route):
+        self.redis.delete(self._route(model_id))
+        self.redis.hset(self._route(model_id), mapping=route.to_mapping())
 
-    def revoke_route(self, model_id):
+    def revoke(self, model_id):
         self.redis.delete(
-            self._route_key(model_id),
-            self._inputs_key(model_id),
-            self._starting_key(model_id),
+            self._route(model_id),
+            self._inputs(model_id),
+            self._starting(model_id),
         )
+        self.purge(model_id)
+
+    def purge(self, model_id):
+        keys = list(self.redis.scan_iter(match=self._output(model_id, '*')))
+        if keys:
+            self.redis.delete(*keys)
 
     def route(self, model_id) -> Optional[Route]:
-        return Route.from_mapping(self.redis.hgetall(self._route_key(model_id)))
+        return Route.from_mapping(self.redis.hgetall(self._route(model_id)))
 
-    def is_alive(self, model_id) -> bool:
-        return bool(self.redis.exists(self._alive_key(model_id)))
+    def alive(self, model_id) -> bool:
+        return bool(self.redis.exists(self._alive(model_id)))
 
-    def claim_start(self, model_id, ttl) -> bool:
-        token = uuid.uuid4().hex
-        return bool(self.redis.set(self._starting_key(model_id), token, nx=True, ex=ttl))
+    def claim(self, model_id, ttl) -> bool:
+        return bool(self.redis.set(self._starting(model_id), uuid.uuid4().hex, nx=True, ex=ttl))
 
-    def cached_output(self, model_id, request_id):
-        raw = self.redis.get(self._output_key(model_id, request_id))
+    def get(self, model_id, request_id):
+        raw = self.redis.get(self._output(model_id, request_id))
         return json.loads(raw.decode('utf-8')) if raw else None
 
-    def submit(self, model_id, request_id, text):
-        message = json.dumps({'id': request_id, 'text': text}).encode('utf-8')
-        self.redis.rpush(self._inputs_key(model_id), message)
+    def push(self, model_id, request_id, query, **kwargs):
+        message = json.dumps({'id': request_id, 'query': query, **kwargs}).encode('utf-8')
+        self.redis.rpush(self._inputs(model_id), message)
 
-    def await_output(self, model_id, request_id, timeout, interval):
+    def wait(self, model_id, request_id, timeout, interval):
         deadline = time.monotonic() + timeout
-        key = self._output_key(model_id, request_id)
         while time.monotonic() < deadline:
-            raw = self.redis.get(key)
-            if raw:
-                return json.loads(raw.decode('utf-8'))
+            output = self.get(model_id, request_id)
+            if output:
+                return output
             time.sleep(interval)
         return None
 
-    def serve_lock(self, model_id, timeout):
+    def lock(self, model_id, timeout):
         return self.redis.lock(
-            self._lock_key(model_id),
+            self._lock(model_id),
             timeout=timeout,
             blocking=False,
             thread_local=False,
         )
 
     def online(self, model_id, ttl):
-        self.redis.set(self._alive_key(model_id), '1', ex=ttl)
-        self.redis.delete(self._starting_key(model_id))
+        self.redis.set(self._alive(model_id), '1', ex=ttl)
+        self.redis.delete(self._starting(model_id))
 
     def heartbeat(self, model_id, ttl):
-        self.redis.set(self._alive_key(model_id), '1', ex=ttl)
+        self.redis.set(self._alive(model_id), '1', ex=ttl)
 
     def offline(self, model_id):
-        self.redis.delete(self._alive_key(model_id), self._starting_key(model_id))
+        self.redis.delete(self._alive(model_id), self._starting(model_id))
 
-    def drain(self, model_id, batch_size):
-        key = self._inputs_key(model_id)
+    def pop(self, model_id, batch_size):
+        key = self._inputs(model_id)
         with self.redis.pipeline() as pipe:
             while True:
                 try:
@@ -125,26 +130,28 @@ class Registry:
                     raw = pipe.lrange(key, 0, batch_size - 1)
                     if not raw:
                         pipe.unwatch()
-                        return [], []
+                        return [], [], {}
 
-                    texts, ids = [], []
+                    queries, ids, kwargs = [], [], {}
                     for item in raw:
                         data = json.loads(item.decode('utf-8'))
-                        texts.append(data['text'])
-                        ids.append(data['id'])
+                        queries.append(data.pop('query'))
+                        ids.append(data.pop('id'))
+                        for key_, value in data.items():
+                            kwargs.setdefault(key_, []).append(value)
 
                     pipe.multi()
                     pipe.ltrim(key, len(ids), -1)
                     pipe.execute()
-                    return texts, ids
+                    return queries, ids, kwargs
                 except WatchError:
                     continue
 
-    def publish_outputs(self, model_id, ids, outputs, ttl):
+    def set(self, model_id, ids, outputs, ttl):
         with self.redis.pipeline(transaction=False) as pipe:
             for request_id, output in zip(ids, outputs):
                 pipe.set(
-                    self._output_key(model_id, request_id),
+                    self._output(model_id, request_id),
                     json.dumps(output).encode('utf-8'),
                     ex=ttl,
                 )

@@ -88,18 +88,29 @@ class BaseTextClassification(BaseModel):
 
     def predict(self, X, **kwargs):
         """
-        Generates predictions and maps them back to labels.
+        Generates predictions and maps them back to labels, ranked by score.
+
+        ``top`` (read from kwargs, default 1) limits how many labels each
+        prediction returns. It may be a single int applied to every input, or a
+        per-input list aligned with ``X`` (as sent by the batched serving loop).
         """
+        top = kwargs.pop('top', 1)
         preds = super().predict(X, **kwargs)
         if isinstance(preds, list):
             preds = preds[0]
 
+        tops = top if isinstance(top, (list, tuple)) else [top] * len(preds)
+
         results = []
-        for pred in preds:
-            idx = np.argmax(pred)
-            label = self.labels[str(idx)]
-            score = float(pred[idx])
-            results.append({'label': label, 'score': score})
+        for pred, k in zip(preds, tops):
+            order = np.argsort(pred)[::-1]
+            if k:
+                order = order[:int(k)]
+            labels = [
+                {'name': self.labels[str(int(idx))], 'score': float(pred[idx])}
+                for idx in order
+            ]
+            results.append({'labels': labels})
         return results
 
     def evaluate(self, X, y):
@@ -108,7 +119,7 @@ class BaseTextClassification(BaseModel):
         Returns a JSON-serializable dictionary of metrics.
         """
         results = self.predict(X)
-        y_pred = [r['label'] for r in results]
+        y_pred = [r['labels'][0]['name'] for r in results]
         
         cm = confusion_matrix(y, y_pred)
         acc = accuracy_score(y, y_pred)

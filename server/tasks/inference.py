@@ -28,7 +28,7 @@ def model(self, model_id, path, model_type, **kwargs):
 
     registry = registry_for(environment)
 
-    lock = registry.serve_lock(model_id, timeout=heartbeat_ttl)
+    lock = registry.lock(model_id, timeout=heartbeat_ttl)
 
     try:
         if not lock.acquire():
@@ -54,18 +54,26 @@ def model(self, model_id, path, model_type, **kwargs):
         while True:
             self.check_status(task_id=self.request.id)
 
-            if registry.route(model_id) is None:
+            route = registry.route(model_id)
+            if route is None:
                 break
 
-            texts, ids = registry.drain(model_id, batch_size)
+            queries, ids, kwargs = registry.pop(model_id, batch_size)
 
             if ids:
                 try:
-                    outputs = model.predict(texts)
-                    registry.publish_outputs(model_id, ids, outputs, ttl=output_ttl)
+                    predictions = model.predict(queries, **kwargs)
+                    outputs = []
+                    for query, prediction in zip(queries, predictions):
+                        outputs.append({
+                            'environment': environment, 
+                            'model': route.name, 
+                            'version': route.version, 'query': query, **prediction}
+                        )
+                    registry.set(model_id, ids, outputs, ttl=output_ttl)
                 except Exception as error:
                     failure = {'error': str(error), 'type': type(error).__name__}
-                    registry.publish_outputs(model_id, ids, [failure] * len(ids), ttl=output_ttl)
+                    registry.set(model_id, ids, [failure] * len(ids), ttl=output_ttl)
                 idle_since = time.monotonic()
             elif time.monotonic() - idle_since > idle_timeout:
                 break
@@ -83,6 +91,7 @@ def model(self, model_id, path, model_type, **kwargs):
     finally:
         if online:
             registry.offline(model_id)
+            registry.purge(model_id)
         try:
             lock.release()
         except LockError:

@@ -4,7 +4,7 @@ import uuid
 
 import pandas as pd
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from flask import abort, g, url_for, current_app
 from celery import states
@@ -18,6 +18,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.ext.associationproxy import association_proxy
 
 from . import db, store
+from .registry import registry_for, Route
 from .tasks import sage, triton, WorkerResult, training
 
 from .utils import timestamp, format_timestamp, allowed_file
@@ -188,7 +189,7 @@ class Model(db.Model):
                     if instance_task:
                         if not instance.ready(instance_task):
                             if instance.training == training and \
-                                instance_task.date_receive > training_task.date_done:
+                                instance.date_receive > training_task.date_done.replace(tzinfo=timezone.utc).timestamp():
                                 continue
                             instance.stop(instance_task)
                         instance.forget(instance_task)
@@ -200,8 +201,11 @@ class Model(db.Model):
             
             elif not config[environment.name]:
                 if instance:
-                    instance.stop()
-                    instance.forget()
+                    instance_task = instance._get_task()
+                    if instance_task:
+                        if not instance.ready(instance_task):
+                            instance.stop(instance_task)
+                        instance.forget(instance_task)
                     db.session.delete(instance)
 
     def from_dict(self, data, partial_update=False):
@@ -403,7 +407,7 @@ class Training(db.Model):
 
     def stop(self, task=None):
         task = task or self._get_task()
-        if task and not task.ready():
+        if task and isinstance(task, WorkerResult) and not task.ready():
             if task.state == states.PENDING:
                 task.revoke()
             elif task.state == states.RECEIVED:
@@ -417,7 +421,7 @@ class Training(db.Model):
 
     def forget(self, task=None):
         task = task or self._get_task()
-        if task:
+        if task and isinstance(task, WorkerResult):
             task.forget()
             self.task_id = None
 
@@ -507,7 +511,7 @@ class Instance(db.Model):
 
     def stop(self, task=None):
         task = task or self._get_task()
-        if task and not task.ready():
+        if task and isinstance(task, WorkerResult) and not task.ready():
             if task.state == states.PENDING:
                 task.revoke()
             elif task.state == states.RECEIVED:
@@ -521,13 +525,12 @@ class Instance(db.Model):
 
     def forget(self, task=None):
         task = task or self._get_task()
-        if task:
+        if task and isinstance(task, WorkerResult):
             task.forget()
             self.task_id = None
         # Make the model unroutable in its environment. A resident serving task
         # notices the missing route on its next loop and shuts itself down.
-        from .registry import registry_for
-        registry_for(self.environment.name).revoke_route(self.model_id)
+        registry_for(self.environment.name).revoke(self.model_id)
 
     def start(self, prewarm=False, **kwargs):
         """
@@ -537,17 +540,21 @@ class Instance(db.Model):
         environment's Redis; the serving task is started lazily by the first
         prediction request. Pass ``prewarm=True`` to launch it eagerly.
         """
-        from .registry import registry_for, Route
-        registry_for(self.environment.name).publish_route(
+        registry = registry_for(self.environment.name)
+        registry.publish(
             self.model.id,
             Route(
                 path=self.training.path,
                 model_type=self.model.type,
                 version=str(self.training.version),
+                name=self.model.name,
             ),
         )
 
         if prewarm:
+            # Reserve the start slot so a query arriving while this task is still
+            # loading waits for its output instead of spinning up a rival task.
+            registry.claim(self.model.id, ttl=current_app.config['INFERENCE_START_TTL'])
             from .tasks.inference import model
             task = model.apply_async(
                 args=(self.model.id, self.training.path, self.model.type),
