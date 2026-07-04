@@ -10,6 +10,8 @@ from typing import Optional
 from redis import StrictRedis
 from redis.exceptions import WatchError
 
+from .config import configs
+
 
 @dataclass(frozen=True)
 class Route:
@@ -18,6 +20,7 @@ class Route:
     version: str = ''
     name: str = ''
     task_id: str = ''
+    api_key: str = ''
 
     def to_mapping(self) -> dict:
         return {k: ('' if v is None else str(v)) for k, v in asdict(self).items()}
@@ -39,6 +42,7 @@ class Route:
             version=decoded.get('version', ''),
             name=decoded.get('name', ''),
             task_id=decoded.get('task_id', ''),
+            api_key=decoded.get('api_key', ''),
         )
 
 
@@ -60,11 +64,15 @@ class Registry:
 
     def _inputs(self, model_id): return self._key('inputs', model_id)
 
-    def _output(self, model_id, request_id): return self._key('outputs', model_id, request_id)
+    def _output(self, model_id, key): return self._key('outputs', model_id, key)
 
     def publish(self, model_id, route: Route):
-        self.redis.delete(self._route(model_id))
-        self.redis.hset(self._route(model_id), mapping=route.to_mapping())
+        # Replace the route atomically; a serving task reads a missing route
+        # as a shutdown signal, so it must never observe the gap.
+        with self.redis.pipeline() as pipe:
+            pipe.delete(self._route(model_id))
+            pipe.hset(self._route(model_id), mapping=route.to_mapping())
+            pipe.execute()
 
     def revoke(self, model_id):
         self.redis.delete(
@@ -88,18 +96,18 @@ class Registry:
     def claim(self, model_id, ttl) -> bool:
         return bool(self.redis.set(self._starting(model_id), uuid.uuid4().hex, nx=True, ex=ttl))
 
-    def get(self, model_id, request_id):
-        raw = self.redis.get(self._output(model_id, request_id))
+    def get(self, model_id, key):
+        raw = self.redis.get(self._output(model_id, key))
         return json.loads(raw.decode('utf-8')) if raw else None
 
-    def push(self, model_id, request_id, query, **kwargs):
-        message = json.dumps({'id': request_id, 'query': query, **kwargs}).encode('utf-8')
+    def push(self, model_id, key, query, **kwargs):
+        message = json.dumps({'id': key, 'query': query, **kwargs}).encode('utf-8')
         self.redis.rpush(self._inputs(model_id), message)
 
-    def wait(self, model_id, request_id, timeout, interval):
+    def wait(self, model_id, key, timeout, interval):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            output = self.get(model_id, request_id)
+            output = self.get(model_id, key)
             if output:
                 return output
             time.sleep(interval)
@@ -134,29 +142,26 @@ class Registry:
                         pipe.unwatch()
                         return [], [], {}
 
-                    queries, ids, kwargs = [], [], {}
+                    queries, keys, kwargs = [], [], {}
                     for item in raw:
                         data = json.loads(item.decode('utf-8'))
                         queries.append(data.pop('query'))
-                        ids.append(data.pop('id'))
+                        keys.append(data.pop('id'))
                         for key_, value in data.items():
                             kwargs.setdefault(key_, []).append(value)
 
                     pipe.multi()
-                    pipe.ltrim(key, len(ids), -1)
+                    pipe.ltrim(key, len(keys), -1)
                     pipe.execute()
-                    return queries, ids, kwargs
+                    return queries, keys, kwargs
                 except WatchError:
                     continue
 
-    def set(self, model_id, ids, outputs, ttl):
+    def set(self, model_id, keys, values, ttl):
+        """Store caller-serialized values under the given request ids."""
         with self.redis.pipeline(transaction=False) as pipe:
-            for request_id, output in zip(ids, outputs):
-                pipe.set(
-                    self._output(model_id, request_id),
-                    json.dumps(output).encode('utf-8'),
-                    ex=ttl,
-                )
+            for key, value in zip(keys, values):
+                pipe.set(self._output(model_id, key), value, ex=ttl)
             pipe.execute()
 
 _registries = {}
@@ -172,7 +177,10 @@ def registry_for(environment, redis=None) -> Registry:
         if cached is not None:
             return cached
 
-        url = os.environ.get(f'REDIS_URL_{environment.upper()}')
+        # Registries are also built outside an app context (celery workers),
+        # so read the settings from the config class directly.
+        config = configs[os.environ.get('FLASK_ENV', 'production')]
+        url = (config.ALLOWED_ENVIRONMENTS.get(environment) or {}).get('redis_url')
         if url:
             client = StrictRedis.from_url(url)
         else:

@@ -1,6 +1,7 @@
-from flask import request, g, abort
+from flask import request, g, abort, current_app
 
 from ...auth import token_auth
+from ...utils import generate_secret
 
 from ... import db
 from . import api
@@ -35,6 +36,23 @@ def create_instance(modelId):
     model.publish(training_id, config, prewarm=True)
     db.session.commit()
     return {'instances': [instance.to_dict() for instance in model.instances.all()]}, 200
+
+
+@api.put('/models/<modelId>/instances/<int:instanceId>')
+@token_auth.login_required
+def update_instance(modelId, instanceId):
+    model = g.current_user.models.filter_by(id=modelId).first()
+    if model is None:
+        abort(404, 'Model not found: %s' % modelId)
+    instance = model.instances.filter_by(id=instanceId).first()
+    if instance is None:
+        abort(404, 'Instance not found: %s' % instanceId)
+    data = request.get_json(silent=True) or {}
+    if 'api_key' in data:
+        # Keys are server-generated; submitting the field requests a rotation.
+        instance.api_key = generate_secret(current_app.config['INFERENCE_API_KEY_NBYTES'])
+    db.session.commit()
+    return {'instance': instance.to_dict()}, 200
 
 
 @api.delete('/models/<modelId>/instances/<int:instanceId>')

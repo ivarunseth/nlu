@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import shutil
 import tempfile
@@ -58,22 +59,24 @@ def model(self, model_id, path, model_type, **kwargs):
             if route is None:
                 break
 
-            queries, ids, kwargs = registry.pop(model_id, batch_size)
+            queries, keys, kwargs = registry.pop(model_id, batch_size)
 
-            if ids:
+            if keys:
                 try:
                     predictions = model.predict(queries, **kwargs)
                     outputs = []
                     for query, prediction in zip(queries, predictions):
-                        outputs.append({
+                        outputs.append(json.dumps({
                             'environment': environment, 
                             'model': route.name, 
-                            'version': route.version, 'query': query, **prediction}
-                        )
-                    registry.set(model_id, ids, outputs, ttl=output_ttl)
+                            'version': route.version, 
+                            'query': query, 
+                            **prediction
+                        }))
+                    registry.set(model_id, keys, outputs, ttl=output_ttl)
                 except Exception as error:
-                    failure = {'error': str(error), 'type': type(error).__name__}
-                    registry.set(model_id, ids, [failure] * len(ids), ttl=output_ttl)
+                    failure = json.dumps({'error': str(error), 'type': type(error).__name__})
+                    registry.set(model_id, keys, [failure] * len(keys), ttl=output_ttl)
                 idle_since = time.monotonic()
             elif time.monotonic() - idle_since > idle_timeout:
                 break

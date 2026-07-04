@@ -1,9 +1,13 @@
+from functools import wraps
+
 from flask import g, request, session, current_app
 from flask_httpauth import HTTPBasicAuth, HTTPTokenAuth
 
 from jwt import decode, ExpiredSignatureError, InvalidTokenError
+from hmac import compare_digest
 
 from .database import User
+from .registry import registry_for
 
 from . import db
 
@@ -12,7 +16,7 @@ from . import db
 # token optional auth that is used for open endpoints.
 basic_auth = HTTPBasicAuth()
 token_auth = HTTPTokenAuth('Bearer')
-token_optional_auth = HTTPTokenAuth('Bearer')
+token_optional_auth = HTTPTokenAuth('Bearer')   
 
 
 def extract_bearer_token_from_headers(headers):
@@ -94,3 +98,25 @@ def verify_optional_token(token):
         return True
     # but if a token was provided, make sure it is valid
     return validate_token(token)
+
+
+def api_key_required(f):
+    """Require the deployment's API key as a bearer token.
+
+    Every published instance carries its own key, mirrored into the
+    environment's route registry so the inference server can verify it
+    without a database.
+    """
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        token = extract_bearer_token_from_headers(request.headers)
+        model_id = kwargs.get('model_id')
+        if token and model_id:
+            registry = registry_for(current_app.config['ENVIRONMENT'])
+            route = registry.route(model_id)
+            if route and route.api_key \
+                and compare_digest(token, route.api_key):
+                return f(*args, **kwargs)
+        return {'error': 'A valid API key is required.'}, 401, \
+            {'WWW-Authenticate': 'Bearer realm="Authentication Required"'}
+    return wrapper

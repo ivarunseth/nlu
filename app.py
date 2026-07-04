@@ -9,7 +9,8 @@ application, socketio = app, socket = create_application_server()
 
 if __name__ == '__main__':
     host=app.config.get('HOST', '0.0.0.0')
-    port=app.config.get('PORT', 5001)
+    # One control-plane process per environment, each on its own port.
+    port=app.config['ALLOWED_ENVIRONMENTS'][app.config['ENVIRONMENT']]['server']['port']
     debug=app.config.get('DEBUG', False)
     use_reloader=app.config.get('DEBUG', False)
     log_output=app.config.get('DEBUG', False)

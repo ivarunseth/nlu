@@ -1,13 +1,15 @@
-import hashlib
+from hashlib import sha256
 
 from flask import current_app, request, abort
 
+from ...auth import api_key_required
 from ...registry import registry_for
 
 from . import triton
 
 
 @triton.post('/models/<model_id>/infer')
+@api_key_required
 def infer(model_id):
     environment = current_app.config['ENVIRONMENT']
     registry = registry_for(environment)
@@ -22,10 +24,9 @@ def infer(model_id):
         abort(400, 'A non-empty "query" string is required')
 
     top = max(request.args.get('top', 1, type=int), 1)
+    key = sha256(f'{top}:{query}'.encode('utf-8')).hexdigest()
 
-    request_id = hashlib.sha256(f'{top}:{query}'.encode('utf-8')).hexdigest()
-
-    cached = registry.get(model_id, request_id)
+    cached = registry.get(model_id, key)
     if cached is not None:
         if 'error' in cached:
             return cached, 502
@@ -41,14 +42,12 @@ def infer(model_id):
             queue=environment,
         )
 
-    registry.push(model_id, request_id, query, top=top)
+    registry.push(model_id, key, query, top=top)
 
-    output = registry.wait(
-        model_id,
-        request_id,
-        current_app.config['INFERENCE_REQUEST_TIMEOUT'],
-        current_app.config['INFERENCE_POLL_INTERVAL'],
-    )
+    timeout = current_app.config['INFERENCE_REQUEST_TIMEOUT']
+    interval = current_app.config['INFERENCE_POLL_INTERVAL']
+
+    output = registry.wait(model_id, key, timeout, interval)
 
     if output is None:
         abort(504, 'Prediction timed out for model %s' % model_id)

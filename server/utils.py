@@ -9,6 +9,8 @@ from datetime import datetime
 from flask import current_app
 from werkzeug.utils import secure_filename
 
+from secrets import token_urlsafe
+
 
 def timestamp():
     """Return the current timestamp as an integer."""
@@ -17,6 +19,11 @@ def timestamp():
 
 def format_timestamp(t, format='%d/%m/%Y - %H:%M:%S'):
     return datetime.strftime(datetime.fromtimestamp(t), format)
+
+
+def generate_secret(nbytes):
+    """Return a URL-safe random secret with nbytes of entropy."""
+    return token_urlsafe(nbytes)
 
 
 def add_request(request_stats):

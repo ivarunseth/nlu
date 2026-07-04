@@ -25,14 +25,14 @@ export const useSocket = () => {
         if (user) {
 
             if (!socket.current) {
-                socket.current = io(
-                    'http://localhost:5001', { 
-                        transports: ['websocket'],
-                        auth: {
-                            token: user.token
-                        }
+                // Connect to the page's own origin; the Vite proxy forwards
+                // /socket.io to the environment's control-plane server.
+                socket.current = io({
+                    transports: ['websocket'],
+                    auth: {
+                        token: user.token
                     }
-                );
+                });
             }
 
             socket.current.on('connect', () => {

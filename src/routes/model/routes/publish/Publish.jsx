@@ -2,7 +2,15 @@ import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Badge, Button, Card, Col, Form, Modal, Row, Spinner, Table } from "react-bootstrap";
 import {
     ArrowClockwise,
+    ArrowRepeat,
+    Clipboard,
+    ClipboardCheck,
     Clock,
+    Eye,
+    EyeSlash,
+    Key,
+    Link45deg,
+    Terminal,
     Hdd,
     CloudArrowUp,
     ExclamationTriangle,
@@ -40,9 +48,6 @@ const ENVIRONMENTS = [
     }
 ];
 
-const INSTANCE_ACTIVE_STATUSES = ["PENDING", "RECEIVED", "STARTED"];
-const INSTANCE_DONE_STATUSES = ["SUCCESS", "FAILURE", "ABORTED", "REVOKED"];
-
 // Parse the "dd/mm/yyyy - HH:MM:SS" local-time strings the API returns into a Date.
 const parseApiDate = (value) => {
     const match = /^(\d{2})\/(\d{2})\/(\d{4})\s*-\s*(\d{2}):(\d{2}):(\d{2})$/.exec(value || "");
@@ -79,10 +84,35 @@ const EnvironmentCard = ({
     onReload,
     onUndeploy,
     onPromote,
-    live
+    live,
+    onResetKey
 }) => {
     const status = instance ? getInstanceStatus(instance) : null;
     const accuracy = getTrainingAccuracy(training);
+    const [showKey, setShowKey] = useState(false);
+    // Which item was just copied: 'key' | 'url' | 'curl'.
+    const [copied, setCopied] = useState(null);
+
+    const copy = async (what, text) => {
+        try {
+            await navigator.clipboard.writeText(text);
+            setCopied(what);
+            setTimeout(() => setCopied(null), 1500);
+        } catch {
+            // Clipboard unavailable (e.g. insecure context); reveal instead.
+            if (what === "key") setShowKey(true);
+        }
+    };
+
+    // The backend derives the endpoint from the environment's inference
+    // host and port, so display and copy always match the real deployment.
+    const inferUrl = instance?.endpoint || "";
+    const curlSnippet = instance ? [
+        `curl -X POST '${inferUrl}?top=1'`,
+        `  -H 'Authorization: Bearer ${instance.api_key}'`,
+        `  -H 'Content-Type: application/json'`,
+        `  -d '{"query": "Hello there"}'`
+    ].join(" \\\n") : "";
 
     return (
         <Card className="border-light h-100 overflow-hidden">
@@ -95,14 +125,10 @@ const EnvironmentCard = ({
                 {instance ? (
                     <>
                         <div className="d-flex align-items-start gap-2 mb-3">
+                            <span className="text-primary fs-4 fw-bold font-monospace"><Hash/></span>
                             <span className="fs-4 fw-bold font-monospace text-body-emphasis">
                                 v{training ? training.version : instance.training_id}
                             </span>
-                            {/* {accuracy !== null && (
-                                <span className="small text-muted d-inline-flex align-items-center gap-1">
-                                    <GraphUp />{(accuracy * 100).toFixed(2)}%
-                                </span>
-                            )} */}
                             {onPromote && (
                                 <div className="ms-auto d-flex flex-column align-items-end">
                                     <Form.Check
@@ -131,6 +157,67 @@ const EnvironmentCard = ({
                         <div className="small text-muted d-flex align-items-center gap-2 mb-1">
                             <Clock className="flex-shrink-0" />
                             <span>Deployed at {instance.date_receive || "-"}</span>
+                        </div>
+                        {instance.api_key && (
+                            <div className="small text-muted d-flex align-items-center gap-2 mb-1">
+                                <Key className="flex-shrink-0" />
+                                <span className="font-monospace text-truncate flex-grow-1" style={{ minWidth: 0 }}>
+                                    {showKey ? instance.api_key : "•".repeat(24)}
+                                </span>
+                                <Button
+                                    variant="link"
+                                    size="sm"
+                                    className="p-0 text-muted"
+                                    onClick={() => setShowKey(!showKey)}
+                                    title={showKey ? "Hide API key" : "Show API key"}
+                                >
+                                    {showKey ? <EyeSlash /> : <Eye />}
+                                </Button>
+                                <Button
+                                    variant="link"
+                                    size="sm"
+                                    className="p-0 text-muted"
+                                    onClick={() => copy("key", instance.api_key)}
+                                    title="Copy API key"
+                                >
+                                    {copied === "key" ? <ClipboardCheck className="text-success" /> : <Clipboard />}
+                                </Button>
+                                <Button
+                                    variant="link"
+                                    size="sm"
+                                    className="p-0 text-muted"
+                                    disabled={busy}
+                                    onClick={onResetKey}
+                                    title="Reset API key"
+                                >
+                                    <ArrowRepeat />
+                                </Button>
+                            </div>
+                        )}
+                        <div className="small text-muted d-flex align-items-center gap-2 mb-1">
+                            <Link45deg className="flex-shrink-0" />
+                            <span className="fw-bold" style={{ fontSize: "0.7rem" }}>POST</span>
+                            <span className="font-monospace text-truncate flex-grow-1" style={{ minWidth: 0 }} title={inferUrl}>
+                                {inferUrl.replace(/^https?:\/\//, "")}
+                            </span>
+                            <Button
+                                variant="link"
+                                size="sm"
+                                className="p-0 text-muted"
+                                onClick={() => copy("url", inferUrl)}
+                                title="Copy endpoint URL"
+                            >
+                                {copied === "url" ? <ClipboardCheck className="text-success" /> : <Clipboard />}
+                            </Button>
+                            <Button
+                                variant="link"
+                                size="sm"
+                                className="p-0 text-muted"
+                                onClick={() => copy("curl", curlSnippet)}
+                                title="Copy request as curl (includes the API key)"
+                            >
+                                {copied === "curl" ? <ClipboardCheck className="text-success" /> : <Terminal />}
+                            </Button>
                         </div>
                         {stale && (
                             <Alert variant="warning" className="d-flex align-items-start gap-2 small mb-0 mt-2 py-2">
@@ -256,17 +343,18 @@ const Publish = () => {
         load();
     }, [user, modelId]);
 
-    // Live serving-status updates for deployed instances (starting -> serving -> standby).
-    const activeInstanceTaskIds = useMemo(
-        () => instances
-            .filter((instance) => instance.task_id && INSTANCE_ACTIVE_STATUSES.includes(instance.status))
-            .map((instance) => instance.task_id),
+    // Live serving-status updates for deployed instances. Rooms are keyed by
+    // task id and joined regardless of the current status: an idle (STANDBY)
+    // instance is revived under the same task id by the next prediction
+    // request, so its room must stay watched to catch it coming back to life.
+    const instanceTaskIds = useMemo(
+        () => instances.filter((instance) => instance.task_id).map((instance) => instance.task_id),
         [instances]
     );
-    const activeInstanceTaskKey = activeInstanceTaskIds.join("|");
+    const instanceTaskKey = instanceTaskIds.join("|");
 
     useEffect(() => {
-        if (!user || !socket || !socket.connected || activeInstanceTaskIds.length === 0) return;
+        if (!user || !socket || instanceTaskIds.length === 0) return;
         const activeRooms = rooms.current;
 
         const handleStatus = (data) => {
@@ -274,28 +362,30 @@ const Publish = () => {
             setInstances((prev) => prev.map((instance) => (
                 instance.task_id === data.task_id ? { ...instance, ...data, task_id: instance.task_id } : instance
             )));
-            if (INSTANCE_DONE_STATUSES.includes(data.status)) {
-                socket.emit("leave", user.token, data.task_id);
-                activeRooms.delete(data.task_id);
-            }
+        };
+
+        const join = () => {
+            instanceTaskIds.forEach((taskId) => {
+                if (!activeRooms.has(taskId)) {
+                    socket.emit("join", user.token, taskId);
+                    activeRooms.add(taskId);
+                }
+            });
         };
 
         socket.on("status", handleStatus);
-        activeInstanceTaskIds.forEach((taskId) => {
-            if (!activeRooms.has(taskId)) {
-                socket.emit("join", user.token, taskId);
-                activeRooms.add(taskId);
-            }
-        });
+        socket.on("connect", join);
+        if (socket.connected) join();
 
         return () => {
             socket.off("status", handleStatus);
-            activeInstanceTaskIds.forEach((taskId) => {
-                socket.emit("leave", user.token, taskId);
+            socket.off("connect", join);
+            instanceTaskIds.forEach((taskId) => {
+                if (socket.connected) socket.emit("leave", user.token, taskId);
                 activeRooms.delete(taskId);
             });
         };
-    }, [user, socket, activeInstanceTaskKey]);
+    }, [user, socket, instanceTaskKey]);
 
     const handleDeploy = async (environment, trainingId) => {
         setPendingAction({ type: "deploy", environment, trainingId });
@@ -333,6 +423,27 @@ const Publish = () => {
         }
     };
 
+    const handleResetKey = async (environment) => {
+        const instance = instanceByEnvironment[environment];
+        if (!instance) return;
+        setPendingAction({ type: "reset-key", environment, trainingId: instance.training_id });
+        setAlert(null);
+        try {
+            const response = await axios.put(
+                `/api/models/${modelId}/instances/${instance.id}`,
+                { api_key: null },
+                { headers: { Authorization: `Bearer ${user.token}` } }
+            );
+            setInstances((prev) => prev.map((item) => (
+                item.id === response.data.instance.id ? response.data.instance : item
+            )));
+        } catch (error) {
+            setAlert({ variant: "danger", message: error.response?.data?.error || error.message });
+        } finally {
+            setPendingAction(null);
+        }
+    };
+
     const openConfirm = (type, environment, training) => {
         setValidatedInTesting(false);
         setConfirmAction({ type, environment, training });
@@ -346,9 +457,16 @@ const Publish = () => {
         if (!action) return;
         if (action.type === "deploy" || action.type === "reload") await handleDeploy(action.environment, action.training.id);
         if (action.type === "undeploy") await handleUndeploy(action.environment);
+        if (action.type === "reset-key") await handleResetKey(action.environment);
     };
 
     const environmentBusy = (environment) => pendingAction?.environment === environment;
+
+    const busyLabel = pendingAction?.type === "undeploy"
+        ? "Undeploying…"
+        : pendingAction?.type === "reset-key"
+            ? "Resetting key…"
+            : "Deploying…";
 
     // Rollback: promoting a version older than the one currently in production.
     const confirmProductionVersion = productionInstance
@@ -386,9 +504,10 @@ const Publish = () => {
                                 training={testingInstance ? trainingById[String(testingInstance.training_id)] : null}
                                 stale={isInstanceStale(testingInstance)}
                                 busy={environmentBusy("testing")}
-                                busyLabel={pendingAction?.type === "undeploy" ? "Undeploying…" : "Deploying…"}
+                                busyLabel={busyLabel}
                                 onReload={() => openConfirm("reload", "testing", trainingById[String(testingInstance.training_id)] || { id: testingInstance.training_id })}
                                 onUndeploy={() => openConfirm("undeploy", "testing", trainingById[String(testingInstance.training_id)])}
+                                onResetKey={() => openConfirm("reset-key", "testing", trainingById[String(testingInstance.training_id)])}
                                 onPromote={testingInstance ? () => openConfirm("deploy", "production", trainingById[String(testingInstance.training_id)]) : undefined}
                                 live={Boolean(testingInstance && productionInstance
                                     && testingInstance.training_id === productionInstance.training_id)}
@@ -401,9 +520,10 @@ const Publish = () => {
                                 training={productionInstance ? trainingById[String(productionInstance.training_id)] : null}
                                 stale={isInstanceStale(productionInstance)}
                                 busy={environmentBusy("production")}
-                                busyLabel={pendingAction?.type === "undeploy" ? "Undeploying…" : "Deploying…"}
+                                busyLabel={busyLabel}
                                 onReload={() => openConfirm("reload", "production", trainingById[String(productionInstance.training_id)] || { id: productionInstance.training_id })}
                                 onUndeploy={() => openConfirm("undeploy", "production", trainingById[String(productionInstance.training_id)])}
+                                onResetKey={() => openConfirm("reset-key", "production", trainingById[String(productionInstance.training_id)])}
                             />
                         </Col>
                     </Row>
@@ -500,9 +620,11 @@ const Publish = () => {
                     <Modal.Title className="small fw-bold text-muted">
                         {confirmAction?.type === "undeploy"
                             ? `Undeploy from ${confirmAction.environment}`
-                            : confirmAction?.type === "reload"
-                                ? `Redeploy in ${confirmAction.environment}`
-                                : confirmIsRollback
+                            : confirmAction?.type === "reset-key"
+                                ? `Reset ${confirmAction.environment} API key`
+                                : confirmAction?.type === "reload"
+                                    ? `Redeploy in ${confirmAction.environment}`
+                                    : confirmIsRollback
                                 ? "Roll back production"
                                 : confirmIsProductionDeploy
                                     ? "Promote to production"
@@ -514,6 +636,11 @@ const Publish = () => {
                         <p className="small">
                             Undeploy v{confirmAction.training?.version} from <strong>{confirmAction.environment}</strong>?
                             The environment will stop serving predictions immediately.
+                        </p>
+                    ) : confirmAction?.type === "reset-key" ? (
+                        <p className="small">
+                            Generate a new API key for the <strong>{confirmAction.environment}</strong> deployment?
+                            Requests using the current key will stop working immediately.
                         </p>
                     ) : confirmAction?.type === "reload" ? (
                         <p className="small">
@@ -552,7 +679,11 @@ const Publish = () => {
                     <div className="d-flex justify-content-end gap-2">
                         <Button variant="light" size="sm" className="border small" onClick={closeConfirm}>CANCEL</Button>
                         <Button
-                            variant={confirmAction?.type === "undeploy" ? "danger" : confirmIsRollback ? "warning" : "primary"}
+                            variant={confirmAction?.type === "undeploy"
+                                ? "danger"
+                                : confirmAction?.type === "reset-key" || confirmIsRollback
+                                    ? "warning"
+                                    : "primary"}
                             size="sm"
                             className="small"
                             disabled={confirmIsProductionDeploy && !validatedInTesting}
@@ -560,13 +691,15 @@ const Publish = () => {
                         >
                             {confirmAction?.type === "undeploy"
                                 ? "UNDEPLOY"
-                                : confirmAction?.type === "reload"
-                                    ? "REDEPLOY"
-                                    : confirmIsRollback
-                                        ? "ROLL BACK"
-                                        : confirmIsProductionDeploy
-                                            ? "PROMOTE"
-                                            : "DEPLOY"}
+                                : confirmAction?.type === "reset-key"
+                                    ? "RESET KEY"
+                                    : confirmAction?.type === "reload"
+                                        ? "REDEPLOY"
+                                        : confirmIsRollback
+                                            ? "ROLL BACK"
+                                            : confirmIsProductionDeploy
+                                                ? "PROMOTE"
+                                                : "DEPLOY"}
                         </Button>
                     </div>
                 </Modal.Body>

@@ -24,6 +24,7 @@ application = app = create_triton_server()
 
 if __name__ == '__main__':
     host = app.config.get('HOST', '0.0.0.0')
-    port = app.config.get('INFERENCE_PORT', 5002)
+    # One data-plane process per environment, each on its own port.
+    port = app.config['ALLOWED_ENVIRONMENTS'][app.config['ENVIRONMENT']]['triton']['port']
 
     app.run(host=host, port=port, debug=True, use_reloader=True)

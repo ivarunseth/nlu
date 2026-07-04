@@ -467,7 +467,9 @@ const Test = () => {
             const response = await axios.post(
                 `/triton/models/${modelId}/infer`,
                 { query },
-                { params: { top }, headers: { Authorization: `Bearer ${user.token}` } }
+                // The inference plane authenticates with the deployment's own
+                // API key, not the user session token.
+                { params: { top }, headers: { Authorization: `Bearer ${deployedInstance?.api_key || ""}` } }
             );
             setResult({ query, prediction: response.data, version: deployedVersion });
             setLatency(Math.round(performance.now() - startedAt));

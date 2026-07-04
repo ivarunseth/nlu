@@ -2,6 +2,8 @@ import os
 import io
 import uuid
 
+from dataclasses import replace
+
 import pandas as pd
 
 from datetime import datetime, timedelta, timezone
@@ -21,7 +23,7 @@ from . import db, store
 from .registry import registry_for, Route
 from .tasks import sage, triton, WorkerResult, training
 
-from .utils import timestamp, format_timestamp, allowed_file
+from .utils import timestamp, format_timestamp, allowed_file, generate_secret
 
 
 class User(db.Model):
@@ -184,6 +186,7 @@ class Model(db.Model):
             instance = self.instances.filter(Instance.environment == environment).first()
             
             if config[environment.name]:
+                api_key = None
                 if instance:
                     instance_task = instance._get_task()
                     if instance_task:
@@ -193,9 +196,11 @@ class Model(db.Model):
                                 continue
                             instance.stop(instance_task)
                         instance.forget(instance_task)
+                    api_key = instance.api_key
                     db.session.delete(instance)
-                
-                instance = Instance.create(environment, self, training)
+                    db.session.flush()
+
+                instance = Instance.create(environment, self, training, api_key=api_key)
                 db.session.add(instance)
                 instance.start(**kwargs)
             
@@ -480,6 +485,7 @@ class Instance(db.Model):
     training_id = db.Column(db.Integer, db.ForeignKey('trainings.id'))
     
     task_id = db.Column(db.String(155), unique=True, nullable=True)
+    _api_key = db.Column('api_key', db.String(64), unique=True, nullable=True)
 
     date_receive = db.Column(db.Integer, default=timestamp, nullable=True)
     date_updated = db.Column(db.Integer, default=timestamp, onupdate=timestamp, nullable=True)
@@ -494,9 +500,29 @@ class Instance(db.Model):
     def __repr__(self) -> str:
         return f"<Instance {self.model.name} {self.training.version} ({self.environment.name})>"
 
+    @property
+    def api_key(self):
+        return self._api_key
+
+    @api_key.setter
+    def api_key(self, api_key):
+        self._api_key = api_key
+        # Keep the live route in sync. On a fresh instance the foreign keys
+        # are still unset and start() publishes the route with the key.
+        if self.environment_id is not None and self.model_id:
+            registry = registry_for(self.environment.name)
+            route = registry.route(self.model_id)
+            if route:
+                registry.publish(self.model_id, replace(route, api_key=api_key))
+
     @staticmethod
-    def create(environment, model, training):
-        return Instance(environment=environment, model=model, training=training)
+    def create(environment, model, training, api_key=None):
+        return Instance(
+            environment=environment,
+            model=model,
+            training=training,
+            api_key=api_key or generate_secret(current_app.config['INFERENCE_API_KEY_NBYTES']),
+        )
 
     def _get_task(self):
         return None if not self.task_id else WorkerResult(id=self.task_id, app=triton)
@@ -552,6 +578,7 @@ class Instance(db.Model):
                 version=str(self.training.version),
                 name=self.model.name,
                 task_id=self.task_id,
+                api_key=self.api_key,
             ),
         )
 
@@ -576,12 +603,19 @@ class Instance(db.Model):
                     abort(400, '%s is missing in request data' % field)
 
     def to_dict(self):
+        settings = current_app.config['ALLOWED_ENVIRONMENTS'][self.environment.name]
         instance = {
             'id': self.id,
             'environment': self.environment.name,
             'model_id': self.model_id,
             'training_id': self.training_id,
             'task_id': self.task_id,
+            'api_key': self.api_key,
+            'endpoint': '%s:%s/triton/models/%s/infer' % (
+                settings['triton']['host'],
+                settings['triton']['port'],
+                self.model_id,
+            ),
             'date_receive': format_timestamp(self.date_receive),
             'date_updated': format_timestamp(self.date_updated)
         }

@@ -37,6 +37,7 @@ store = Storage()
 def create_application_server(config_name=os.environ.get('FLASK_ENV', 'development')):
     app = Flask(__name__)
     app.config.from_object(configs[config_name])
+    app.config['ENVIRONMENT'] = config_name
 
     db.init_app(app)
     from . import database
