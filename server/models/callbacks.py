@@ -15,7 +15,7 @@ class TrainingCallback(tf.keras.callbacks.Callback):
     - Update Celery task state.
     """
 
-    def __init__(self, task: WorkerTask, wrapper_model=None, min_update_interval=0.1):
+    def __init__(self, task: WorkerTask, wrapper_model=None, min_update_interval=0.5):
         super().__init__()
 
         self.task = task
@@ -26,14 +26,16 @@ class TrainingCallback(tf.keras.callbacks.Callback):
         self.min_update_interval = min_update_interval
 
     def on_train_begin(self, logs=None):
+        self.task.check_status()
+
         if self.wrapper_model:
             self.summary = self.wrapper_model._get_summary()
 
     def on_epoch_begin(self, epoch, logs=None):
         self.task.check_status()
 
-    def on_batch_begin(self, batch, logs=None):
-        self.task.check_status()
+    # def on_batch_begin(self, batch, logs=None):
+    #     self.task.check_status()
 
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
@@ -41,19 +43,16 @@ class TrainingCallback(tf.keras.callbacks.Callback):
         for key, value in logs.items():
             self.history.setdefault(key, []).append(float(value))
 
-        # now = time.time()
-        # epochs = self.params.get('epochs')
+        now = time.time()
+        epochs = self.params.get('epochs')
         
-        # if (epoch + 1) == epochs or \
-        #     (now - self.last_update >= self.min_update_interval):
-        self.task.update_state(
-            state="STARTED", 
-            meta={
-                "history": self.history, 
-                "summary": self.summary
-            }
-        )
-        # self.last_update = now
+        if (epoch + 1) == epochs or \
+            (now - self.last_update >= self.min_update_interval):
+            self.task.update_state(
+                state=self.task.AsyncResult(self.task.request.id).state, 
+                meta={"history": self.history, "summary": self.summary}
+            )
+            self.last_update = now
 
-    def on_train_end(self, logs=None):
+    def on_train_end(self, *args):
         self.task.check_status()

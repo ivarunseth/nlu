@@ -540,7 +540,10 @@ class Instance(db.Model):
         environment's Redis; the serving task is started lazily by the first
         prediction request. Pass ``prewarm=True`` to launch it eagerly.
         """
+        self.task_id = str(uuid.uuid4())
+
         registry = registry_for(self.environment.name)
+        
         registry.publish(
             self.model.id,
             Route(
@@ -548,6 +551,7 @@ class Instance(db.Model):
                 model_type=self.model.type,
                 version=str(self.training.version),
                 name=self.model.name,
+                task_id=self.task_id,
             ),
         )
 
@@ -556,13 +560,12 @@ class Instance(db.Model):
             # loading waits for its output instead of spinning up a rival task.
             registry.claim(self.model.id, ttl=current_app.config['INFERENCE_START_TTL'])
             from .tasks.inference import model
-            task = model.apply_async(
+            model.apply_async(
+                task_id=self.task_id,
                 args=(self.model.id, self.training.path, self.model.type),
                 kwargs={**kwargs, 'environment': self.environment.name},
                 queue=self.environment.name,
-                countdown=3,
             )
-            self.task_id = task.id
 
     def from_dict(self, data, partial_update=False):
         for field in ['environment_id', 'domain_id', 'model_id']:

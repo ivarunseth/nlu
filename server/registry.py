@@ -17,6 +17,7 @@ class Route:
     model_type: str
     version: str = ''
     name: str = ''
+    task_id: str = ''
 
     def to_mapping(self) -> dict:
         return {k: ('' if v is None else str(v)) for k, v in asdict(self).items()}
@@ -37,6 +38,7 @@ class Route:
             model_type=decoded['model_type'],
             version=decoded.get('version', ''),
             name=decoded.get('name', ''),
+            task_id=decoded.get('task_id', ''),
         )
 
 
@@ -48,17 +50,17 @@ class Registry:
 
     def _key(self, *parts): return ':'.join((self.environment, *parts))
 
-    def _route(self, model_id): return self._key('route', model_id)
+    def _route(self, model_id): return self._key('routes', model_id)
 
-    def _alive(self, model_id): return self._key('instance', model_id, 'alive')
+    def _alive(self, model_id): return self._key('models', model_id, 'alive')
 
-    def _starting(self, model_id): return self._key('instance', model_id, 'starting')
+    def _starting(self, model_id): return self._key('models', model_id, 'starting')
 
-    def _lock(self, model_id): return self._key('instance', model_id, 'lock')
+    def _lock(self, model_id): return self._key('models', model_id, 'lock')
 
     def _inputs(self, model_id): return self._key('inputs', model_id)
 
-    def _output(self, model_id, request_id): return self._key('output', model_id, request_id)
+    def _output(self, model_id, request_id): return self._key('outputs', model_id, request_id)
 
     def publish(self, model_id, route: Route):
         self.redis.delete(self._route(model_id))

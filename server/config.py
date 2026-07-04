@@ -51,7 +51,7 @@ class TestingConfig(Config):
     SERVER_NAME = 'localhost'
 
 
-flask_config = {
+configs = {
     'development': DevelopmentConfig,
     'production': ProductionConfig,
     'testing': TestingConfig

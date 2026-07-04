@@ -6,8 +6,6 @@ import tempfile
 from redis.exceptions import LockError
 
 from .. import store
-from ..config import flask_config
-from ..registry import registry_for
 from . import triton
 
 
@@ -15,7 +13,8 @@ from . import triton
 def model(self, model_id, path, model_type, **kwargs):
     """Serve ``model_id`` until idle or unpublished. See module docstring."""
 
-    config = flask_config[os.environ.get('FLASK_ENV', 'production')]
+    from ..config import configs
+    config = configs[os.environ.get('FLASK_ENV', 'production')]
     environment = kwargs.get('environment', os.environ.get('FLASK_ENV', 'production'))
     bucket = kwargs.get('bucket', config.STORAGE_BUCKET)
 
@@ -26,6 +25,7 @@ def model(self, model_id, path, model_type, **kwargs):
     heartbeat_ttl = max(int(heartbeat_interval * 3), 1)
     output_ttl = int(kwargs.get('output_ttl', config.INFERENCE_OUTPUT_TTL))
 
+    from ..registry import registry_for
     registry = registry_for(environment)
 
     lock = registry.lock(model_id, timeout=heartbeat_ttl)

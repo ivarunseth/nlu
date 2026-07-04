@@ -35,10 +35,11 @@ def infer(model_id):
         registry.claim(model_id, ttl=current_app.config['INFERENCE_START_TTL']):
         from ...tasks.inference import model
         model.apply_async(
+            task_id=route.task_id,
             args=(model_id, route.path, route.model_type),
             kwargs={'environment': environment},
             queue=environment,
-        )   
+        )
 
     registry.push(model_id, request_id, query, top=top)
 
