@@ -131,3 +131,13 @@ code {
     min-height: 92px;
   }
 }
+
+/* Custom global utility to hide scrollbar track */
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* Safari and Chrome */
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}

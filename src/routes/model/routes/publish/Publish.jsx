@@ -11,7 +11,12 @@ import {
     InfoCircle,
     RocketTakeoff,
     ShieldCheck,
-    XCircle
+    XCircle,
+    Stop,
+    HddStack,
+    CloudHaze2,
+    CloudPlus,
+    Option
 } from "react-bootstrap-icons";
 import { useParams, Link } from "react-router-dom";
 import { UserContext } from "../../../../contexts/UserContext";
@@ -73,7 +78,8 @@ const EnvironmentCard = ({
     busyLabel,
     onReload,
     onUndeploy,
-    onPromote
+    onPromote,
+    live
 }) => {
     const status = instance ? getInstanceStatus(instance) : null;
     const accuracy = getTrainingAccuracy(training);
@@ -88,19 +94,43 @@ const EnvironmentCard = ({
             <Card.Body className="p-3 d-flex flex-column">
                 {instance ? (
                     <>
-                        <div className="d-flex align-items-baseline gap-2 mb-3">
+                        <div className="d-flex align-items-start gap-2 mb-3">
                             <span className="fs-4 fw-bold font-monospace text-body-emphasis">
                                 v{training ? training.version : instance.training_id}
                             </span>
-                            {accuracy !== null && (
+                            {/* {accuracy !== null && (
                                 <span className="small text-muted d-inline-flex align-items-center gap-1">
                                     <GraphUp />{(accuracy * 100).toFixed(2)}%
                                 </span>
+                            )} */}
+                            {onPromote && (
+                                <div className="ms-auto d-flex flex-column align-items-end">
+                                    <Form.Check
+                                        type="switch"
+                                        id={`promote-switch-${environment.name}`}
+                                        label="Live"
+                                        checked={live}
+                                        disabled={busy || live}
+                                        onChange={() => onPromote()}
+                                        title={live
+                                            ? `v${training?.version} is live — undeploy it from the Production card`
+                                            : `Promote v${training?.version} to production`}
+                                    />
+                                    {live ? (
+                                        <span className="text-muted text-end" style={{ fontSize: "0.7rem" }}>
+                                            Use the stop button to undeploy.
+                                        </span>
+                                    ) : (
+                                        <span className="text-muted text-end" style={{ fontSize: "0.7rem" }}>
+                                            Promote to production
+                                        </span>
+                                    )}
+                                </div>
                             )}
                         </div>
                         <div className="small text-muted d-flex align-items-center gap-2 mb-1">
                             <Clock className="flex-shrink-0" />
-                            <span>Deployed {instance.date_receive || "-"}</span>
+                            <span>Deployed at {instance.date_receive || "-"}</span>
                         </div>
                         {stale && (
                             <Alert variant="warning" className="d-flex align-items-start gap-2 small mb-0 mt-2 py-2">
@@ -111,6 +141,18 @@ const EnvironmentCard = ({
                             </Alert>
                         )}
                         <div className="d-flex align-items-center gap-2 mt-auto pt-3">
+                            {onUndeploy && (
+                                <Button
+                                    variant="light"
+                                    size="sm"
+                                    className="border text-danger d-inline-flex align-items-center gap-1"
+                                    disabled={busy}
+                                    onClick={onUndeploy}
+                                    title={`Undeploy v${training?.version} from ${environment.name}`}
+                                >
+                                    <Stop />
+                                </Button>
+                            )}
                             <Button
                                 variant="light"
                                 size="sm"
@@ -121,40 +163,18 @@ const EnvironmentCard = ({
                             >
                                 <ArrowClockwise />
                             </Button>
-                            <Button
-                                variant="light"
-                                size="sm"
-                                className="border text-danger d-inline-flex align-items-center gap-1"
-                                disabled={busy}
-                                onClick={onUndeploy}
-                                title={`Undeploy v${training?.version} from ${environment.name}`}
-                            >
-                                <XCircle />
-                            </Button>
                             <div className="ms-auto d-flex align-items-center gap-2">
                                 {busy && (
                                     <span className="small text-muted d-inline-flex align-items-center gap-2">
                                         <Spinner animation="border" size="sm" />{busyLabel}
                                     </span>
                                 )}
-                                {onPromote && (
-                                    <Button
-                                        variant="light"
-                                        size="sm"
-                                        className="border d-inline-flex align-items-center gap-1"
-                                        disabled={busy}
-                                        onClick={onPromote}
-                                        title={`Promote v${training?.version} to production`}
-                                    >
-                                        <CloudArrowUp />&nbsp;Promote
-                                    </Button>
-                                )}
-                            </div>
+                                </div>
                         </div>
                     </>
                 ) : (
                     <div className="d-flex flex-column align-items-center justify-content-center text-center text-muted flex-grow-1 py-4">
-                        <CloudArrowUp className="fs-3 mb-2 opacity-50" />
+                        <CloudHaze2 className="fs-3 mb-2 opacity-50" />
                         <p className="mb-1 small fw-bold">Nothing deployed</p>
                         <p className="mb-0 text-muted" style={{ fontSize: "0.7rem", maxWidth: "260px" }}>
                             {environment.description}
@@ -324,7 +344,7 @@ const Publish = () => {
         const action = confirmAction;
         setConfirmAction(null);
         if (!action) return;
-        if (action.type === "deploy") await handleDeploy(action.environment, action.training.id);
+        if (action.type === "deploy" || action.type === "reload") await handleDeploy(action.environment, action.training.id);
         if (action.type === "undeploy") await handleUndeploy(action.environment);
     };
 
@@ -365,11 +385,13 @@ const Publish = () => {
                                 instance={testingInstance}
                                 training={testingInstance ? trainingById[String(testingInstance.training_id)] : null}
                                 stale={isInstanceStale(testingInstance)}
-                                busy={environmentBusy("testing") || environmentBusy("production")}
+                                busy={environmentBusy("testing")}
                                 busyLabel={pendingAction?.type === "undeploy" ? "Undeploying…" : "Deploying…"}
-                                onReload={() => handleDeploy("testing", testingInstance.training_id)}
+                                onReload={() => openConfirm("reload", "testing", trainingById[String(testingInstance.training_id)] || { id: testingInstance.training_id })}
                                 onUndeploy={() => openConfirm("undeploy", "testing", trainingById[String(testingInstance.training_id)])}
                                 onPromote={testingInstance ? () => openConfirm("deploy", "production", trainingById[String(testingInstance.training_id)]) : undefined}
+                                live={Boolean(testingInstance && productionInstance
+                                    && testingInstance.training_id === productionInstance.training_id)}
                             />
                         </Col>
                         <Col lg={6}>
@@ -380,7 +402,7 @@ const Publish = () => {
                                 stale={isInstanceStale(productionInstance)}
                                 busy={environmentBusy("production")}
                                 busyLabel={pendingAction?.type === "undeploy" ? "Undeploying…" : "Deploying…"}
-                                onReload={() => handleDeploy("production", productionInstance.training_id)}
+                                onReload={() => openConfirm("reload", "production", trainingById[String(productionInstance.training_id)] || { id: productionInstance.training_id })}
                                 onUndeploy={() => openConfirm("undeploy", "production", trainingById[String(productionInstance.training_id)])}
                             />
                         </Col>
@@ -412,10 +434,10 @@ const Publish = () => {
                                             <thead>
                                                 <tr>
                                                     <th><Hash className="text-muted" />&nbsp;Version</th>
-                                                    <th><GraphUp className="text-muted" />&nbsp;Accuracy (%)</th>
-                                                    <th><Clock className="text-muted" />&nbsp;Trained</th>
-                                                    <th>Deployment</th>
-                                                    <th style={{ width: "140px" }}>Actions</th>
+                                                    <th><GraphUp className="text-muted" />&nbsp;Test Accuracy (%)</th>
+                                                    <th><Clock className="text-muted" />&nbsp;Trained On</th>
+                                                    <th><HddStack className="text-muted" />&nbsp;Environments</th>
+                                                    <th><Option className="text-muted" />&nbsp;Options</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -456,9 +478,8 @@ const Publish = () => {
                                                                     {deployingHere ? (
                                                                         <Spinner animation="border" size="sm" />
                                                                     ) : (
-                                                                        <CloudArrowUp />
+                                                                        <CloudPlus />
                                                                     )}
-                                                                    &nbsp;Deploy
                                                                 </Button>
                                                             </td>
                                                         </tr>
@@ -479,7 +500,9 @@ const Publish = () => {
                     <Modal.Title className="small fw-bold text-muted">
                         {confirmAction?.type === "undeploy"
                             ? `Undeploy from ${confirmAction.environment}`
-                            : confirmIsRollback
+                            : confirmAction?.type === "reload"
+                                ? `Redeploy in ${confirmAction.environment}`
+                                : confirmIsRollback
                                 ? "Roll back production"
                                 : confirmIsProductionDeploy
                                     ? "Promote to production"
@@ -491,6 +514,11 @@ const Publish = () => {
                         <p className="small">
                             Undeploy v{confirmAction.training?.version} from <strong>{confirmAction.environment}</strong>?
                             The environment will stop serving predictions immediately.
+                        </p>
+                    ) : confirmAction?.type === "reload" ? (
+                        <p className="small">
+                            Redeploy v{confirmAction.training?.version} in <strong>{confirmAction.environment}</strong>?
+                            The instance will restart and serve the latest trained model for this version.
                         </p>
                     ) : confirmIsProductionDeploy ? (
                         <>
@@ -532,11 +560,13 @@ const Publish = () => {
                         >
                             {confirmAction?.type === "undeploy"
                                 ? "UNDEPLOY"
-                                : confirmIsRollback
-                                    ? "ROLL BACK"
-                                    : confirmIsProductionDeploy
-                                        ? "PROMOTE"
-                                        : "DEPLOY"}
+                                : confirmAction?.type === "reload"
+                                    ? "REDEPLOY"
+                                    : confirmIsRollback
+                                        ? "ROLL BACK"
+                                        : confirmIsProductionDeploy
+                                            ? "PROMOTE"
+                                            : "DEPLOY"}
                         </Button>
                     </div>
                 </Modal.Body>

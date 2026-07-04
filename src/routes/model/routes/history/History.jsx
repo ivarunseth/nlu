@@ -591,7 +591,7 @@ const ConfusionMatrix = ({ training, split }) => {
                                     </div>
                                 </th>
                                 {labels.map((label, i) => (
-                                    <th key={i} className="px-2 py-2 border-end border-light-subtle bg-body fw-bold text-muted" title={label} style={{ minWidth: '80px' }}>
+                                    <th key={i} className="px-2 py-2 border-end border-light-subtle bg-body fw-bold text-muted text-truncate bg-body-tertiary" title={label} style={{ minWidth: '80px' }}>
                                         <div className="text-truncate" style={{ maxWidth: '100px', fontSize: '0.7rem' }}>
                                             {label}
                                         </div>
@@ -2089,7 +2089,7 @@ const History = () => {
                                                 </td>
                                                 <td>
                                                     <Link to={`/models/${modelId}/history/${training.id}`} className="text-decoration-none font-monospace">
-                                                        v{training.version}
+                                                        {training.version}
                                                     </Link>
                                                 </td>
                                                 <td>{getTrainingStatusBadge(training.status)}</td>
@@ -2275,7 +2275,7 @@ const History = () => {
                         <>
                             <p className="small">Are you sure you want to delete these {trainingsToDelete.length} training records?</p>
                             <ul className="small text-muted">
-                                {trainingsToDelete.map((training) => <li key={training.id}>v{training.version}</li>)}
+                                {trainingsToDelete.map((training) => <li key={training.id}>{training.version}</li>)}
                             </ul>
                         </>
                     ) : (

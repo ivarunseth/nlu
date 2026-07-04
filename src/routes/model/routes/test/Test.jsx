@@ -1,5 +1,5 @@
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Badge, Button, Card, Col, Form, Row, Spinner, Tab, Tabs } from "react-bootstrap";
+import { useContext, useEffect, useMemo, useState } from "react";
+import { Alert, Badge, Button, Card, Col, Form, Nav, Row, Spinner, Tab } from "react-bootstrap";
 import {
     Clipboard,
     ClipboardCheck,
@@ -22,7 +22,9 @@ import {
     FolderCheck,
     Folder,
     ArrowClockwise,
-    Stop
+    Stop,
+    FilterLeft,
+    Hash
 } from "react-bootstrap-icons";
 import { useParams } from "react-router-dom";
 import { UserContext } from "../../../../contexts/UserContext";
@@ -69,22 +71,24 @@ const MetricStrip = ({
         ? getInstanceStatus(deployedInstance)
         : null;
     const items = [
-        { label: "Environment", value: <span className="font-monospace text-lowercase">{environment}</span>, icon: <Hdd /> },
         {
-            label: "Deployed version",
-            value: deployedVersion && deployedInstance 
-                ? (
-                    <span className="d-flex align-items-center justify-content-between">
-                        <span className="font-monospace">v{deployedVersion}</span>
-                        <span className="d-inline-flex align-items-center gap-2">
-                            {status && (<Badge bg={status.bg}>{status.label}</Badge>)}
-                        </span>
-                    </span>
-                )
-                : <span className="text-muted">none</span>,
-            icon: <Cpu />
+            label: "Environment",
+            value: (
+                <span className="d-flex align-items-center justify-content-between">
+                    <span className="font-monospace text-lowercase">{environment}</span>
+                    {status && (<Badge bg={status.bg}>{status.label}</Badge>)}
+                </span>
+            ),
+            icon: <Hdd />
         },
-        { label: "Trained versions", value: versionCount, icon: <Folder /> },
+        {
+            label: "Version",
+            value: deployedVersion && deployedInstance
+                ? <span className="font-monospace">v{deployedVersion}</span>
+                : <span className="text-muted">none</span>,
+            icon: <Hash />
+        },
+        { label: "Available versions", value: versionCount, icon: <Folder /> },
         {
             label: "Last latency",
             value: latency != null ? <span className="font-monospace">{latency} ms</span> : "-",
@@ -159,7 +163,7 @@ const TokenTags = ({ query, tags }) => {
 
 const PredictionView = ({ prediction, query }) => {
     if (prediction == null) {
-        return <EmptyState icon={<Lightning />}>Run a query to see the prediction.</EmptyState>;
+        return <EmptyState icon={<Lightning />} minHeight="100%">Run a query to see the result.</EmptyState>;
     }
 
     if (typeof prediction === "object" && !Array.isArray(prediction) && prediction.error) {
@@ -277,7 +281,7 @@ const JsonView = ({ data }) => {
     };
 
     return (
-        <div className="position-relative">
+        <div className="position-relative h-100">
             <Button
                 variant="light"
                 size="sm"
@@ -288,8 +292,7 @@ const JsonView = ({ data }) => {
                 <span className="small">{copied ? "Copied" : "Copy"}</span>
             </Button>
             <pre
-                className="p-3 mb-0 bg-body-tertiary border-0 rounded small overflow-auto"
-                style={{ maxHeight: "calc(100vh - 460px)", minHeight: "260px" }}
+                className="p-3 mb-0 bg-body-tertiary border-0 rounded small overflow-auto h-100"
                 dangerouslySetInnerHTML={{ __html: html }}
             />
         </div>
@@ -300,10 +303,6 @@ const Test = () => {
     const { modelId } = useParams();
     const { user } = useContext(UserContext);
     const socket = useSocket();
-    const rooms = useRef(new Set());
-
-    const INSTANCE_ACTIVE_STATUSES = ["PENDING", "RECEIVED", "STARTED"];
-    const INSTANCE_DONE_STATUSES = ["SUCCESS", "FAILURE", "ABORTED", "REVOKED"];
 
     const [trainings, setTrainings] = useState([]);
     const [selectedTrainingId, setSelectedTrainingId] = useState("");
@@ -378,50 +377,35 @@ const Test = () => {
         load();
     }, [user, modelId]);
 
+    // Stay in the task's room for as long as this deployment exists: the
+    // backend reuses the task id when the serving task is lazily restarted,
+    // so an idle (SUCCESS) instance can come back to life under the same id.
+    const deployedTaskId = deployedInstance?.task_id;
     useEffect(() => {
-        if (
-            !user ||
-            !socket ||
-            !socket.connected ||
-            !deployedInstance?.task_id ||
-            !INSTANCE_ACTIVE_STATUSES.includes(deployedInstance.status)
-        ) {
-            return;
-        }
-
-        const activeRooms = rooms.current;
+        if (!user || !socket || !deployedTaskId) return;
 
         const handleStatus = (data) => {
-            if (!activeRooms.has(data.task_id)) return;
-
+            if (data.task_id !== deployedTaskId) return;
             setDeployedInstance(prev =>
-                prev && prev.task_id === data.task_id
-                    ? { ...prev, ...data, task_id: prev.task_id }
+                prev && prev.task_id === deployedTaskId
+                    ? { ...prev, ...data, task_id: deployedTaskId }
                     : prev
             );
-
-            if (INSTANCE_DONE_STATUSES.includes(data.status)) {
-                socket.emit("leave", user.token, data.task_id);
-                activeRooms.delete(data.task_id);
-            }
         };
 
-        socket.on("status", handleStatus);
+        // Rooms don't survive a reconnect, so re-join on every "connect".
+        const join = () => socket.emit("join", user.token, deployedTaskId);
 
-        if (!activeRooms.has(deployedInstance.task_id)) {
-            socket.emit("join", user.token, deployedInstance.task_id);
-            activeRooms.add(deployedInstance.task_id);
-        }
+        socket.on("status", handleStatus);
+        socket.on("connect", join);
+        if (socket.connected) join();
 
         return () => {
             socket.off("status", handleStatus);
-
-            if (activeRooms.has(deployedInstance.task_id)) {
-                socket.emit("leave", user.token, deployedInstance.task_id);
-                activeRooms.delete(deployedInstance.task_id);
-            }
+            socket.off("connect", join);
+            if (socket.connected) socket.emit("leave", user.token, deployedTaskId);
         };
-    }, [user, socket, deployedInstance]);
+    }, [user, socket, deployedTaskId]);
 
     const handleVersionChange = (event) => {
         setSelectedTrainingId(event.target.value);
@@ -561,7 +545,7 @@ const Test = () => {
                                             <Button
                                                 variant="light"
                                                 size="sm"
-                                                className="border d-inline-flex align-items-center flex-shrink-0"
+                                                className="border text-danger d-inline-flex align-items-center flex-shrink-0"
                                                 title={selectedIsDeployed ? "Stop deployed model" : "Load selected version"}
                                                 onClick={selectedIsDeployed ? handleStop : handleDeploy}
                                                 disabled={busy || !selectedTrainingId}
@@ -659,23 +643,32 @@ const Test = () => {
                             icon={<Reply />}
                             title="Response"
                         />
-                        <Card.Body className="p-3">
-                            <Tabs defaultActiveKey="result" className="border-bottom border-light-subtle custom-tabs mb-3">
-                                <Tab eventKey="result" title={<TabTitle icon={<CardText />}>Result</TabTitle>}>
-                                    <div className="pt-3 pe-3 overflow-auto" style={{ maxHeight: "calc(100vh - 460px)", minHeight: "260px" }}>
+                        <Card.Body className="p-3 d-flex flex-column">
+                            <Tab.Container defaultActiveKey="result">
+                                <Nav variant="tabs" className="border-bottom border-light-subtle custom-tabs flex-shrink-0">
+                                    <Nav.Item>
+                                        <Nav.Link eventKey="result"><TabTitle icon={<FilterLeft />}>Result</TabTitle></Nav.Link>
+                                    </Nav.Item>
+                                    <Nav.Item>
+                                        <Nav.Link eventKey="json"><TabTitle icon={<Braces />}>JSON</TabTitle></Nav.Link>
+                                    </Nav.Item>
+                                </Nav>
+                                <Tab.Content
+                                    className="flex-grow-1 pt-3"
+                                    style={{ minHeight: "260px", maxHeight: "calc(100vh - 460px)" }}
+                                >
+                                    <Tab.Pane eventKey="result" className="h-100 overflow-auto no-scrollbar">
                                         <PredictionView prediction={result?.prediction} query={result?.query} />
-                                    </div>
-                                </Tab>
-                                <Tab eventKey="json" title={<TabTitle icon={<Braces />}>JSON</TabTitle>}>
-                                    <div className="pt-3">
+                                    </Tab.Pane>
+                                    <Tab.Pane eventKey="json" className="h-100">
                                         {result ? (
                                             <JsonView data={result.prediction} />
                                         ) : (
-                                            <EmptyState icon={<Braces />}>The raw response will appear here.</EmptyState>
+                                            <EmptyState icon={<Braces />} minHeight="100%">The raw response will appear here.</EmptyState>
                                         )}
-                                    </div>
-                                </Tab>
-                            </Tabs>
+                                    </Tab.Pane>
+                                </Tab.Content>
+                            </Tab.Container>
                         </Card.Body>
                     </Card>
                 </Col>
