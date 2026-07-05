@@ -21,9 +21,27 @@ class Route:
     name: str = ''
     task_id: str = ''
     api_key: str = ''
+    # Per-deployment serving options set from the publish UI. Optional
+    # numerics fall back to the app config when unset (None): ``timeout``
+    # and ``interval`` are read per request by the infer view, the rest by
+    # the serving task at startup.
+    lazy: bool = False
+    cache: bool = True
+    top: int = 1
+    timeout: Optional[float] = None
+    interval: Optional[float] = None
+    batch_size: Optional[int] = None
+    sleep: Optional[float] = None
+    idle_timeout: Optional[float] = None
+    heartbeat_interval: Optional[float] = None
+    heartbeat_ttl: Optional[int] = None
+    output_ttl: Optional[int] = None
 
     def to_mapping(self) -> dict:
-        return {k: ('' if v is None else str(v)) for k, v in asdict(self).items()}
+        mapping = asdict(self)
+        mapping['lazy'] = '1' if self.lazy else '0'
+        mapping['cache'] = '1' if self.cache else '0'
+        return {k: ('' if v is None else str(v)) for k, v in mapping.items()}
 
     @classmethod
     def from_mapping(cls, mapping: dict) -> Optional['Route']:
@@ -36,6 +54,10 @@ class Route:
         }
         if not decoded.get('path') or not decoded.get('model_type'):
             return None
+
+        def number(key, cast, default=None):
+            return cast(float(decoded[key])) if decoded.get(key) else default
+
         return cls(
             path=decoded['path'],
             model_type=decoded['model_type'],
@@ -43,6 +65,17 @@ class Route:
             name=decoded.get('name', ''),
             task_id=decoded.get('task_id', ''),
             api_key=decoded.get('api_key', ''),
+            lazy=decoded.get('lazy', '0') == '1',
+            cache=decoded.get('cache', '1') != '0',
+            top=number('top', int, default=1),
+            timeout=number('timeout', float),
+            interval=number('interval', float),
+            batch_size=number('batch_size', int),
+            sleep=number('sleep', float),
+            idle_timeout=number('idle_timeout', float),
+            heartbeat_interval=number('heartbeat_interval', float),
+            heartbeat_ttl=number('heartbeat_ttl', int),
+            output_ttl=number('output_ttl', int),
         )
 
 
@@ -100,14 +133,20 @@ class Registry:
         raw = self.redis.get(self._output(model_id, key))
         return json.loads(raw.decode('utf-8')) if raw else None
 
-    def push(self, model_id, key, query, **kwargs):
-        message = json.dumps({'id': key, 'query': query, **kwargs}).encode('utf-8')
+    def pull(self, model_id, key):
+        """Fetch an output and delete it, so it is served exactly once."""
+        raw = self.redis.getdel(self._output(model_id, key))
+        return json.loads(raw.decode('utf-8')) if raw else None
+
+    def push(self, model_id, key, data, **kwargs):
+        message = json.dumps({'id': key, 'data': data, **kwargs}).encode('utf-8')
         self.redis.rpush(self._inputs(model_id), message)
 
-    def wait(self, model_id, key, timeout, interval):
+    def wait(self, model_id, key, timeout, interval, pull=False):
+        fetch = self.pull if pull else self.get
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            output = self.get(model_id, key)
+            output = fetch(model_id, key)
             if output:
                 return output
             time.sleep(interval)
@@ -132,28 +171,28 @@ class Registry:
         self.redis.delete(self._alive(model_id), self._starting(model_id))
 
     def pop(self, model_id, batch_size):
-        key = self._inputs(model_id)
+        queue = self._inputs(model_id)
         with self.redis.pipeline() as pipe:
             while True:
                 try:
-                    pipe.watch(key)
-                    raw = pipe.lrange(key, 0, batch_size - 1)
+                    pipe.watch(queue)
+                    raw = pipe.lrange(queue, 0, batch_size - 1)
                     if not raw:
                         pipe.unwatch()
                         return [], [], {}
 
-                    queries, keys, kwargs = [], [], {}
+                    inputs, keys, kwargs = [], [], {}
                     for item in raw:
                         data = json.loads(item.decode('utf-8'))
-                        queries.append(data.pop('query'))
+                        inputs.append(data.pop('data'))
                         keys.append(data.pop('id'))
                         for key_, value in data.items():
                             kwargs.setdefault(key_, []).append(value)
 
                     pipe.multi()
-                    pipe.ltrim(key, len(keys), -1)
+                    pipe.ltrim(queue, len(keys), -1)
                     pipe.execute()
-                    return queries, keys, kwargs
+                    return inputs, keys, kwargs
                 except WatchError:
                     continue
 

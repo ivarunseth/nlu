@@ -1,5 +1,5 @@
 import { useContext, useEffect, useState, useRef, useMemo } from "react";
-import { Alert, Button, ButtonGroup, ButtonToolbar, Col, Row, Form, FormGroup, OverlayTrigger, Popover, Spinner, Table, Pagination, Modal, Tabs, Tab, Badge, Card, InputGroup } from "react-bootstrap";
+import { Alert, Button, ButtonGroup, ButtonToolbar, Col, Row, Form, Spinner, Table, Pagination, Modal, Tabs, Tab, Badge, Card, InputGroup } from "react-bootstrap";
 import {
     BarChart,
     Bug,
@@ -11,10 +11,7 @@ import {
     InfoCircle,
     Sliders,
     Trash,
-    QuestionCircle,
     ArrowClockwise,
-    ChevronLeft,
-    ChevronRight,
     Hash,
     Activity,
     Calendar3,
@@ -325,13 +322,93 @@ const getTrainingStartParameters = (modelType = 'text_classification', training 
     };
 };
 
-const TRAINING_FORM_STEPS = [
-    { key: 'data', label: 'Data' },
-    { key: 'model', label: 'Model' },
-    { key: 'schedule', label: 'Schedule' },
-    { key: 'callbacks', label: 'Callbacks' },
-    { key: 'export', label: 'Export' }
+// Plain-language descriptions shown under each training setting.
+const PARAMETER_DOCS = {
+    test_split: 'Fraction of the dataset held out to evaluate the trained model.',
+    validation_split: 'Fraction of the training data used to validate the model after each epoch.',
+    architecture: 'Network architecture the model is built with. Changing it resets the settings below to the architecture defaults.',
+    pretrained_model: 'Pretrained encoder the transformer is initialised from.',
+    trainable: 'Fine-tune the pretrained encoder weights during training. Slower per epoch, but usually more accurate.',
+    max_seq_len: 'Maximum number of tokens per example. Longer inputs are truncated.',
+    sequence_length: 'Maximum number of tokens per example. Longer inputs are truncated, shorter ones padded.',
+    max_tokens: 'Maximum vocabulary size of the tokenizer. Less frequent tokens are dropped.',
+    embedding_dims: 'Size of the learned word embedding vectors.',
+    lstm_dims: 'Number of units in the LSTM layer.',
+    units: 'Number of units in the dense layer on top of the encoder.',
+    dropout: 'Fraction of units randomly dropped during training to reduce overfitting.',
+    epochs: 'Maximum number of passes over the training data.',
+    batch_size: 'Number of examples processed per optimisation step.',
+    learning_rate: 'Step size the optimiser uses to update the weights.',
+    early_stopping: 'Stop training early once the monitored metric stops improving, keeping the best weights.',
+    monitor: 'Metric watched by early stopping.',
+    patience: 'Epochs without improvement before training is stopped.',
+    pruning: 'Gradually zero out low-magnitude weights during training to produce a smaller, faster model.',
+    initial_sparsity: 'Fraction of weights zeroed when pruning begins.',
+    final_sparsity: 'Fraction of weights zeroed by the end of pruning.',
+    pruning_begin_step: 'Training step at which pruning starts.',
+    pruning_end_step: 'Training step at which pruning stops.',
+    pruning_frequency: 'Number of steps between sparsity updates.',
+    weight_decay_rate: 'L2 penalty applied by the optimiser to keep weights small. Zero disables it.',
+    num_warmup_steps: 'Steps over which the learning rate ramps up from zero before decaying.',
+    save_format: 'Format the trained model is exported in for download and serving.'
+};
+
+const ARCHITECTURE_LABELS = {
+    deep_neural_network: 'Deep neural network',
+    recurrent_neural_network: 'Recurrent neural network (LSTM)',
+    transformer: 'Transformer'
+};
+
+// Display names used in the start confirmation summary.
+const PARAMETER_LABELS = {
+    architecture: 'Architecture',
+    pretrained_model: 'Pretrained model',
+    test_split: 'Test split',
+    validation_split: 'Validation split',
+    epochs: 'Epochs',
+    batch_size: 'Batch size',
+    max_tokens: 'Max tokens',
+    sequence_length: 'Sequence length',
+    max_seq_len: 'Sequence length',
+    embedding_dims: 'Embedding dimensions',
+    lstm_dims: 'LSTM dimensions',
+    units: 'Dense units',
+    trainable: 'Trainable encoder',
+    dropout: 'Dropout rate',
+    l2: 'L2 regularisation',
+    learning_rate: 'Learning rate',
+    weight_decay_rate: 'Weight decay',
+    num_warmup_steps: 'Warmup steps',
+    early_stopping: 'Early stopping',
+    monitor: 'Monitor',
+    patience: 'Patience',
+    pruning: 'Weight pruning',
+    initial_sparsity: 'Initial sparsity',
+    final_sparsity: 'Final sparsity',
+    pruning_begin_step: 'Pruning begin step',
+    pruning_end_step: 'Pruning end step',
+    pruning_frequency: 'Pruning frequency',
+    save_format: 'Save format'
+};
+
+const SAVE_FORMAT_OPTIONS = [
+    ['tf', 'TensorFlow checkpoint (tf)'],
+    ['saved_model', 'TensorFlow SavedModel (saved_model)'],
+    ['h5', 'Keras HDF5 (h5)'],
+    ['weights', 'Weights only (weights)'],
+    ['tflite', 'TensorFlow Lite (tflite)'],
+    ['onnx', 'ONNX (onnx)']
 ];
+
+// A labelled training setting with its description, mirroring the deploy
+// configuration form in Publish.
+const TrainingField = ({ id, label, help, children }) => (
+    <Form.Group className="mb-3" controlId={id}>
+        <Form.Label className="small fw-bold mb-1">{label}</Form.Label>
+        {children}
+        <Form.Text className="text-muted d-block" style={{ fontSize: '0.7rem' }}>{help}</Form.Text>
+    </Form.Group>
+);
 
 const TRAINING_ACTIVE_STATUSES = ['PENDING', 'RECEIVED', 'STARTED'];
 const TRAINING_DONE_STATUSES = ['SUCCESS', 'FAILURE', 'ABORTED', 'REVOKED'];
@@ -1377,7 +1454,8 @@ const History = () => {
     const [currentTraining, setCurrentTraining] = useState(null);
     const [activeTrainings, setActiveTrainings] = useState([]);
     const [showParameters, setShowParameters] = useState(false);
-    const [trainingStep, setTrainingStep] = useState(0);
+    const [trainingTab, setTrainingTab] = useState('data');
+    const [showStartConfirmation, setShowStartConfirmation] = useState(false);
     const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
     const [trainingsToDelete, setTrainingsToDelete] = useState([]);
     const [selectedIds, setSelectedIds] = useState(new Set());
@@ -1469,10 +1547,11 @@ const History = () => {
     };
 
     useEffect(() => {
-        if (!showParameters) {
+        // Don't reset while the form is open or awaiting confirmation.
+        if (!showParameters && !showStartConfirmation) {
             setParameters(getTrainingStartParameters(model?.type, currentTraining));
         }
-    }, [model?.type, currentTraining?.id, showParameters]);
+    }, [model?.type, currentTraining?.id, showParameters, showStartConfirmation]);
 
     const architectureOptions = ARCHITECTURES_BY_MODEL[model?.type || 'text_classification'] || ['deep_neural_network'];
     const monitorOptions = paramters.architecture === 'transformer' && model?.type !== 'text_classification'
@@ -1505,16 +1584,30 @@ const History = () => {
 
     const handleOpenStartTraining = () => {
         setParameters(getTrainingStartParameters(model?.type, currentTraining));
-        setTrainingStep(0);
+        setTrainingTab('data');
         setShowParameters(true);
     };
 
     const handleCloseStartTraining = () => {
         if (startingTraining) return;
         setShowParameters(false);
-        setTrainingStep(0);
     };
 
+    // CONTINUE swaps the form for the start confirmation, keeping the edits.
+    const handleContinueTraining = (event) => {
+        event.preventDefault();
+        setShowParameters(false);
+        setShowStartConfirmation(true);
+    };
+
+    // Going back (or dismissing the confirmation) returns to the form.
+    const handleBackToParameters = () => {
+        if (startingTraining) return;
+        setShowStartConfirmation(false);
+        setShowParameters(true);
+    };
+
+    // Precise values are typed; bounded fractions use a slider instead.
     const renderNumberControl = (field, label, options = {}) => {
         const metadata = ARCHITECTURE_DEFAULTS[paramters.architecture]?.[field] || {};
         const {
@@ -1526,205 +1619,63 @@ const History = () => {
         } = options;
 
         return (
-            <FormGroup className="mb-4">
-                <div className="d-flex justify-content-between align-items-center gap-3 mb-2">
-                    <Form.Label className="small fw-semibold text-muted mb-0">
-                        {label}
-                    </Form.Label>
-                    <Form.Control
-                        disabled={disabled}
-                        type='number'
-                        min={min}
-                        max={max}
-                        step={step}
-                        value={paramters[field]}
-                        className="form-control-sm text-end"
-                        style={{ width: '7rem' }}
-                        onChange={(e) => updateParameter(field, parse(e.target.value))}
-                    />
-                </div>
-                <Form.Range
+            <TrainingField id={`training-${field}`} label={label} help={PARAMETER_DOCS[field]}>
+                <Form.Control
                     disabled={disabled}
+                    type="number"
+                    size="sm"
                     min={min}
                     max={max}
                     step={step}
                     value={paramters[field]}
                     onChange={(e) => updateParameter(field, parse(e.target.value))}
                 />
-            </FormGroup>
+            </TrainingField>
         );
     };
 
-    const activeTrainingFormStep = TRAINING_FORM_STEPS[trainingStep];
-    const canGoToPreviousTrainingStep = trainingStep > 0 && !startingTraining;
-    const canGoToNextTrainingStep = trainingStep < TRAINING_FORM_STEPS.length - 1 && !startingTraining;
-
-    const goToTrainingStep = (step) => {
-        if (startingTraining) return;
-        setTrainingStep(Math.min(Math.max(step, 0), TRAINING_FORM_STEPS.length - 1));
-    };
-
-    const renderStartTrainingStep = () => {
-        if (trainingStep === 0) {
-            return (
-                <>
-                    {/* <p className="small text-muted mb-3">
-                        {currentTraining?.kwargs
-                            ? `Using parameters from version ${currentTraining.version}.`
-                            : 'Using default parameters for the first training run.'}
-                    </p> */}
-                    {renderNumberControl('test_split', 'Train split *')}
-                    {renderNumberControl('validation_split', 'Validation split')}
-                </>
-            );
-        }
-
-        if (trainingStep === 1) {
-            return (
-                <>
-                    <FormGroup className="mb-4">
-                        <Form.Label className="small fw-semibold text-muted">
-                            Architecture
-                        </Form.Label>
-                        <Form.Select
-                            value={paramters.architecture}
-                            onChange={(e) => handleArchitectureChange(e.target.value)}
-                            className="form-select-sm"
-                        >
-                            {architectureOptions.map((architecture) => (
-                                <option key={architecture} value={architecture}>{architecture}</option>
-                            ))}
-                        </Form.Select>
-                    </FormGroup>
-                    {paramters.architecture === 'transformer' && (
-                        <>
-                            <FormGroup className="mb-4">
-                                <Form.Label className="small fw-semibold text-muted">Pretrained model</Form.Label>
-                                <Form.Select value={paramters.pretrained_model} onChange={(e) => updateParameter('pretrained_model', e.target.value)} className="form-select-sm">
-                                    {PRETRAINED_MODELS.map((pretrainedModel) => <option key={pretrainedModel} value={pretrainedModel}>{pretrainedModel}</option>)}
-                                </Form.Select>
-                            </FormGroup>
-                            <FormGroup className="mb-4">
-                                <div className="d-flex justify-content-between align-items-center">
-                                    <Form.Label className="small fw-semibold text-muted mb-0">Trainable encoder</Form.Label>
-                                    <Form.Check type="switch" checked={Boolean(paramters.trainable)} onChange={(e) => updateParameter('trainable', e.target.checked)} />
-                                </div>
-                            </FormGroup>
-                        </>
-                    )}
-                    {paramters.architecture === 'transformer'
-                        ? renderNumberControl('max_seq_len', 'Sequence length')
-                        : renderNumberControl('sequence_length', 'Sequence length')}
-                    {['deep_neural_network', 'recurrent_neural_network'].includes(paramters.architecture) && renderNumberControl('max_tokens', 'Max tokens')}
-                    {['deep_neural_network', 'recurrent_neural_network'].includes(paramters.architecture) && renderNumberControl('embedding_dims', 'Embedding dimension')}
-                    {paramters.architecture === 'recurrent_neural_network' && renderNumberControl('lstm_dims', 'LSTM dimensions')}
-                    {paramters.architecture === 'transformer' && model?.type !== 'named_entity_recognition' && renderNumberControl('units', 'Dense units')}
-                    {paramters.architecture !== 'transformer' || model?.type !== 'named_entity_recognition'
-                        ? renderNumberControl('dropout', 'Dropout rate')
-                        : null}
-                </>
-            );
-        }
-
-        if (trainingStep === 2) {
-            return (
-                <>
-                    {renderNumberControl('epochs', 'Epochs')}
-                    {renderNumberControl('batch_size', 'Batch size')}
-                    {renderNumberControl('learning_rate', 'Learning rate')}
-                </>
-            );
-        }
-
-        if (trainingStep === 3) {
-            return (
-                <>
-                <FormGroup className="mb-4">
-                    <div className="d-flex justify-content-between align-items-center">
-                        <Form.Label className="small fw-semibold text-muted mb-0">
-                            Early stopping
-                        </Form.Label>
-                        <Form.Check
-                            type='switch'
-                            onChange={(e) => updateParameter('early_stopping', e.target.checked)}
-                            checked={paramters.early_stopping}
-                        />
-                    </div>
-                </FormGroup>
-                {paramters.early_stopping && (
-                    <>
-                        <FormGroup className="mb-4">
-                            <Form.Label className="small fw-semibold text-muted">
-                                Monitor
-                            </Form.Label>
-                            <Form.Select
-                                value={paramters.monitor}
-                                onChange={(e) => updateParameter('monitor', e.target.value)}
-                                className="form-select-sm"
-                            >
-                                {monitorOptions.map(([value, label]) => (
-                                    <option key={value} value={value}>{label}</option>
-                                ))}
-                            </Form.Select>
-                        </FormGroup>
-                        {renderNumberControl('patience', 'Patience')}
-                    </>
-                )}
-                {model?.type === 'text_classification' && (
-                    <>
-                        <FormGroup className="mb-4">
-                            <div className="d-flex justify-content-between align-items-center">
-                                <Form.Label className="small fw-semibold text-muted mb-0">Pruning</Form.Label>
-                                <Form.Check type="switch" checked={Boolean(paramters.pruning)} onChange={(e) => updateParameter('pruning', e.target.checked)} />
-                            </div>
-                        </FormGroup>
-                        {paramters.pruning && (
-                            <>
-                                {renderNumberControl('initial_sparsity', 'Initial sparsity')}
-                                {renderNumberControl('final_sparsity', 'Final sparsity')}
-                                {renderNumberControl('pruning_begin_step', 'Begin step')}
-                                {renderNumberControl('pruning_end_step', 'End step')}
-                                {renderNumberControl('pruning_frequency', 'Update frequency')}
-                            </>
-                        )}
-                    </>
-                )}
-                {renderNumberControl('weight_decay_rate', 'Weight decay')}
-                {renderNumberControl('num_warmup_steps', 'Warmup steps')}
-                </>
-            );
-        }
+    const renderSliderControl = (field, label, options = {}) => {
+        const metadata = ARCHITECTURE_DEFAULTS[paramters.architecture]?.[field] || {};
+        const { disabled = false } = options;
 
         return (
-            <>
-                <FormGroup className="mb-4">
-                    <Form.Label className="small fw-semibold text-muted">
-                        Save format
-                    </Form.Label>
-                    <Form.Select
-                        value={paramters.save_format}
-                        onChange={(e) => updateParameter('save_format', e.target.value)}
-                        className="form-select-sm"
-                    >
-                        <option value='tf'>tf</option>
-                        <option value='saved_model'>saved_model</option>
-                        <option value='h5'>h5</option>
-                        <option value='weights'>weights</option>
-                        <option value='tflite'>tflite</option>
-                        <option value='onnx'>onnx</option>
-                    </Form.Select>
-                </FormGroup>
-            </>
+            <Form.Group className="mb-3" controlId={`training-${field}`}>
+                <div className="d-flex justify-content-between align-items-center mb-1">
+                    <Form.Label className="small fw-bold mb-0">{label}</Form.Label>
+                    <span className="small text-muted font-monospace">{paramters[field]}</span>
+                </div>
+                <Form.Range
+                    disabled={disabled}
+                    min={metadata.min}
+                    max={metadata.max}
+                    step={metadata.step}
+                    value={paramters[field]}
+                    onChange={(e) => updateParameter(field, parseFloat(e.target.value))}
+                />
+                <Form.Text className="text-muted d-block" style={{ fontSize: '0.7rem' }}>
+                    {PARAMETER_DOCS[field]}
+                </Form.Text>
+            </Form.Group>
         );
     };
 
-    const handleTrain = async (event) => {
-        event?.preventDefault();
-        if (trainingStep < TRAINING_FORM_STEPS.length - 1) {
-            goToTrainingStep(trainingStep + 1);
-            return;
-        }
+    const renderSwitchControl = (field, label) => (
+        <>
+            <Form.Check
+                type="switch"
+                id={`training-${field}`}
+                className="small"
+                label={label}
+                checked={Boolean(paramters[field])}
+                onChange={(e) => updateParameter(field, e.target.checked)}
+            />
+            <Form.Text className="text-muted d-block mb-3" style={{ fontSize: '0.7rem' }}>
+                {PARAMETER_DOCS[field]}
+            </Form.Text>
+        </>
+    );
 
+    const handleTrain = async () => {
         try {
             setStartingTraining(true);
             const headers = { "Authorization": `Bearer ${user.token}` };
@@ -1742,14 +1693,26 @@ const History = () => {
             } else {
                 setPage(1);
             }
-            setShowParameters(false);
-            setTrainingStep(0);
+            setShowStartConfirmation(false);
         } catch (error) {
             setAlert({ variant: 'danger', message: error.response?.data?.error || error.message });
         } finally {
             setStartingTraining(false);
         }
     };
+
+    // Every parameter sent to the server, recapped in the start confirmation.
+    const formatSummaryValue = (field, value) => {
+        if (field === 'architecture') return ARCHITECTURE_LABELS[value] || value;
+        if (typeof value === 'boolean') return value ? 'on' : 'off';
+        return String(value);
+    };
+
+    const trainingSummary = Object.entries(paramters).map(([field, value]) => [
+        field,
+        PARAMETER_LABELS[field] || field.replace(/_/g, ' '),
+        formatSummaryValue(field, value)
+    ]);
 
     const handleDownload = async (training) => {
         try {
@@ -2154,87 +2117,185 @@ const History = () => {
                         </Pagination>}
                 </Col>
             </Row>
-            <Modal size="lg" centered show={showParameters} onHide={handleCloseStartTraining}>
-                <Modal.Header closeButton={!startingTraining}>
-                    <Modal.Title className="small fw-bold text-muted">
-                        Training&nbsp;<OverlayTrigger
-                            placement='bottom'
-                            overlay={
-                                <Popover>
-                                    <Popover.Header as="h3"><InfoCircle />&nbsp;Start training</Popover.Header>
-                                    <Popover.Body>
-                                        Review the training configuration before creating a new training version.
-                                    </Popover.Body>
-                                </Popover>
-                            }
-                        >
-                            <QuestionCircle />
-                        </OverlayTrigger>
+            <Modal size="lg" centered scrollable show={showParameters} onHide={handleCloseStartTraining}>
+                <Modal.Header closeButton>
+                    <Modal.Title className="small fw-bold text-muted d-inline-flex align-items-center gap-2">
+                        <Sliders2 /> Training configuration
                     </Modal.Title>
                 </Modal.Header>
-                <Form onSubmit={handleTrain}>
+                <Form onSubmit={handleContinueTraining}>
                     <Modal.Body>
-                        <Tabs
-                            activeKey={activeTrainingFormStep.key}
-                            onSelect={(key) => goToTrainingStep(TRAINING_FORM_STEPS.findIndex(step => step.key === key))}
-                            variant="underline"
-                            className="mb-4 small nav-justified"
-                        >
-                            {TRAINING_FORM_STEPS.map((step) => (
-                                <Tab
-                                    key={step.key}
-                                    eventKey={step.key}
-                                    title={step.label}
-                                />
-                            ))}
-                        </Tabs>
-                        <div style={{ minHeight: '22rem' }}>
-                            {renderStartTrainingStep()}
-                        </div>
-                        {trainingStep < TRAINING_FORM_STEPS.length - 1 ? (
-                            <div className="d-flex justify-content-between align-items-center mt-2">
-                                <Button
-                                    variant="link"
-                                    type="button"
-                                    aria-label="Previous section"
-                                    title="Previous section"
-                                    onClick={() => goToTrainingStep(trainingStep - 1)}
-                                    disabled={!canGoToPreviousTrainingStep}
-                                    className="text-decoration-none px-0"
-                                >
-                                    <ChevronLeft size={24} />
-                                </Button>
-                                <Button
-                                    variant="link"
-                                    type="button"
-                                    aria-label="Next section"
-                                    title="Next section"
-                                    onClick={() => goToTrainingStep(trainingStep + 1)}
-                                    disabled={!canGoToNextTrainingStep}
-                                    className="text-decoration-none px-0"
-                                >
-                                    <ChevronRight size={24} />
-                                </Button>
-                            </div>
-                        ) : (
-                            <div className="d-flex justify-content-end mt-2">
-                                <Button
-                                    variant="light"
-                                    size="sm"
-                                    type="submit"
-                                    className="small border"
-                                    disabled={startingTraining}
-                                >
-                                    {startingTraining ? (
-                                        <><Spinner animation="border" size="sm" />&nbsp;STARTING...</>
-                                    ) : (
-                                        'START TRAINING'
+                        <div style={{ minHeight: '18rem' }}>
+                            <Tabs
+                                variant="pills"
+                                activeKey={trainingTab}
+                                onSelect={(key) => setTrainingTab(key)}
+                                className="small mb-3"
+                                justify
+                            >
+                                <Tab eventKey="data" title="Data">
+                                    <Row>
+                                        <Col sm={6}>{renderSliderControl('test_split', 'Test split')}</Col>
+                                        <Col sm={6}>{renderSliderControl('validation_split', 'Validation split')}</Col>
+                                    </Row>
+                                </Tab>
+                                <Tab eventKey="model" title="Model">
+                                    <TrainingField id="training-architecture" label="Architecture" help={PARAMETER_DOCS.architecture}>
+                                        <Form.Select
+                                            size="sm"
+                                            value={paramters.architecture}
+                                            onChange={(e) => handleArchitectureChange(e.target.value)}
+                                        >
+                                            {architectureOptions.map((architecture) => (
+                                                <option key={architecture} value={architecture}>
+                                                    {ARCHITECTURE_LABELS[architecture] || architecture}
+                                                </option>
+                                            ))}
+                                        </Form.Select>
+                                    </TrainingField>
+                                    {paramters.architecture === 'transformer' && (
+                                        <>
+                                            <TrainingField id="training-pretrained-model" label="Pretrained model" help={PARAMETER_DOCS.pretrained_model}>
+                                                <Form.Select
+                                                    size="sm"
+                                                    value={paramters.pretrained_model}
+                                                    onChange={(e) => updateParameter('pretrained_model', e.target.value)}
+                                                >
+                                                    {PRETRAINED_MODELS.map((pretrainedModel) => (
+                                                        <option key={pretrainedModel} value={pretrainedModel}>{pretrainedModel}</option>
+                                                    ))}
+                                                </Form.Select>
+                                            </TrainingField>
+                                            {renderSwitchControl('trainable', 'Trainable encoder')}
+                                        </>
                                     )}
-                                </Button>
-                            </div>
-                        )}
+                                    <Row>
+                                        <Col sm={6}>
+                                            {paramters.architecture === 'transformer'
+                                                ? renderNumberControl('max_seq_len', 'Sequence length')
+                                                : renderNumberControl('sequence_length', 'Sequence length')}
+                                        </Col>
+                                        {['deep_neural_network', 'recurrent_neural_network'].includes(paramters.architecture) && (
+                                            <>
+                                                <Col sm={6}>{renderNumberControl('max_tokens', 'Max tokens')}</Col>
+                                                <Col sm={6}>{renderNumberControl('embedding_dims', 'Embedding dimensions')}</Col>
+                                            </>
+                                        )}
+                                        {paramters.architecture === 'recurrent_neural_network' && (
+                                            <Col sm={6}>{renderNumberControl('lstm_dims', 'LSTM dimensions')}</Col>
+                                        )}
+                                        {paramters.architecture === 'transformer' && model?.type !== 'named_entity_recognition' && (
+                                            <Col sm={6}>{renderNumberControl('units', 'Dense units')}</Col>
+                                        )}
+                                        {(paramters.architecture !== 'transformer' || model?.type !== 'named_entity_recognition') && (
+                                            <Col sm={6}>{renderSliderControl('dropout', 'Dropout rate')}</Col>
+                                        )}
+                                    </Row>
+                                </Tab>
+                                <Tab eventKey="schedule" title="Schedule">
+                                    <Row>
+                                        <Col sm={6}>{renderNumberControl('epochs', 'Epochs')}</Col>
+                                        <Col sm={6}>{renderNumberControl('batch_size', 'Batch size')}</Col>
+                                        <Col sm={6}>{renderNumberControl('learning_rate', 'Learning rate')}</Col>
+                                    </Row>
+                                </Tab>
+                                <Tab eventKey="callbacks" title="Callbacks">
+                                    {renderSwitchControl('early_stopping', 'Early stopping')}
+                                    {paramters.early_stopping && (
+                                        <Row>
+                                            <Col sm={6}>
+                                                <TrainingField id="training-monitor" label="Monitor" help={PARAMETER_DOCS.monitor}>
+                                                    <Form.Select
+                                                        size="sm"
+                                                        value={paramters.monitor}
+                                                        onChange={(e) => updateParameter('monitor', e.target.value)}
+                                                    >
+                                                        {monitorOptions.map(([value, label]) => (
+                                                            <option key={value} value={value}>{label}</option>
+                                                        ))}
+                                                    </Form.Select>
+                                                </TrainingField>
+                                            </Col>
+                                            <Col sm={6}>{renderNumberControl('patience', 'Patience')}</Col>
+                                        </Row>
+                                    )}
+                                    {model?.type === 'text_classification' && (
+                                        <>
+                                            {renderSwitchControl('pruning', 'Weight pruning')}
+                                            {paramters.pruning && (
+                                                <Row>
+                                                    <Col sm={6}>{renderSliderControl('initial_sparsity', 'Initial sparsity')}</Col>
+                                                    <Col sm={6}>{renderSliderControl('final_sparsity', 'Final sparsity')}</Col>
+                                                    <Col sm={6}>{renderNumberControl('pruning_begin_step', 'Begin step')}</Col>
+                                                    <Col sm={6}>{renderNumberControl('pruning_end_step', 'End step')}</Col>
+                                                    <Col sm={6}>{renderNumberControl('pruning_frequency', 'Update frequency')}</Col>
+                                                </Row>
+                                            )}
+                                        </>
+                                    )}
+                                    <Row>
+                                        <Col sm={6}>{renderNumberControl('weight_decay_rate', 'Weight decay')}</Col>
+                                        <Col sm={6}>{renderNumberControl('num_warmup_steps', 'Warmup steps')}</Col>
+                                    </Row>
+                                </Tab>
+                                <Tab eventKey="export" title="Export">
+                                    <TrainingField id="training-save-format" label="Save format" help={PARAMETER_DOCS.save_format}>
+                                        <Form.Select
+                                            size="sm"
+                                            value={paramters.save_format}
+                                            onChange={(e) => updateParameter('save_format', e.target.value)}
+                                        >
+                                            {SAVE_FORMAT_OPTIONS.map(([value, label]) => (
+                                                <option key={value} value={value}>{label}</option>
+                                            ))}
+                                        </Form.Select>
+                                    </TrainingField>
+                                </Tab>
+                            </Tabs>
+                        </div>
+                        <div className="d-flex justify-content-end gap-2">
+                            <Button variant="light" size="sm" className="border small" onClick={handleCloseStartTraining}>CANCEL</Button>
+                            <Button variant="primary" size="sm" className="small" type="submit">CONTINUE</Button>
+                        </div>
                     </Modal.Body>
                 </Form>
+            </Modal>
+            <Modal size="lg" centered scrollable show={showStartConfirmation} onHide={handleBackToParameters}>
+                <Modal.Header closeButton={!startingTraining}>
+                    <Modal.Title className="small fw-bold text-muted">Start training</Modal.Title>
+                </Modal.Header>
+                <Modal.Body>
+                    <p className="small">
+                        Start a new training run with this configuration? A new version will be
+                        created and queued right away.
+                    </p>
+                    <div className="border border-light-subtle rounded mb-3 overflow-auto" style={{ maxHeight: '50vh' }}>
+                        <Row className="g-0">
+                            {trainingSummary.map(([field, label, value], index) => (
+                                <Col sm={6} key={field}>
+                                    <div
+                                        className={`d-flex justify-content-between gap-3 px-3 py-2 small${index > 1 ? ' border-top border-light-subtle' : ''}${index % 2 === 1 ? ' border-start border-light-subtle' : ''}`}
+                                    >
+                                        <span className="text-muted fw-bold">{label}</span>
+                                        <span className="font-monospace text-truncate" title={value}>{value}</span>
+                                    </div>
+                                </Col>
+                            ))}
+                        </Row>
+                    </div>
+                    <div className="d-flex justify-content-end gap-2">
+                        <Button variant="light" size="sm" className="border small" onClick={handleBackToParameters} disabled={startingTraining}>
+                            BACK
+                        </Button>
+                        <Button variant="primary" size="sm" className="small" onClick={handleTrain} disabled={startingTraining}>
+                            {startingTraining ? (
+                                <><Spinner animation="border" size="sm" />&nbsp;STARTING...</>
+                            ) : (
+                                'START TRAINING'
+                            )}
+                        </Button>
+                    </div>
+                </Modal.Body>
             </Modal>
             <Modal centered show={Boolean(trainingAction)} onHide={() => setTrainingAction(null)}>
                 <Modal.Header closeButton>

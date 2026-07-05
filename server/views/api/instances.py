@@ -1,6 +1,7 @@
 from flask import request, g, abort, current_app
 
 from ...auth import token_auth
+from ...database import Instance
 from ...utils import generate_secret
 
 from ... import db
@@ -32,8 +33,15 @@ def create_instance(modelId):
     training_id = request.args.get('training_id')
     if not training_id:
         abort(400, 'training_id is required')
-    config = request.get_json() or {}
-    model.publish(training_id, config, prewarm=True)
+    data = request.get_json() or {}
+    # A deployment config may ride along with the environment flags.
+    # Validate it before publish so no deployment is torn down for a
+    # request that would be rejected.
+    config = data.pop('config', None)
+    if config is not None:
+        environment = next((name for name, enabled in data.items() if enabled), None)
+        config = Instance.clean(config, environment)
+    model.publish(training_id, data, params=config)
     db.session.commit()
     return {'instances': [instance.to_dict() for instance in model.instances.all()]}, 200
 
@@ -51,6 +59,11 @@ def update_instance(modelId, instanceId):
     if 'api_key' in data:
         # Keys are server-generated; submitting the field requests a rotation.
         instance.api_key = generate_secret(current_app.config['INFERENCE_API_KEY_NBYTES'])
+    if 'config' in data:
+        if instance.environment.name == 'development':
+            # Development deployments always run the default configuration.
+            abort(400, 'Deployments in development are not configurable')
+        instance.configure(data['config'])
     db.session.commit()
     return {'instance': instance.to_dict()}, 200
 

@@ -170,7 +170,7 @@ class Model(db.Model):
         file.seek(0)
         return file
 
-    def publish(self, training_id, config, **kwargs):
+    def publish(self, training_id, config, params=None, **kwargs):
         training = self.trainings.filter_by(id=training_id).first()
         if not training:
             abort(400, 'Training not found: %s' % training_id)
@@ -186,8 +186,13 @@ class Model(db.Model):
             instance = self.instances.filter(Instance.environment == environment).first()
             
             if config[environment.name]:
-                api_key = None
+                # Keep the key and task id stable across redeploys, and the
+                # deployment config stable across reloads of the environment.
+                api_key, carried, task_id = None, None, None
                 if instance:
+                    # Capture the id before forget() clears it, so the
+                    # recreated instance keeps serving under the same one.
+                    task_id = instance.task_id
                     instance_task = instance._get_task()
                     if instance_task:
                         if not instance.ready(instance_task):
@@ -197,10 +202,18 @@ class Model(db.Model):
                             instance.stop(instance_task)
                         instance.forget(instance_task)
                     api_key = instance.api_key
+                    carried = instance.config
                     db.session.delete(instance)
                     db.session.flush()
 
-                instance = Instance.create(environment, self, training, api_key=api_key)
+                # Development always runs the defaults; elsewhere an explicit
+                # config from the request wins over the carried one.
+                if environment.name == 'development':
+                    carried = None
+                elif params is not None:
+                    carried = params
+
+                instance = Instance.create(environment, self, training, api_key=api_key, config=carried, task_id=task_id)
                 db.session.add(instance)
                 instance.start(**kwargs)
             
@@ -485,6 +498,10 @@ class Instance(db.Model):
     training_id = db.Column(db.Integer, db.ForeignKey('trainings.id'))
     
     task_id = db.Column(db.String(155), unique=True, nullable=True)
+    # Deployment configuration, always complete: instances are created with
+    # environment-aware defaults filled in under whatever the user chose.
+    config = db.Column(db.JSON, nullable=False)
+
     _api_key = db.Column('api_key', db.String(64), unique=True, nullable=True)
 
     date_receive = db.Column(db.Integer, default=timestamp, nullable=True)
@@ -510,18 +527,127 @@ class Instance(db.Model):
         # Keep the live route in sync. On a fresh instance the foreign keys
         # are still unset and start() publishes the route with the key.
         if self.environment_id is not None and self.model_id:
-            registry = registry_for(self.environment.name)
-            route = registry.route(self.model_id)
-            if route:
-                registry.publish(self.model_id, replace(route, api_key=api_key))
+            self._sync(api_key=api_key)
+
+    def _sync(self, **changes):
+        """Rewrite the published route with ``changes``, if one exists."""
+        registry = registry_for(self.environment.name)
+        route = registry.route(self.model_id)
+        if route:
+            registry.publish(self.model_id, replace(route, **changes))
+
+    # Options the serving task reads at startup; changing one requires a
+    # restart, unlike the request options the infer view reads per request.
+    TASK_CONFIG_FIELDS = (
+        'lazy', 'batch_size', 'sleep', 'idle_timeout',
+        'heartbeat_interval', 'heartbeat_ttl', 'output_ttl',
+    )
 
     @staticmethod
-    def create(environment, model, training, api_key=None):
+    def default_options(environment=None):
+        """The default deployment configuration for an environment.
+
+        Development deployments load lazily: models come and go there at
+        unpredictable times and only a few reach the higher environments,
+        so a model should occupy a worker only while actually being tested.
+        """
+        heartbeat_interval = current_app.config['INFERENCE_HEARTBEAT_INTERVAL']
+        return {
+            'lazy': environment == 'development',
+            'cache': True,
+            'top': 1,
+            'timeout': current_app.config['INFERENCE_REQUEST_TIMEOUT'],
+            'interval': current_app.config['INFERENCE_POLL_INTERVAL'],
+            'batch_size': current_app.config['INFERENCE_BATCH_SIZE'],
+            'sleep': current_app.config['INFERENCE_SLEEP'],
+            'idle_timeout': current_app.config['INFERENCE_IDLE_TIMEOUT'],
+            'heartbeat_interval': heartbeat_interval,
+            'heartbeat_ttl': max(int(heartbeat_interval * 3), 1),
+            'output_ttl': current_app.config['INFERENCE_OUTPUT_TTL'],
+        }
+
+    @property
+    def _config(self):
+        return {**Instance.default_options(self.environment.name), **(self.config or {})}
+
+    def options(self):
+        """The serving options carried into this deployment's route."""
+        return {field: self._config[field] for field in (
+            'lazy', 'cache', 'top', 'timeout', 'interval', 'batch_size', 'sleep',
+            'idle_timeout', 'heartbeat_interval', 'heartbeat_ttl', 'output_ttl',
+        )}
+
+    @staticmethod
+    def clean(data, environment=None):
+        """Validate a config payload and normalize it over the defaults."""
+        if not isinstance(data, dict):
+            abort(400, 'config must be an object')
+        defaults = Instance.default_options(environment)
+        unknown = set(data) - set(defaults)
+        if unknown:
+            abort(400, 'Unknown config fields: %s' % ', '.join(sorted(unknown)))
+        config = {**defaults, **data}
+        for field in ('lazy', 'cache'):
+            if not isinstance(config[field], bool):
+                abort(400, 'config.%s must be a boolean' % field)
+        for field in ('top', 'batch_size', 'heartbeat_ttl', 'output_ttl'):
+            value = config[field]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                abort(400, 'config.%s must be an integer greater than or equal to 1' % field)
+        for field in ('timeout', 'interval', 'sleep', 'idle_timeout', 'heartbeat_interval'):
+            value = config[field]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+                abort(400, 'config.%s must be a positive number of seconds' % field)
+            config[field] = float(value)
+        if config['interval'] > config['timeout']:
+            abort(400, 'config.interval cannot exceed config.timeout')
+        if config['heartbeat_interval'] >= config['heartbeat_ttl']:
+            abort(400, 'config.heartbeat_ttl must exceed config.heartbeat_interval')
+        return config
+
+    def configure(self, data):
+        """Apply a new deployment config and push it into the live route."""
+        config = Instance.clean(data, self.environment.name)
+        previous = self.options()
+        self.config = config
+        cache_disabled = previous["cache"] and not config["cache"]
+        restart = any(config[field] != previous[field] for field in Instance.TASK_CONFIG_FIELDS)
+
+        if restart:
+            # restart() revokes the old route, which already purges any
+            # cached outputs, so no explicit purge is needed here.
+            self.restart()
+        else:
+            # The request options take effect immediately on a live route.
+            self._sync(**self.options())
+            if cache_disabled:
+                # Cached responses must not outlive the setting that allowed them.
+                registry_for(self.environment.name).purge(self.model_id)
+
+    def restart(self, **kwargs):
+        """Restart this deployment in place with its current config."""
+        task = self._get_task()
+        if task:
+            if not self.ready(task):
+                self.stop(task)
+            # Preserve the task id across the restart.
+            self.forget(task, reset=False)
+        self.date_receive = timestamp()
+        self.start(**kwargs)
+
+    @staticmethod
+    def create(environment, model, training, api_key=None, config=None, task_id=None):
         return Instance(
             environment=environment,
             model=model,
             training=training,
+            # Assigned once and reused for the life of the deployment, so the
+            # task id stays stable across restarts, reloads and lazy revives.
+            task_id=task_id or uuid.uuid4().hex,
             api_key=api_key or generate_secret(current_app.config['INFERENCE_API_KEY_NBYTES']),
+            # Instances always carry a complete config, so partial or absent
+            # input is normalized over the environment's defaults here.
+            config=Instance.clean(config or {}, environment.name),
         )
 
     def _get_task(self):
@@ -549,27 +675,33 @@ class Instance(db.Model):
                 except:
                     pass
 
-    def forget(self, task=None):
+    def forget(self, task=None, reset=True):
         task = task or self._get_task()
         if task and isinstance(task, WorkerResult):
             task.forget()
-            self.task_id = None
+            # A restart clears the old result but keeps the id (reset=False) so
+            # the revived task runs under the same, stable task id.
+            if reset:
+                self.task_id = None
         # Make the model unroutable in its environment. A resident serving task
         # notices the missing route on its next loop and shuts itself down.
         registry_for(self.environment.name).revoke(self.model_id)
 
-    def start(self, prewarm=False, **kwargs):
+    def start(self, **kwargs):
         """
         Publish this model into its environment's inference data plane.
 
         Publishing only writes the route (model -> artifact) into the
         environment's Redis; the serving task is started lazily by the first
-        prediction request. Pass ``prewarm=True`` to launch it eagerly.
+        prediction request. Set ``lazy=False`` in the model's options to launch it eagerly
         """
-        self.task_id = str(uuid.uuid4())
+        # Reuse the id assigned at creation so it stays stable across restarts;
+        # only mint one defensively if an instance somehow lacks it.
+        if not self.task_id:
+            self.task_id = uuid.uuid4().hex
 
         registry = registry_for(self.environment.name)
-        
+
         registry.publish(
             self.model.id,
             Route(
@@ -579,10 +711,11 @@ class Instance(db.Model):
                 name=self.model.name,
                 task_id=self.task_id,
                 api_key=self.api_key,
+                **self.options(),
             ),
         )
 
-        if prewarm:
+        if not self.options()['lazy']:
             # Reserve the start slot so a query arriving while this task is still
             # loading waits for its output instead of spinning up a rival task.
             registry.claim(self.model.id, ttl=current_app.config['INFERENCE_START_TTL'])
@@ -611,7 +744,8 @@ class Instance(db.Model):
             'training_id': self.training_id,
             'task_id': self.task_id,
             'api_key': self.api_key,
-            'endpoint': '%s:%s/triton/models/%s/infer' % (
+            'config': self.options(),
+            'endpoint': '%s:%s/api/infer/%s' % (
                 settings['triton']['host'],
                 settings['triton']['port'],
                 self.model_id,

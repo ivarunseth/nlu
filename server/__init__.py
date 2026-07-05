@@ -70,6 +70,6 @@ def create_triton_server(config_name=os.environ.get('FLASK_ENV', 'production')):
     app.config['ENVIRONMENT'] = config_name
 
     from .views import triton as triton_bp
-    app.register_blueprint(triton_bp, url_prefix='/triton')
+    app.register_blueprint(triton_bp, url_prefix='/api')
 
     return app

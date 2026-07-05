@@ -24,7 +24,9 @@ import {
     ArrowClockwise,
     Stop,
     FilterLeft,
-    Hash
+    Hash,
+    Files,
+    Collection
 } from "react-bootstrap-icons";
 import { useParams } from "react-router-dom";
 import { UserContext } from "../../../../contexts/UserContext";
@@ -50,12 +52,42 @@ const TabTitle = ({ icon, children }) => (
 );
 
 const getInstanceStatus = (instance) => {
+    // Lazy deployments intentionally stay idle until the first request.
+    if (
+        instance?.config?.lazy &&
+        (instance.status === "PENDING" || instance.status === "RECEIVED")
+    ) {
+        return {
+            label: "STANDBY",
+            bg: "secondary"
+        };
+    }
+
     switch (instance?.status) {
         case "PENDING":
-        case "RECEIVED": return { label: "STARTING", bg: "info" };
-        case "STARTED": return { label: "SERVING", bg: "success" };
-        case "FAILURE": return { label: "FAILED", bg: "danger" };
-        default: return { label: "STANDBY", bg: "secondary" };
+        case "RECEIVED":
+            return {
+                label: "STARTING",
+                bg: "info"
+            };
+
+        case "STARTED":
+            return {
+                label: "SERVING",
+                bg: "success"
+            };
+
+        case "FAILURE":
+            return {
+                label: "FAILED",
+                bg: "danger"
+            };
+
+        default:
+            return {
+                label: "STANDBY",
+                bg: "secondary"
+            };
     }
 };
 
@@ -88,7 +120,7 @@ const MetricStrip = ({
                 : <span className="text-muted">none</span>,
             icon: <Hash />
         },
-        { label: "Available versions", value: versionCount, icon: <Folder /> },
+        { label: "Available versions", value: versionCount, icon: <Collection /> },
         {
             label: "Last latency",
             value: latency != null ? <span className="font-monospace">{latency} ms</span> : "-",
@@ -304,6 +336,8 @@ const Test = () => {
     const { user } = useContext(UserContext);
     const socket = useSocket();
 
+    const [ready, setReady] = useState(false);
+
     const [trainings, setTrainings] = useState([]);
     const [selectedTrainingId, setSelectedTrainingId] = useState("");
     const [deployedTrainingId, setDeployedTrainingId] = useState(null);
@@ -349,6 +383,7 @@ const Test = () => {
 
         const load = async () => {
             try {
+                setReady(false);
                 const [trainingsResponse, instancesResponse, labelsResponse] = await Promise.all([
                     axios.get(`/api/models/${modelId}/trainings`, { params: { per_page: 100 }, headers }),
                     axios.get(`/api/models/${modelId}/instances`, { headers }),
@@ -372,6 +407,8 @@ const Test = () => {
                 }
             } catch (error) {
                 setAlert({ variant: "danger", message: error.response?.data?.error || error.message });
+            } finally {
+                setReady(true);
             }
         };
         load();
@@ -409,24 +446,43 @@ const Test = () => {
 
     const handleVersionChange = (event) => {
         setSelectedTrainingId(event.target.value);
+        setResult(null);
+        setLatency(null);
+
+        if (labelCount > 0) {
+            setTop(1);
+        }
         setAlert(null);
     };
 
     // Deploy (or redeploy) the version currently selected in the dropdown.
     const handleDeploy = async () => {
         if (!selectedTrainingId || busy) return;
+        setResult(null);
+        setLatency(null);
+        setSendError(false);
         setDeploying(true);
         setAlert(null);
         try {
+            // Development deployments always use the server defaults.
+            // The backend injects the environment's default configuration
+            // (lazy loading + response caching) and rejects configuration
+            // changes for development.
             const response = await axios.post(
                 `/api/models/${modelId}/instances`,
                 { [ENVIRONMENT]: true },
-                { params: { training_id: selectedTrainingId }, headers: { Authorization: `Bearer ${user.token}` } }
+                {
+                    params: { training_id: selectedTrainingId },
+                    headers: { Authorization: `Bearer ${user.token}` }
+                }
             );
             const deployed = (response.data.instances || []).find((instance) => instance.environment === ENVIRONMENT);
             setDeployedInstance(deployed);
             setDeployedTrainingId(deployed ? deployed.training_id : selectedTrainingId);
             setDeployedAt(deployed ? deployed.date_receive : null);
+            setResult(null);
+            setLatency(null);
+            setSendError(false);
         } catch (error) {
             setAlert({ variant: "danger", message: error.response?.data?.error || error.message });
         } finally {
@@ -459,13 +515,14 @@ const Test = () => {
         event.preventDefault();
         if (!query.trim() || loading || !isDeployed) return;
 
+        setResult(null);
         setLoading(true);
         setAlert(null);
         setSendError(false);
         const startedAt = performance.now();
         try {
             const response = await axios.post(
-                `/triton/models/${modelId}/infer`,
+                `/api/infer/${modelId}`,
                 { query },
                 // The inference plane authenticates with the deployment's own
                 // API key, not the user session token.
@@ -521,7 +578,7 @@ const Test = () => {
                             title="Request"
                         />
                         <Card.Body className="p-3 d-flex flex-column">
-                            {trainings.length === 0 ? (
+                            {trainings.length && ready === 0 ? (
                                 <Alert variant="warning" className="d-flex align-items-start gap-2 small mb-0">
                                     <InfoCircle className="mt-1 flex-shrink-0" />
                                     <span>No successfully trained versions yet. Train one from the History tab, then come back to test it.</span>
@@ -547,7 +604,7 @@ const Test = () => {
                                             <Button
                                                 variant="light"
                                                 size="sm"
-                                                className="border text-danger d-inline-flex align-items-center flex-shrink-0"
+                                                className={`border ${selectedIsDeployed ? "text-danger" : ""} d-inline-flex align-items-center flex-shrink-0`}
                                                 title={selectedIsDeployed ? "Stop deployed model" : "Load selected version"}
                                                 onClick={selectedIsDeployed ? handleStop : handleDeploy}
                                                 disabled={busy || !selectedTrainingId}
@@ -558,7 +615,7 @@ const Test = () => {
                                                 variant="light"
                                                 size="sm"
                                                 className="border d-inline-flex align-items-center flex-shrink-0"
-                                                title="Reload deployed version"
+                                                title="Redeploy the latest trained artifact for this version"
                                                 onClick={handleDeploy}
                                                 disabled={busy || !selectedIsDeployed}
                                             >

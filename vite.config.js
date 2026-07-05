@@ -15,12 +15,12 @@ export default defineConfig({
     plugins: [react()],
     server: {
         proxy: {
-            '/api': {
-                target: `http://127.0.0.1:${server}`,
+            '/api/infer': {
+                target: `http://127.0.0.1:${triton}`,
                 changeOrigin: true
             },
-            '/triton': {
-                target: `http://127.0.0.1:${triton}`,
+            '/api': {
+                target: `http://127.0.0.1:${server}`,
                 changeOrigin: true
             },
             '/socket.io': {

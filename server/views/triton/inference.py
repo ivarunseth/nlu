@@ -1,4 +1,5 @@
 from hashlib import sha256
+from uuid import uuid4
 
 from flask import current_app, request, abort
 
@@ -8,7 +9,7 @@ from ...registry import registry_for
 from . import triton
 
 
-@triton.post('/models/<model_id>/infer')
+@triton.post('/infer/<model_id>')
 @api_key_required
 def infer(model_id):
     environment = current_app.config['ENVIRONMENT']
@@ -23,14 +24,20 @@ def infer(model_id):
     if not isinstance(query, str) or not query.strip():
         abort(400, 'A non-empty "query" string is required')
 
-    top = max(request.args.get('top', 1, type=int), 1)
-    key = sha256(f'{top}:{query}'.encode('utf-8')).hexdigest()
+    top = max(request.args.get('top', route.top, type=int), 1)
 
-    cached = registry.get(model_id, key)
-    if cached is not None:
-        if 'error' in cached:
-            return cached, 502
-        return cached, 200
+    # With caching on, identical (top, query) requests share one output slot;
+    # with it off, a unique key forces a fresh prediction every time and the
+    # output is deleted as soon as it is read below.
+    if route.cache:
+        key = sha256(f'{top}:{query}'.encode('utf-8')).hexdigest()
+        cached = registry.get(model_id, key)
+        if cached is not None:
+            if 'error' in cached:
+                return cached, 502
+            return cached, 200
+    else:
+        key = uuid4().hex
 
     if not registry.alive(model_id) and \
         registry.claim(model_id, ttl=current_app.config['INFERENCE_START_TTL']):
@@ -44,10 +51,10 @@ def infer(model_id):
 
     registry.push(model_id, key, query, top=top)
 
-    timeout = current_app.config['INFERENCE_REQUEST_TIMEOUT']
-    interval = current_app.config['INFERENCE_POLL_INTERVAL']
+    timeout = route.timeout or current_app.config['INFERENCE_REQUEST_TIMEOUT']
+    interval = route.interval or current_app.config['INFERENCE_POLL_INTERVAL']
 
-    output = registry.wait(model_id, key, timeout, interval)
+    output = registry.wait(model_id, key, timeout, interval, pull=not route.cache)
 
     if output is None:
         abort(504, 'Prediction timed out for model %s' % model_id)
