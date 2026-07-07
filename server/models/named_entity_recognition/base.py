@@ -12,6 +12,15 @@ class BaseNamedEntityRecognition(BaseModel):
         super().__init__()
         self.model_type = 'named_entity_recognition'
 
+    def load_data(self, data):
+        """
+        Named entity recognition reads ``utterances`` and ``tags`` columns.
+        """
+        data = super().load_data(data)
+        X = data['utterances'].tolist()
+        y = data['tags'].tolist()
+        return X, y
+
     def predict(self, X, **kwargs):
         """
         Generates predictions for the given input.
@@ -83,10 +92,21 @@ class BaseNamedEntityRecognition(BaseModel):
             processed_y.append([inv_labels[str(tag)] for tag in tags])
         return processed_y
 
-    def train(self, X, y, validation_split=0.1, epochs=10, batch_size=32, **kwargs):
+    def train(self, data, test_split=0.2, validation_split=0.1, epochs=10, batch_size=32, **kwargs):
         """
         Standard training loop for token classification.
+
+        Reads the data source, holds out a test split (stored on the instance as
+        ``X_test``/``y_test``), and trains on the remaining data.
         """
+        X, y = self.load_data(data)
+        X_train, X_test, y_train, y_test = self._train_test_split(
+            X, y, test_split, kwargs.get('random_state', 101)
+        )
+        self.X_train, self.y_train = X_train, y_train
+        self.X_test, self.y_test = X_test, y_test
+        X, y = X_train, y_train
+
         self.parameters.update({
             'validation_split': validation_split,
             'epochs': epochs,

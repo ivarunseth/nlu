@@ -14,6 +14,15 @@ class BaseTextClassification(BaseModel):
         super().__init__()
         self.model_type = 'text_classification'
 
+    def load_data(self, data):
+        """
+        Text classification reads ``utterances`` and ``labels`` columns.
+        """
+        data = super().load_data(data)
+        X = data['utterances'].tolist()
+        y = data['labels'].tolist()
+        return X, y
+
     def preprocess_y(self, y):
         """
         Maps string labels to integer indices.
@@ -21,14 +30,25 @@ class BaseTextClassification(BaseModel):
         if self.labels is None:
             unique_labels = sorted(list(set(y)))
             self.labels = {str(i): label for i, label in enumerate(unique_labels)}
-        
+
         inv_labels = {v: int(k) for k, v in self.labels.items()}
         return np.array([inv_labels[str(label)] for label in y])
 
-    def train(self, X, y, validation_split=0.1, epochs=10, batch_size=32, **kwargs):
+    def train(self, data, test_split=0.2, validation_split=0.1, epochs=10, batch_size=32, **kwargs):
         """
         Generic training loop for text classification.
+
+        Reads the data source, holds out a test split (stored on the instance as
+        ``X_test``/``y_test``), and trains on the remaining data.
         """
+        X, y = self.load_data(data)
+        X_train, X_test, y_train, y_test = self._train_test_split(
+            X, y, test_split, kwargs.get('random_state', 101)
+        )
+        self.X_train, self.y_train = X_train, y_train
+        self.X_test, self.y_test = X_test, y_test
+        X, y = X_train, y_train
+
         if kwargs.get('pruning', False):
             initial_sparsity = kwargs.get('initial_sparsity', 0)
             final_sparsity = kwargs.get('final_sparsity', 0.5)

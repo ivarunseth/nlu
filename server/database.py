@@ -396,7 +396,7 @@ class Training(db.Model):
             for utterance in label.utterances.order_by(Utterance.id.desc()).all():
                 utterances.append(utterance.text)
                 labels.append(label.name)
-        data = pd.DataFrame({'X': utterances, 'y': labels})
+        data = pd.DataFrame({'utterances': utterances, 'labels': labels})
         buffer = io.BytesIO()
         data.to_csv(buffer, index=False)
         buffer.seek(0)

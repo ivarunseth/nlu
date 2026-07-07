@@ -1,6 +1,6 @@
 import os
 import json
-import shutil
+import pandas as pd
 import numpy as np
 import tensorflow as tf
 import onnxruntime as ort
@@ -14,6 +14,10 @@ class BaseModel:
     WEIGHTS_FORMATS = {'weights', 'h5'}
 
     def __init__(self):
+        self.X_train = None
+        self.y_train = None
+        self.X_test = None
+        self.y_test = None
         self.model = None
         self.config = None
         self.parameters = {}
@@ -242,7 +246,38 @@ class BaseModel:
         """
         raise NotImplementedError("Subclasses must implement build()")
 
-    def train(self, X, y, **kwargs):
+    def load_data(self, data):
+        """
+        Reads a data source into an ``(X, y)`` pair.
+
+        ``data`` may be a path to a CSV file or an already-loaded
+        ``pandas.DataFrame``. The columns that are read and the shape of ``y``
+        depend on the model type and are defined by ``load_data()``.
+        """
+        return data if isinstance(data, pd.DataFrame) else pd.read_csv(data)
+
+    def _train_test_split(self, X, y, test_split=0.2, random_state=101):
+        """
+        Splits ``(X, y)`` into train and test sets.
+
+        Falls back to a non-stratified split when stratification is not possible
+        (e.g. sequence labels), and skips splitting entirely for tiny datasets.
+        Returns ``(X_train, X_test, y_train, y_test)``.
+        """
+        if len(X) <= 2:
+            return X, [], y, []
+
+        from sklearn.model_selection import train_test_split
+        try:
+            return train_test_split(
+                X, y, test_size=test_split, random_state=random_state, stratify=y
+            )
+        except ValueError:
+            return train_test_split(
+                X, y, test_size=test_split, random_state=random_state
+            )
+
+    def train(self, data, **kwargs):
         """
         Should be implemented by subclasses.
         """

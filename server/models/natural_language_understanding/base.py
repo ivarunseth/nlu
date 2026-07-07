@@ -12,6 +12,16 @@ class BaseNaturalLanguageUnderstanding(BaseModel):
         self.tags = None
         self.model_type = 'natural_language_understanding'
 
+    def load_data(self, data):
+        """
+        Natural language understanding reads ``utterances``, ``labels`` and
+        ``tags`` columns. ``y`` is a list of ``(intent, slots)`` pairs.
+        """
+        data = super().load_data(data)
+        X = data['utterances'].tolist()
+        y = list(zip(data['labels'].tolist(), data['tags'].tolist()))
+        return X, y
+
     def preprocess_y(self, y):
         """
         Maps (intent, slots) pairs to indices.
@@ -42,10 +52,21 @@ class BaseNaturalLanguageUnderstanding(BaseModel):
             
         return y_intents, y_slots
 
-    def train(self, X, y, validation_split=0.1, epochs=10, batch_size=32, **kwargs):
+    def train(self, data, test_split=0.2, validation_split=0.1, epochs=10, batch_size=32, **kwargs):
         """
         Standard training loop for joint intent and slot filling.
+
+        Reads the data source, holds out a test split (stored on the instance as
+        ``X_test``/``y_test``), and trains on the remaining data.
         """
+        X, y = self.load_data(data)
+        X_train, X_test, y_train, y_test = self._train_test_split(
+            X, y, test_split, kwargs.get('random_state', 101)
+        )
+        self.X_train, self.y_train = X_train, y_train
+        self.X_test, self.y_test = X_test, y_test
+        X, y = X_train, y_train
+
         self.parameters.update({
             'validation_split': validation_split,
             'epochs': epochs,

@@ -21,44 +21,28 @@ def train(self, path, model_type, architecture='deep_neural_network', random_sta
     import random
     random.seed(random_state)
 
-    import pandas as pd
-    data = pd.read_csv(os.path.join(directory, 'data.csv'))
-
-    X = data['X'].tolist()
-    y = data['y'].tolist()
-
-    if len(X) > 2:
-        from sklearn.model_selection import train_test_split
-        try:
-            X_train, X_test, y_train, y_test = \
-                train_test_split(X, y, test_size=test_split, random_state=101, stratify=y)
-        except ValueError:
-            X_train, X_test, y_train, y_test = \
-                train_test_split(X, y, test_size=test_split, random_state=101)
-    else:
-        X_train, y_train, X_test, y_test  = X, y, [], []
-
     from ..models import Model
     model = Model.create(model_type, architecture)
 
     from ..models.callbacks import TrainingCallback
     callbacks.append(TrainingCallback(self, wrapper_model=model))
-    
+
     history = model.train(
-        X_train, y_train, 
+        data=os.path.join(directory, 'data.csv'),
+        test_split=test_split,
         validation_split=validation_split,
-        epochs=epochs, 
-        batch_size=batch_size, 
-        early_stopping=early_stopping, 
-        monitor=monitor, 
-        patience=patience, 
+        epochs=epochs,
+        batch_size=batch_size,
+        early_stopping=early_stopping,
+        monitor=monitor,
+        patience=patience,
         callbacks=callbacks,
         **kwargs
     )
 
     evaluation = {
-        'train': model.evaluate(X_train, y_train),
-        'test': model.evaluate(X_test, y_test)
+        'train': model.evaluate(model.X_train, model.y_train),
+        'test': model.evaluate(model.X_test, model.y_test)
     }
 
     model.save(directory, save_format=save_format)
