@@ -60,6 +60,8 @@ class Config(object):
     INFERENCE_POLL_INTERVAL = float(os.environ.get('INFERENCE_POLL_INTERVAL', 0.01))
     INFERENCE_OUTPUT_TTL = int(os.environ.get('INFERENCE_OUTPUT_TTL', 300))
     INFERENCE_START_TTL = int(os.environ.get('INFERENCE_START_TTL', 120))
+    INFERENCE_MAX_BATCH = int(os.environ.get('INFERENCE_MAX_BATCH', 256))
+    INFERENCE_BATCH_TIMEOUT = float(os.environ.get('INFERENCE_BATCH_TIMEOUT', 120))
 
 
 class DevelopmentConfig(Config):

@@ -148,6 +148,7 @@ class WorkerTask(Task):
             raise TaskAbortedError('Task has been aborted')
         if shutting_down:
             raise WorkerShutdownError('Worker is shutting down')
+        return True
 
     def push_status(self, extended=False):
         self.socketio.emit(

@@ -126,14 +126,12 @@ class BaseTextClassification(BaseModel):
             order = np.argsort(pred)[::-1]
             if k:
                 order = order[:int(k)]
-            # 'outputs' with 'label'/'score' entries: a model-agnostic shape
-            # other use cases can adopt, rather than a classification-specific
-            # 'labels'/'name'.
-            outputs = [
-                {'label': self.labels[str(int(idx))], 'score': float(pred[idx])}
+            # Ranked 'labels' with 'name'/'score' entries.
+            labels = [
+                {'name': self.labels[str(int(idx))], 'score': float(pred[idx])}
                 for idx in order
             ]
-            results.append({'outputs': outputs})
+            results.append({'labels': labels})
         return results
 
     def evaluate(self, X, y):
@@ -142,7 +140,7 @@ class BaseTextClassification(BaseModel):
         Returns a JSON-serializable dictionary of metrics.
         """
         results = self.predict(X)
-        y_pred = [r['outputs'][0]['label'] for r in results]
+        y_pred = [r['labels'][0]['name'] for r in results]
         
         cm = confusion_matrix(y, y_pred)
         acc = accuracy_score(y, y_pred)

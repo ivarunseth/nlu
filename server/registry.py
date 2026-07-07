@@ -129,28 +129,53 @@ class Registry:
     def claim(self, model_id, ttl) -> bool:
         return bool(self.redis.set(self._starting(model_id), uuid.uuid4().hex, nx=True, ex=ttl))
 
-    def get(self, model_id, key):
-        raw = self.redis.get(self._output(model_id, key))
-        return json.loads(raw.decode('utf-8')) if raw else None
+    def get(self, model_id, keys, pull=False):
+        """Fetch many outputs in one round-trip, keyed by request id;
+        missing keys are omitted. With ``pull`` each hit is deleted, so
+        it is served exactly once."""
+        if not keys:
+            return {}
+        with self.redis.pipeline(transaction=False) as pipe:
+            for key in keys:
+                if pull:
+                    pipe.getdel(self._output(model_id, key))
+                else:
+                    pipe.get(self._output(model_id, key))
+            values = pipe.execute()
+        return {
+            key: json.loads(raw.decode('utf-8'))
+            for key, raw in zip(keys, values) if raw
+        }
 
     def pull(self, model_id, key):
         """Fetch an output and delete it, so it is served exactly once."""
         raw = self.redis.getdel(self._output(model_id, key))
         return json.loads(raw.decode('utf-8')) if raw else None
 
-    def push(self, model_id, key, data, **kwargs):
-        message = json.dumps({'id': key, 'data': data, **kwargs}).encode('utf-8')
-        self.redis.rpush(self._inputs(model_id), message)
+    def push(self, model_id, keys, inputs, **kwargs):
+        """Enqueue many inputs in one round-trip; kwargs apply to each."""
+        messages = [
+            json.dumps({'id': key, 'data': data, **kwargs}).encode('utf-8')
+            for key, data in zip(keys, inputs)
+        ]
+        if messages:
+            self.redis.rpush(self._inputs(model_id), *messages)
 
-    def wait(self, model_id, key, timeout, interval, pull=False):
-        fetch = self.pull if pull else self.get
+    def wait(self, model_id, keys, timeout, interval, pull=False):
+        """Poll a set of keys until all resolve or the deadline passes,
+        returning whatever resolved, keyed by request id."""
+        resolved = {}
+        pending = list(dict.fromkeys(keys))
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            output = fetch(model_id, key)
-            if output:
-                return output
+        while pending:
+            found = self.get(model_id, pending, pull=pull)
+            if found:
+                resolved.update(found)
+                pending = [key for key in pending if key not in found]
+            if not pending or time.monotonic() >= deadline:
+                break
             time.sleep(interval)
-        return None
+        return resolved
 
     def lock(self, model_id, timeout):
         return self.redis.lock(
@@ -170,29 +195,19 @@ class Registry:
     def offline(self, model_id):
         self.redis.delete(self._alive(model_id), self._starting(model_id))
 
-    def pop(self, model_id, batch_size):
-        queue = self._inputs(model_id)
+    def watch(self, queue, size):
         with self.redis.pipeline() as pipe:
             while True:
                 try:
                     pipe.watch(queue)
-                    raw = pipe.lrange(queue, 0, batch_size - 1)
+                    raw = pipe.lrange(queue, 0, size - 1)
                     if not raw:
                         pipe.unwatch()
-                        return [], [], {}
-
-                    inputs, keys, kwargs = [], [], {}
-                    for item in raw:
-                        data = json.loads(item.decode('utf-8'))
-                        inputs.append(data.pop('data'))
-                        keys.append(data.pop('id'))
-                        for key_, value in data.items():
-                            kwargs.setdefault(key_, []).append(value)
-
+                        return []
                     pipe.multi()
-                    pipe.ltrim(queue, len(keys), -1)
+                    pipe.ltrim(queue, len(raw), -1)
                     pipe.execute()
-                    return inputs, keys, kwargs
+                    return raw
                 except WatchError:
                     continue
 

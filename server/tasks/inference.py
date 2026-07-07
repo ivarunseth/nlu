@@ -6,7 +6,6 @@ import tempfile
 
 from redis.exceptions import LockError
 
-from .. import store
 from . import triton
 
 
@@ -21,9 +20,6 @@ def model(self, model_id, path, model_type, **kwargs):
 
     from ..registry import registry_for
     registry = registry_for(environment)
-
-    # Serving options: an explicit kwarg wins, then the published route
-    # (set from the deployment configuration UI), then the app config.
     route = registry.route(model_id)
 
     def setting(name, default, cast):
@@ -52,6 +48,7 @@ def model(self, model_id, path, model_type, **kwargs):
     online = False
 
     try:
+        from .. import store
         store.fget_dir(bucket, f'models/{path}', directory)
 
         from ..models import Model
@@ -63,46 +60,55 @@ def model(self, model_id, path, model_type, **kwargs):
         idle_since = time.monotonic()
         last_heartbeat = idle_since
 
-        while True:
-            self.check_status(task_id=self.request.id)
+        queue = registry._inputs(model_id)
 
+        while True:
             route = registry.route(model_id)
             if route is None:
                 break
 
-            inputs, keys, kwargs = registry.pop(model_id, batch_size)
+            raw = registry.watch(queue, batch_size)
 
-            if keys:
+            inputs, keys, kwargs = [], [], {}
+            for item in raw:
+                data = json.loads(item.decode('utf-8'))
+                inputs.append(data.pop('data'))
+                keys.append(data.pop('id'))
+                for key_, value in data.items():
+                    kwargs.setdefault(key_, []).append(value)
+
+            if inputs and keys:
                 try:
-                    predictions = model.predict(inputs, **kwargs)
-                    outputs = []
-                    for data, prediction in zip(inputs, predictions):
-                        output = {
-                            'environment': environment, 
-                            'model': route.name, 
-                            'version': route.version, 
-                            'input': data, 
-                            **prediction
-                        }
-                        outputs.append(json.dumps(output))
+                    outputs = model.predict(inputs, **kwargs or {})
+
+                    for i, (input, output) in enumerate(zip(inputs, outputs)):
+                        outputs[i] = json.dumps({'input': input, **output}).encode('utf-8')
+
                     registry.set(model_id, keys, outputs, ttl=output_ttl)
+                
                 except Exception as error:
                     failure = json.dumps({'error': str(error), 'type': type(error).__name__})
                     registry.set(model_id, keys, [failure] * len(keys), ttl=output_ttl)
+                
                 idle_since = time.monotonic()
+            
             elif lazy and time.monotonic() - idle_since > idle_timeout:
                 break
+            
             else:
                 time.sleep(sleep)
 
             now = time.monotonic()
             if now - last_heartbeat >= heartbeat_interval:
-                registry.heartbeat(model_id, ttl=heartbeat_ttl)
-                try:
-                    lock.reacquire()
-                except LockError:
-                    break
-                last_heartbeat = now
+                alive = self.check_status(task_id=self.request.id)
+                if alive:
+                    registry.heartbeat(model_id, ttl=heartbeat_ttl)
+                    try:
+                        lock.reacquire()
+                    except LockError:
+                        break
+                    last_heartbeat = now
+
     finally:
         if online:
             registry.offline(model_id)

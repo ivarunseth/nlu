@@ -16,3 +16,18 @@ def after_request(response):
     for key, value in headers.items():
         response.headers[key] = value
     return response
+
+
+@triton.errorhandler(400)
+def bad_request(error):
+    return {'error': error.description}, 400
+
+
+@triton.errorhandler(404)
+def not_found(error):
+    return {'error': error.description}, 404
+
+
+@triton.errorhandler(504)
+def gateway_timeout(error):
+    return {'error': error.description}, 504
