@@ -31,7 +31,8 @@ import {
     Search,
     ArrowCounterclockwise,
     FiletypeCsv,
-    FiletypePng
+    FiletypePng,
+    Collection
 } from "react-bootstrap-icons";
 import {
     LineChart,
@@ -54,6 +55,8 @@ import { ModelContext } from "../../../../contexts/ModelContext";
 import { useSocket } from "../../../../contexts/SocketContext";
 import { CardHeading, EmptyMessage } from "../../../../shared/components/SectionCard";
 import downloadBlob from "../../../../shared/utils/downloadBlob";
+import chartPng from "../../../../shared/utils/chartPng";
+import { getReport, getTrainingAccuracy, getConfusionMatrix, reportRows } from "../../../../shared/utils/training";
 import { Link, useParams } from "react-router-dom";
 import useDebounce from "../../../../shared/hooks/useDebounce";
 import axios from "axios";
@@ -231,7 +234,7 @@ const ARCHITECTURE_DEFAULTS = {
         epochs: { default: 200, min: 1, max: 1000, step: 1 },
         batch_size: { default: 32, min: 4, max: 128, step: 4 },
         max_tokens: { default: 10000, min: 1000, max: 50000, step: 1000 },
-        sequence_length: { default: 100, min: 16, max: 512, step: 8 },
+        sequence_length: { default: 96, min: 16, max: 512, step: 8 },
         embedding_dims: { default: 64, min: 16, max: 512, step: 8 },
         dropout: { default: 0.2, min: 0, max: 1, step: 0.05 },
         learning_rate: { default: 0.001, min: 0.000001, max: 0.01, step: 0.000001 },
@@ -257,7 +260,7 @@ const ARCHITECTURE_DEFAULTS = {
         max_tokens: { default: 10000, min: 1000, max: 50000, step: 1000 },
         sequence_length: { default: 128, min: 16, max: 512, step: 8 },
         embedding_dims: { default: 64, min: 16, max: 512, step: 8 },
-        lstm_dims: { default: 100, min: 16, max: 512, step: 8 },
+        lstm_dims: { default: 96, min: 16, max: 512, step: 8 },
         dropout: { default: 0.2, min: 0, max: 1, step: 0.05 },
         learning_rate: { default: 0.001, min: 0.000001, max: 0.01, step: 0.000001 },
         weight_decay_rate: { default: 0, min: 0, max: 0.1, step: 0.001 },
@@ -400,6 +403,28 @@ const SAVE_FORMAT_OPTIONS = [
     ['onnx', 'ONNX (onnx)']
 ];
 
+// Tab that owns each editable numeric field, used to jump to the first
+// invalid input when CONTINUE is clicked from another tab.
+const PARAMETER_TABS = {
+    test_split: 'data',
+    validation_split: 'data',
+    sequence_length: 'model',
+    max_seq_len: 'model',
+    max_tokens: 'model',
+    embedding_dims: 'model',
+    lstm_dims: 'model',
+    units: 'model',
+    epochs: 'schedule',
+    batch_size: 'schedule',
+    learning_rate: 'schedule',
+    patience: 'callbacks',
+    pruning_begin_step: 'callbacks',
+    pruning_end_step: 'callbacks',
+    pruning_frequency: 'callbacks',
+    weight_decay_rate: 'callbacks',
+    num_warmup_steps: 'callbacks'
+};
+
 // A labelled training setting with its description, mirroring the deploy
 // configuration form in Publish.
 const TrainingField = ({ id, label, help, children }) => (
@@ -441,17 +466,6 @@ const formatReport = (report) => {
     return typeof report === 'string' ? report : JSON.stringify(report, null, 2);
 };
 
-const getReport = (result, split) => (
-    result?.evaluation?.[split]?.report
-    ?? (split === 'test' ? result?.report : null)
-);
-
-const getTrainingAccuracy = (training) => {
-    const result = training?.result;
-    if (!result) return null;
-    return result.accuracy ?? result.evaluation?.test?.accuracy ?? null;
-};
-
 const getTrainingReport = (training) => {
     const result = training?.result;
     if (!result) return '';
@@ -461,24 +475,6 @@ const getTrainingReport = (training) => {
         summary: result.summary || '',
         history: result.history || {}
     };
-};
-
-const getConfusionMatrix = (training, split) => (
-    training?.result?.evaluation?.[split]?.confusion_matrix
-    ?? (split === 'test' ? training?.result?.confusion_matrix : null)
-);
-
-const reportRows = (report) => {
-    if (!report || typeof report === 'string') return [];
-    return Object.entries(report)
-        .filter(([, metrics]) => metrics && typeof metrics === 'object')
-        .map(([label, metrics]) => ({
-            label,
-            precision: metrics.precision,
-            recall: metrics.recall,
-            f1: metrics['f1-score'],
-            support: metrics.support
-        }));
 };
 
 const formatMetric = (value) => (
@@ -620,6 +616,50 @@ const MetricStrip = ({ training, onStopTraining, stoppingTraining, onRestartTrai
                                 <div className="text-body-emphasis small fw-medium">{item.value || '-'}</div>
                             </div>
                             {item.action}
+                        </Card.Body>
+                    </Card>
+                </Col>
+            ))}
+        </Row>
+    );
+};
+
+// Aggregate overview across all training versions, mirroring the per-version
+// MetricStrip but summarising the whole list above the versions table.
+const HistoryMetricStrip = ({ total, inProgress, succeeded, bestAccuracy, latestVersion }) => {
+    // Only surface metrics that are relevant to the current list; empty or
+    // not-yet-applicable values are dropped rather than shown as placeholders.
+    const items = [
+        { label: 'Total versions', value: total, icon: <Collection /> },
+        latestVersion !== null && {
+            label: 'Latest version',
+            value: <span className="font-monospace">v{latestVersion}</span>,
+            icon: <Hash />
+        },
+        inProgress > 0 && { label: 'In progress', value: inProgress, icon: <Activity /> },
+        succeeded > 0 && { label: 'Succeeded', value: succeeded, icon: <Check2Circle /> },
+        bestAccuracy !== null && {
+            label: 'Best accuracy',
+            value: <span className="fw-bold">{(bestAccuracy * 100).toFixed(2)}%</span>,
+            icon: <GraphUp />
+        }
+    ].filter(Boolean);
+
+    if (!total || items.length === 0) return null;
+
+    return (
+        <Row className="g-3 mt-1">
+            {items.map((item, idx) => (
+                <Col key={idx} xs={12} sm={6} md={4} lg={true}>
+                    <Card className="h-100">
+                        <Card.Body className="p-3 d-flex align-items-center">
+                            <div className="text-primary me-3 fs-4">
+                                {item.icon}
+                            </div>
+                            <div>
+                                <div className="text-muted small fw-bold" style={{ fontSize: '0.65rem' }}>{item.label}</div>
+                                <div className="text-body-emphasis small fw-medium">{item.value ?? '-'}</div>
+                            </div>
                         </Card.Body>
                     </Card>
                 </Col>
@@ -822,38 +862,7 @@ const HistoryCharts = ({ history }) => {
     };
 
     const downloadPng = () => {
-        const svg = chartWrapRef.current?.querySelector('svg.recharts-surface');
-        if (!svg) return;
-        // Inline the theme-dependent styles recharts gets from CSS so the
-        // exported image matches what is on screen.
-        const clone = svg.cloneNode(true);
-        const sourceNodes = [svg, ...svg.querySelectorAll('*')];
-        const cloneNodes = [clone, ...clone.querySelectorAll('*')];
-        sourceNodes.forEach((node, i) => {
-            const style = getComputedStyle(node);
-            if (style.stroke !== 'none') cloneNodes[i].setAttribute('stroke', style.stroke);
-            if (style.fill !== 'none') cloneNodes[i].setAttribute('fill', style.fill);
-            if (node.tagName === 'text') {
-                cloneNodes[i].setAttribute('font-size', style.fontSize);
-                cloneNodes[i].setAttribute('font-family', style.fontFamily);
-                cloneNodes[i].setAttribute('font-weight', style.fontWeight);
-            }
-        });
-        const scale = 2;
-        const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml;charset=utf-8' }));
-        const image = new Image();
-        image.onload = () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = svg.clientWidth * scale;
-            canvas.height = svg.clientHeight * scale;
-            const ctx = canvas.getContext('2d');
-            ctx.fillStyle = getComputedStyle(document.body).backgroundColor;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-            URL.revokeObjectURL(url);
-            canvas.toBlob((blob) => blob && downloadBlob(blob, 'metrics.png'));
-        };
-        image.src = url;
+        chartPng(chartWrapRef.current?.querySelector('svg.recharts-surface'), 'metrics.png');
     };
 
     if (metrics.length === 0) return <EmptyState>No history data available.</EmptyState>;
@@ -1101,7 +1110,7 @@ const TrainingInspector = ({ training, previousTraining, trainingData, previousT
     return (
         <Card className="border-0 mt-4 overflow-hidden">
             <Card.Body className="p-0">
-                <Tabs defaultActiveKey={defaultTab} className="border-bottom border-light-subtle custom-tabs mb-3">
+                <Tabs defaultActiveKey={defaultTab} variant="pills" className="custom-tabs gap-2 mb-2">
                     <Tab
                         eventKey="changes"
                         title={<TabTitle icon={<PlusSlashMinus />}>Data</TabTitle>}
@@ -1330,9 +1339,9 @@ const TrainingVersion = () => {
     }, [trainingStatus]);
 
     useEffect(() => {
-        if (!user || !socket || !socket.connected || !TRAINING_ACTIVE_STATUSES.includes(trainingStatusRef.current)) return;
+        if (!user || !socket || !TRAINING_ACTIVE_STATUSES.includes(trainingStatusRef.current)) return;
         const taskId = trainingTaskId;
-        if (!taskId || roomRef.current === taskId) return;
+        if (!taskId) return;
 
         const handleStatus = (data) => {
             if (data.task_id !== taskId) return;
@@ -1344,14 +1353,23 @@ const TrainingVersion = () => {
             }
         };
 
+        // Join on every (re)connect: the socket may still be handshaking when
+        // this effect runs, and server-side room membership is lost whenever
+        // the connection drops.
+        const joinRoom = () => {
+            socket.emit('join', user.token, taskId);
+            roomRef.current = taskId;
+        };
+
         socket.on('status', handleStatus);
-        socket.emit('join', user.token, taskId);
-        roomRef.current = taskId;
+        socket.on('connect', joinRoom);
+        if (socket.connected) joinRoom();
 
         return () => {
             socket.off('status', handleStatus);
+            socket.off('connect', joinRoom);
             if (roomRef.current === taskId) {
-                socket.emit('leave', user.token, taskId);
+                if (socket.connected) socket.emit('leave', user.token, taskId);
                 roomRef.current = null;
             }
         };
@@ -1455,6 +1473,7 @@ const History = () => {
     const [activeTrainings, setActiveTrainings] = useState([]);
     const [showParameters, setShowParameters] = useState(false);
     const [trainingTab, setTrainingTab] = useState('data');
+    const [parameterErrors, setParameterErrors] = useState({});
     const [showStartConfirmation, setShowStartConfirmation] = useState(false);
     const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
     const [trainingsToDelete, setTrainingsToDelete] = useState([]);
@@ -1474,6 +1493,20 @@ const History = () => {
     const debouncedQuery = useDebounce(query, 500);
 
     const selectedTrainings = trainings.filter((training) => selectedIds.has(training.id));
+    const historySummary = useMemo(() => {
+        const succeededTrainings = trainings.filter((training) => training.status === 'SUCCESS');
+        const accuracies = succeededTrainings
+            .map(getTrainingAccuracy)
+            .filter((accuracy) => accuracy !== null);
+        const versions = trainings
+            .map((training) => Number(training.version))
+            .filter((version) => Number.isFinite(version));
+        return {
+            succeeded: succeededTrainings.length,
+            bestAccuracy: accuracies.length ? Math.max(...accuracies) : null,
+            latestVersion: versions.length ? Math.max(...versions) : null
+        };
+    }, [trainings]);
     const canStopSelected = selectedTrainings.length > 0 && selectedTrainings.every(isTrainingActive);
     const canRetrySelected = selectedTrainings.length > 0 && selectedTrainings.every(isTrainingReady);
     const canDeleteSelected = selectedTrainings.length > 0 && selectedTrainings.every(isTrainingDeletable);
@@ -1576,27 +1609,84 @@ const History = () => {
             ...params,
             save_format: paramters.save_format
         });
+        setParameterErrors({});
+    };
+
+    const validateParameter = (field, value, params = paramters) => {
+        const metadata = ARCHITECTURE_DEFAULTS[params.architecture]?.[field] || {};
+        if (value === '' || value === null || value === undefined || Number.isNaN(value)) {
+            return 'Enter a value.';
+        }
+        if (metadata.min !== undefined && value < metadata.min) return `Must be at least ${metadata.min}.`;
+        if (metadata.max !== undefined && value > metadata.max) return `Must be at most ${metadata.max}.`;
+        if (field === 'pruning_end_step' && typeof params.pruning_begin_step === 'number' && value <= params.pruning_begin_step) {
+            return 'Must be greater than the pruning begin step.';
+        }
+        return null;
+    };
+
+    // Numeric fields currently editable in the form; fields hidden by the
+    // architecture or a disabled switch keep their defaults and are skipped.
+    const getEditableNumberFields = () => {
+        const fields = [];
+        if (paramters.architecture === 'transformer') {
+            fields.push('max_seq_len');
+            if (model?.type !== 'named_entity_recognition') fields.push('units');
+        } else {
+            fields.push('sequence_length', 'max_tokens', 'embedding_dims');
+            if (paramters.architecture === 'recurrent_neural_network') fields.push('lstm_dims');
+        }
+        fields.push('epochs', 'batch_size', 'learning_rate');
+        if (paramters.early_stopping) fields.push('patience');
+        if (model?.type === 'text_classification' && paramters.pruning) {
+            fields.push('pruning_begin_step', 'pruning_end_step', 'pruning_frequency');
+        }
+        fields.push('weight_decay_rate', 'num_warmup_steps');
+        return fields;
     };
 
     const updateParameter = (field, value) => {
         setParameters(prev => ({ ...prev, [field]: value }));
+        setParameterErrors(prev => {
+            const message = validateParameter(field, value, { ...paramters, [field]: value });
+            const next = { ...prev };
+            if (message) next[field] = message;
+            else delete next[field];
+            return next;
+        });
     };
 
     const handleOpenStartTraining = () => {
         setParameters(getTrainingStartParameters(model?.type, currentTraining));
+        setParameterErrors({});
         setTrainingTab('data');
+        setShowStartConfirmation(false);
         setShowParameters(true);
     };
 
     const handleCloseStartTraining = () => {
         if (startingTraining) return;
         setShowParameters(false);
+        setShowStartConfirmation(false);
     };
 
-    // CONTINUE swaps the form for the start confirmation, keeping the edits.
+    // CONTINUE validates the settings and swaps the modal body for the start
+    // confirmation, keeping the edits. Invalid fields keep the form open and
+    // switch to the tab holding the first offending input.
     const handleContinueTraining = (event) => {
         event.preventDefault();
-        setShowParameters(false);
+        const fields = getEditableNumberFields();
+        const errors = {};
+        fields.forEach(field => {
+            const message = validateParameter(field, paramters[field]);
+            if (message) errors[field] = message;
+        });
+        setParameterErrors(errors);
+        const firstInvalid = fields.find(field => errors[field]);
+        if (firstInvalid) {
+            setTrainingTab(PARAMETER_TABS[firstInvalid] || 'data');
+            return;
+        }
         setShowStartConfirmation(true);
     };
 
@@ -1604,7 +1694,6 @@ const History = () => {
     const handleBackToParameters = () => {
         if (startingTraining) return;
         setShowStartConfirmation(false);
-        setShowParameters(true);
     };
 
     // Precise values are typed; bounded fractions use a slider instead.
@@ -1628,8 +1717,10 @@ const History = () => {
                     max={max}
                     step={step}
                     value={paramters[field]}
-                    onChange={(e) => updateParameter(field, parse(e.target.value))}
+                    isInvalid={Boolean(parameterErrors[field])}
+                    onChange={(e) => updateParameter(field, e.target.value === '' ? '' : parse(e.target.value))}
                 />
+                <Form.Control.Feedback type="invalid">{parameterErrors[field]}</Form.Control.Feedback>
             </TrainingField>
         );
     };
@@ -1694,6 +1785,7 @@ const History = () => {
                 setPage(1);
             }
             setShowStartConfirmation(false);
+            setShowParameters(false);
         } catch (error) {
             setAlert({ variant: 'danger', message: error.response?.data?.error || error.message });
         } finally {
@@ -1888,7 +1980,7 @@ const History = () => {
     }, [user, modelId, page, perPage, debouncedQuery]);
 
     useEffect(() => {
-        if (!user || !socket || !socket.connected || activeTrainingTaskIds.length === 0) return;
+        if (!user || !socket || activeTrainingTaskIds.length === 0) return;
         const activeRooms = rooms.current;
 
         const handleStatus = (data) => {
@@ -1901,18 +1993,25 @@ const History = () => {
             }
         };
 
-        socket.on('status', handleStatus);
-        activeTrainingTaskIds.forEach(taskId => {
-            if (!activeRooms.has(taskId)) {
+        // Join on every (re)connect: the socket may still be handshaking when
+        // this effect runs, and server-side room membership is lost whenever
+        // the connection drops.
+        const joinRooms = () => {
+            activeTrainingTaskIds.forEach(taskId => {
                 socket.emit('join', user.token, taskId);
                 activeRooms.add(taskId);
-            }
-        });
+            });
+        };
+
+        socket.on('status', handleStatus);
+        socket.on('connect', joinRooms);
+        if (socket.connected) joinRooms();
 
         return () => {
             socket.off('status', handleStatus);
+            socket.off('connect', joinRooms);
             activeTrainingTaskIds.forEach(taskId => {
-                socket.emit('leave', user.token, taskId);
+                if (socket.connected) socket.emit('leave', user.token, taskId);
                 activeRooms.delete(taskId);
             });
         };
@@ -1925,6 +2024,13 @@ const History = () => {
                     {alert && <Alert variant={alert.variant} onClose={() => setAlert(null)} dismissible>{alert.message}</Alert>}
                 </Col>
             </Row>
+            <HistoryMetricStrip
+                total={total}
+                inProgress={activeTrainings.length}
+                succeeded={historySummary.succeeded}
+                bestAccuracy={historySummary.bestAccuracy}
+                latestVersion={historySummary.latestVersion}
+            />
             <Row className="mt-4">
                 <Col>
                     <ButtonToolbar>
@@ -2118,12 +2224,46 @@ const History = () => {
                 </Col>
             </Row>
             <Modal size="lg" centered scrollable show={showParameters} onHide={handleCloseStartTraining}>
-                <Modal.Header closeButton>
+                <Modal.Header closeButton={!startingTraining}>
                     <Modal.Title className="small fw-bold text-muted d-inline-flex align-items-center gap-2">
-                        <Sliders2 /> Training configuration
+                        <Sliders2 /> {showStartConfirmation ? 'Start training' : 'Training configuration'}
                     </Modal.Title>
                 </Modal.Header>
-                <Form onSubmit={handleContinueTraining}>
+                {showStartConfirmation ? (
+                    <Modal.Body>
+                        <p className="small">
+                            Start a new training run with this configuration? A new version will be
+                            created and queued right away.
+                        </p>
+                        <div className="border border-light-subtle rounded mb-3 overflow-auto" style={{ maxHeight: '50vh' }}>
+                            <Row className="g-0">
+                                {trainingSummary.map(([field, label, value], index) => (
+                                    <Col sm={6} key={field}>
+                                        <div
+                                            className={`d-flex justify-content-between gap-3 px-3 py-2 small${index > 1 ? ' border-top border-light-subtle' : ''}${index % 2 === 1 ? ' border-start border-light-subtle' : ''}`}
+                                        >
+                                            <span className="text-muted fw-bold">{label}</span>
+                                            <span className="font-monospace text-truncate" title={value}>{value}</span>
+                                        </div>
+                                    </Col>
+                                ))}
+                            </Row>
+                        </div>
+                        <div className="d-flex justify-content-end gap-2">
+                            <Button variant="light" size="sm" className="border small" onClick={handleBackToParameters} disabled={startingTraining}>
+                                BACK
+                            </Button>
+                            <Button variant="primary" size="sm" className="small" onClick={handleTrain} disabled={startingTraining}>
+                                {startingTraining ? (
+                                    <><Spinner animation="border" size="sm" />&nbsp;STARTING...</>
+                                ) : (
+                                    'START TRAINING'
+                                )}
+                            </Button>
+                        </div>
+                    </Modal.Body>
+                ) : (
+                <Form noValidate onSubmit={handleContinueTraining}>
                     <Modal.Body>
                         <div style={{ minHeight: '18rem' }}>
                             <Tabs
@@ -2259,43 +2399,7 @@ const History = () => {
                         </div>
                     </Modal.Body>
                 </Form>
-            </Modal>
-            <Modal size="lg" centered scrollable show={showStartConfirmation} onHide={handleBackToParameters}>
-                <Modal.Header closeButton={!startingTraining}>
-                    <Modal.Title className="small fw-bold text-muted">Start training</Modal.Title>
-                </Modal.Header>
-                <Modal.Body>
-                    <p className="small">
-                        Start a new training run with this configuration? A new version will be
-                        created and queued right away.
-                    </p>
-                    <div className="border border-light-subtle rounded mb-3 overflow-auto" style={{ maxHeight: '50vh' }}>
-                        <Row className="g-0">
-                            {trainingSummary.map(([field, label, value], index) => (
-                                <Col sm={6} key={field}>
-                                    <div
-                                        className={`d-flex justify-content-between gap-3 px-3 py-2 small${index > 1 ? ' border-top border-light-subtle' : ''}${index % 2 === 1 ? ' border-start border-light-subtle' : ''}`}
-                                    >
-                                        <span className="text-muted fw-bold">{label}</span>
-                                        <span className="font-monospace text-truncate" title={value}>{value}</span>
-                                    </div>
-                                </Col>
-                            ))}
-                        </Row>
-                    </div>
-                    <div className="d-flex justify-content-end gap-2">
-                        <Button variant="light" size="sm" className="border small" onClick={handleBackToParameters} disabled={startingTraining}>
-                            BACK
-                        </Button>
-                        <Button variant="primary" size="sm" className="small" onClick={handleTrain} disabled={startingTraining}>
-                            {startingTraining ? (
-                                <><Spinner animation="border" size="sm" />&nbsp;STARTING...</>
-                            ) : (
-                                'START TRAINING'
-                            )}
-                        </Button>
-                    </div>
-                </Modal.Body>
+                )}
             </Modal>
             <Modal centered show={Boolean(trainingAction)} onHide={() => setTrainingAction(null)}>
                 <Modal.Header closeButton>

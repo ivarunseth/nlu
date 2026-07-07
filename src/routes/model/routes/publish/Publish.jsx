@@ -32,6 +32,7 @@ import { UserContext } from "../../../../contexts/UserContext";
 import { useSocket } from "../../../../contexts/SocketContext";
 import { useTheme } from "../../../../contexts/ThemeContext";
 import { CardHeading } from "../../../../shared/components/SectionCard";
+import { getTrainingAccuracy, parseApiDate } from "../../../../shared/utils/training";
 import axios from "axios";
 
 // Deployment pipeline, ordered. Models are validated in testing before production.
@@ -50,25 +51,11 @@ const ENVIRONMENTS = [
     }
 ];
 
-// Parse the "dd/mm/yyyy - HH:MM:SS" local-time strings the API returns into a Date.
-const parseApiDate = (value) => {
-    const match = /^(\d{2})\/(\d{2})\/(\d{4})\s*-\s*(\d{2}):(\d{2}):(\d{2})$/.exec(value || "");
-    if (!match) return null;
-    const [, day, month, year, hour, minute, second] = match;
-    return new Date(+year, +month - 1, +day, +hour, +minute, +second);
-};
-
 // Reveal only the first third of the key (rest stays masked) so a shoulder-surfer
 // can verify which key it is without seeing the whole secret.
 const maskApiKey = (key) => {
     const visible = Math.max(1, Math.ceil(key.length / 3));
     return key.slice(0, visible) + "•".repeat(key.length - visible);
-};
-
-const getTrainingAccuracy = (training) => {
-    const result = training?.result;
-    if (!result) return null;
-    return result.accuracy ?? result.evaluation?.test?.accuracy ?? null;
 };
 
 const getInstanceStatus = (instance) => {
@@ -365,24 +352,67 @@ const toConfigForm = (config) => {
     };
 };
 
+// [field, label, integer]: integers must be whole numbers >= 1,
+// the rest positive numbers of seconds.
+const CONFIG_NUMERIC_FIELDS = [
+    ["top", "Top predictions", true],
+    ["batch_size", "Batch size", true],
+    ["output_ttl", "Output TTL", true],
+    ["heartbeat_ttl", "Heartbeat TTL", true],
+    ["timeout", "Timeout", false],
+    ["interval", "Interval", false],
+    ["sleep", "Sleep", false],
+    ["idle_timeout", "Idle timeout", false],
+    ["heartbeat_interval", "Heartbeat interval", false]
+];
+
+// Tab that owns each numeric field, used to jump to the first invalid
+// input when the form is submitted from another tab.
+const CONFIG_FIELD_TABS = {
+    batch_size: "model",
+    sleep: "model",
+    heartbeat_interval: "model",
+    heartbeat_ttl: "model",
+    idle_timeout: "model",
+    top: "server",
+    output_ttl: "server",
+    timeout: "server",
+    interval: "server"
+};
+
+// Per-field check used for the inline feedback; returns a message or null.
+const validateConfigField = (field, form) => {
+    const rule = CONFIG_NUMERIC_FIELDS.find(([name]) => name === field);
+    if (!rule) return null;
+    const [, , integer] = rule;
+    const value = Number(form[field]);
+    if (form[field] === "" || (integer ? !Number.isInteger(value) || value < 1 : !Number.isFinite(value) || value <= 0)) {
+        return integer ? "Must be a whole number of at least 1." : "Must be a positive number of seconds.";
+    }
+    if (field === "interval" && Number.isFinite(Number(form.timeout)) && value > Number(form.timeout)) {
+        return "Cannot exceed the timeout.";
+    }
+    if (field === "heartbeat_ttl" && Number.isFinite(Number(form.heartbeat_interval)) && Number(form.heartbeat_interval) >= value) {
+        return "Must exceed the heartbeat interval.";
+    }
+    return null;
+};
+
+// Numeric fields currently editable given the lazy/cache switches; disabled
+// fields keep their last values and are skipped by the inline validation.
+const getEditableConfigFields = (form) => CONFIG_NUMERIC_FIELDS
+    .map(([field]) => field)
+    .filter((field) => (
+        field === "idle_timeout" ? form.lazy
+            : field === "output_ttl" ? form.cache
+                : true
+    ));
+
 // Validate the form and convert it back into a config payload.
 // Mirrors the server-side validation. Returns { config } or { error }.
 const parseConfigForm = (form) => {
-    // [field, label, integer]: integers must be whole numbers >= 1,
-    // the rest positive numbers of seconds.
-    const numericFields = [
-        ["top", "Top predictions", true],
-        ["batch_size", "Batch size", true],
-        ["output_ttl", "Output TTL", true],
-        ["heartbeat_ttl", "Heartbeat TTL", true],
-        ["timeout", "Timeout", false],
-        ["interval", "Interval", false],
-        ["sleep", "Sleep", false],
-        ["idle_timeout", "Idle timeout", false],
-        ["heartbeat_interval", "Heartbeat interval", false]
-    ];
     const numbers = {};
-    for (const [field, label, integer] of numericFields) {
+    for (const [field, label, integer] of CONFIG_NUMERIC_FIELDS) {
         const value = Number(form[field]);
         if (integer ? !Number.isInteger(value) || value < 1 : !Number.isFinite(value) || value <= 0) {
             return { error: `${label} must be ${integer ? "a whole number of at least 1" : "a positive number of seconds"}.` };
@@ -399,18 +429,19 @@ const parseConfigForm = (form) => {
 };
 
 // A numeric field of the deployment configuration form.
-const ConfigField = ({ id, label, help, step, value, onChange, disabled }) => (
+const ConfigField = ({ id, label, help, step, value, onChange, disabled, error }) => (
     <Form.Group className="mb-3" controlId={id}>
         <Form.Label className="small fw-bold mb-1">{label}</Form.Label>
-        <Form.Control type="number" size="sm" min={0} step={step} value={value} onChange={onChange} disabled={disabled} />
+        <Form.Control type="number" size="sm" min={0} step={step} value={value} onChange={onChange} disabled={disabled} isInvalid={Boolean(error)} />
+        <Form.Control.Feedback type="invalid">{error}</Form.Control.Feedback>
         <Form.Text className="text-muted" style={{ fontSize: "0.7rem" }}>{help}</Form.Text>
     </Form.Group>
 );
 
 // The deployment configuration form, shared by the configure modal and the
 // deploy / promote confirmations. `onChange(field, value)` updates one field.
-const ConfigFormFields = ({ form, onChange }) => (
-    <Tabs variant="pills" defaultActiveKey="model" className="small mb-3" justify>
+const ConfigFormFields = ({ form, onChange, errors = {}, activeTab, onTabChange }) => (
+    <Tabs variant="pills" activeKey={activeTab} onSelect={onTabChange} className="small mb-3" justify>
         <Tab eventKey="model" title="Model">
             <Form.Check
                 type="switch"
@@ -434,6 +465,7 @@ const ConfigFormFields = ({ form, onChange }) => (
                         step={1}
                         value={form.batch_size}
                         onChange={(event) => onChange("batch_size", event.target.value)}
+                        error={errors.batch_size}
                     />
                 </Col>
                 <Col sm={6}>
@@ -444,6 +476,7 @@ const ConfigFormFields = ({ form, onChange }) => (
                         step={0.001}
                         value={form.sleep}
                         onChange={(event) => onChange("sleep", event.target.value)}
+                        error={errors.sleep}
                     />
                 </Col>
                 <Col sm={6}>
@@ -454,6 +487,7 @@ const ConfigFormFields = ({ form, onChange }) => (
                         step={1}
                         value={form.heartbeat_interval}
                         onChange={(event) => onChange("heartbeat_interval", event.target.value)}
+                        error={errors.heartbeat_interval}
                     />
                 </Col>
                 <Col sm={6}>
@@ -464,6 +498,7 @@ const ConfigFormFields = ({ form, onChange }) => (
                         step={1}
                         value={form.heartbeat_ttl}
                         onChange={(event) => onChange("heartbeat_ttl", event.target.value)}
+                        error={errors.heartbeat_ttl}
                     />
                 </Col>
                 <Col sm={6}>
@@ -475,6 +510,7 @@ const ConfigFormFields = ({ form, onChange }) => (
                         value={form.idle_timeout}
                         onChange={(event) => onChange("idle_timeout", event.target.value)}
                         disabled={!form.lazy}
+                        error={errors.idle_timeout}
                     />
                 </Col>
             </Row>
@@ -506,6 +542,7 @@ const ConfigFormFields = ({ form, onChange }) => (
                         step={1}
                         value={form.top}
                         onChange={(event) => onChange("top", event.target.value)}
+                        error={errors.top}
                     />
                 </Col>
                 <Col sm={6}>
@@ -517,6 +554,7 @@ const ConfigFormFields = ({ form, onChange }) => (
                         value={form.output_ttl}
                         onChange={(event) => onChange("output_ttl", event.target.value)}
                         disabled={!form.cache}
+                        error={errors.output_ttl}
                     />
                 </Col>
                 <Col sm={6}>
@@ -527,6 +565,7 @@ const ConfigFormFields = ({ form, onChange }) => (
                         step={1}
                         value={form.timeout}
                         onChange={(event) => onChange("timeout", event.target.value)}
+                        error={errors.timeout}
                     />
                 </Col>
                 <Col sm={6}>
@@ -537,11 +576,47 @@ const ConfigFormFields = ({ form, onChange }) => (
                         step={0.01}
                         value={form.interval}
                         onChange={(event) => onChange("interval", event.target.value)}
+                        error={errors.interval}
                     />
                 </Col>
             </Row>
         </Tab>
     </Tabs>
+);
+
+// Read-only recap of the chosen deployment configuration, shown in the
+// deploy/promote confirmation step.
+const CONFIG_SUMMARY_LABELS = [
+    ["lazy", "Lazy loading"],
+    ["cache", "Response caching"],
+    ["batch_size", "Batch size"],
+    ["sleep", "Sleep (s)"],
+    ["heartbeat_interval", "Heartbeat interval (s)"],
+    ["heartbeat_ttl", "Heartbeat TTL (s)"],
+    ["idle_timeout", "Idle timeout (s)"],
+    ["top", "Top predictions"],
+    ["output_ttl", "Output TTL (s)"],
+    ["timeout", "Timeout (s)"],
+    ["interval", "Interval (s)"]
+];
+
+const ConfigSummary = ({ config }) => (
+    <div className="border border-light-subtle rounded mb-3 overflow-auto" style={{ maxHeight: "40vh" }}>
+        <Row className="g-0">
+            {CONFIG_SUMMARY_LABELS.map(([field, label], index) => (
+                <Col sm={6} key={field}>
+                    <div
+                        className={`d-flex justify-content-between gap-3 px-3 py-2 small${index > 1 ? " border-top border-light-subtle" : ""}${index % 2 === 1 ? " border-start border-light-subtle" : ""}`}
+                    >
+                        <span className="text-muted fw-bold">{label}</span>
+                        <span className="font-monospace">
+                            {typeof config[field] === "boolean" ? (config[field] ? "on" : "off") : String(config[field])}
+                        </span>
+                    </div>
+                </Col>
+            ))}
+        </Row>
+    </div>
 );
 
 const Publish = () => {
@@ -563,6 +638,9 @@ const Publish = () => {
     // Numeric fields are kept as strings while editing and parsed on save.
     const [configForm, setConfigForm] = useState(null);
     const [configError, setConfigError] = useState(null);
+    // Per-field inline validation messages, keyed by field name.
+    const [configErrors, setConfigErrors] = useState({});
+    const [configTab, setConfigTab] = useState("model");
     const [configSaving, setConfigSaving] = useState(false);
     const rooms = useRef(new Set());
 
@@ -722,68 +800,87 @@ const Publish = () => {
         if (!instance) return;
         setConfigForm(toConfigForm(instance.config));
         setConfigError(null);
+        setConfigErrors({});
+        setConfigTab("model");
         setConfigTarget({ environment, instance });
     };
 
-    const closeConfig = (preserveForm = false) => {
+    // Closes the shared configuration/confirmation dialog entirely.
+    const closeDialogs = () => {
         if (configSaving) return;
-
+        setConfirmAction(null);
         setConfigTarget(null);
-
-        if (!preserveForm) {
-            setConfigForm(null);
-        }
-
+        setConfigForm(null);
         setConfigError(null);
+        setConfigErrors({});
+        setValidatedInTesting(false);
     };
 
-    const changeConfig = (field, value) => (
-        setConfigForm((prev) => ({ ...prev, [field]: value }))
-    );
+    const changeConfig = (field, value) => {
+        const next = { ...configForm, [field]: value };
+        setConfigForm(next);
+        setConfigErrors((prev) => {
+            const message = validateConfigField(field, next);
+            const updated = { ...prev };
+            if (message) updated[field] = message;
+            else delete updated[field];
+            return updated;
+        });
+    };
 
     const submitConfig = async () => {
+        // Inline validation first: flag every editable field and jump to the
+        // tab holding the first invalid input instead of failing silently.
+        const fields = getEditableConfigFields(configForm);
+        const errors = {};
+        fields.forEach((field) => {
+            const message = validateConfigField(field, configForm);
+            if (message) errors[field] = message;
+        });
+        setConfigErrors(errors);
+        const firstInvalid = fields.find((field) => errors[field]);
+        if (firstInvalid) {
+            setConfigTab(CONFIG_FIELD_TABS[firstInvalid] || "model");
+            return;
+        }
         const { config, error } = parseConfigForm(configForm);
         if (error) {
             setConfigError(error);
             return;
         }
+
+        if (!configTarget.instance) {
+            // Deploy/promote: swap the dialog body to the confirmation step,
+            // keeping the form state so BACK can return to it.
+            const target = configTarget;
+            setConfigTarget(null);
+            setConfigError(null);
+            setConfirmAction({
+                type: "deploy",
+                environment: target.environment,
+                training: target.training,
+                config
+            });
+            return;
+        }
+
         setConfigSaving(true);
         setConfigError(null);
         try {
-            if (configTarget.instance) {
-                const response = await axios.put(
-                    `/api/models/${modelId}/instances/${configTarget.instance.id}`,
-                    { config },
-                    { headers: { Authorization: `Bearer ${user.token}` } }
-                );
-                setInstances((prev) => prev.map((item) => (
-                    item.id === response.data.instance.id ? response.data.instance : item
-                )));
-                setConfigTarget(null);
-                setConfigForm(null);
-            } else {
-                const target = configTarget;
-
-                closeConfig(true);
-
-                setConfirmAction({
-                    type: "deploy",
-                    environment: target.environment,
-                    training: target.training,
-                    config
-                });
-
-                return;
-            }
+            const response = await axios.put(
+                `/api/models/${modelId}/instances/${configTarget.instance.id}`,
+                { config },
+                { headers: { Authorization: `Bearer ${user.token}` } }
+            );
+            setInstances((prev) => prev.map((item) => (
+                item.id === response.data.instance.id ? response.data.instance : item
+            )));
+            setConfigTarget(null);
+            setConfigForm(null);
         } catch (error) {
             setConfigError(error.response?.data?.error || error.message);
         } finally {
             setConfigSaving(false);
-            // Only close the configuration modal for the configure flow.
-            // Deploy/promote closes it explicitly before opening confirmation.
-            if (configTarget?.instance) {
-                closeConfig();
-            }
         }
     };
 
@@ -803,6 +900,8 @@ const Publish = () => {
                     );
 
             setConfigForm(toConfigForm(source));
+            setConfigErrors({});
+            setConfigTab("model");
             setConfigTarget({
                 environment,
                 training
@@ -813,12 +912,13 @@ const Publish = () => {
         setConfirmAction({ type, environment, training });
     };
 
-    const closeConfirm = () => {
+    // BACK from a deploy/promote confirmation returns to the form step of
+    // the same dialog, with the edits intact.
+    const backToConfig = () => {
+        const action = confirmAction;
+        if (!action || action.type !== "deploy" || !configForm) return;
         setConfirmAction(null);
-        setConfigForm(null);
-        setConfigTarget(null);
-        setConfigError(null);
-        setValidatedInTesting(false);
+        setConfigTarget({ environment: action.environment, training: action.training });
     };
 
     const submitConfirm = async () => {
@@ -827,6 +927,7 @@ const Publish = () => {
 
         setConfirmAction(null);
         setConfigError(null);
+        setConfigForm(null);
 
         if (action.type === "deploy") {
             await handleDeploy(
@@ -861,7 +962,7 @@ const Publish = () => {
         ? "Stopping…"
         : pendingAction?.type === "reset-key"
             ? "Resetting key…"
-            : "Deploying…";
+            : "S";
 
     // Rollback: promoting a version older than the one currently in production.
     const confirmProductionVersion = productionInstance
@@ -1012,10 +1113,18 @@ const Publish = () => {
                 </>
             )}
 
-            <Modal size={confirmAction?.type === "deploy" ? "lg" : undefined} centered scrollable show={Boolean(confirmAction)} onHide={closeConfirm}>
-                <Modal.Header closeButton>
-                    <Modal.Title className="small fw-bold text-muted">
-                        {confirmAction?.type === "stop"
+            <Modal
+                size={configTarget || confirmAction?.type === "deploy" ? "lg" : undefined}
+                centered
+                scrollable
+                show={Boolean(configTarget) || Boolean(confirmAction)}
+                onHide={closeDialogs}
+            >
+                <Modal.Header closeButton={!configSaving}>
+                    <Modal.Title className="small fw-bold text-muted d-inline-flex align-items-center gap-2">
+                        {configTarget
+                            ? <><Gear /> Deployment configuration — {configTarget.environment}</>
+                            : confirmAction?.type === "stop"
                             ? `Stop ${confirmAction.environment}`
                             : confirmAction?.type === "reset-key"
                                 ? `Reset ${confirmAction.environment} API key`
@@ -1029,6 +1138,34 @@ const Publish = () => {
                     </Modal.Title>
                 </Modal.Header>
                 <Modal.Body>
+                    {configTarget ? (
+                        <>
+                            {configError && (
+                                <Alert variant="danger" className="small py-2">{configError}</Alert>
+                            )}
+                            {configForm && (
+                                <Form noValidate onSubmit={(event) => { event.preventDefault(); submitConfig(); }}>
+                                    <ConfigFormFields
+                                        form={configForm}
+                                        onChange={changeConfig}
+                                        errors={configErrors}
+                                        activeTab={configTab}
+                                        onTabChange={setConfigTab}
+                                    />
+                                    <div className="d-flex justify-content-end gap-2">
+                                        <Button variant="light" size="sm" className="border small" disabled={configSaving} onClick={closeDialogs}>
+                                            CANCEL
+                                        </Button>
+                                        <Button variant="primary" size="sm" className="small d-inline-flex align-items-center gap-2" type="submit" disabled={configSaving}>
+                                            {configSaving && <Spinner animation="border" size="sm" />}
+                                            {configTarget.instance ? "SAVE" : "CONTINUE"}
+                                        </Button>
+                                    </div>
+                                </Form>
+                            )}
+                        </>
+                    ) : (
+                        <>
                     {confirmAction?.type === "stop" ? (
                         <p className="small">
                             Stop v{confirmAction.training?.version} from <strong>{confirmAction.environment}</strong>?
@@ -1070,12 +1207,7 @@ const Publish = () => {
                                 </Alert>
                             )}
 
-                            {configTarget && configForm && (
-                                <ConfigFormFields
-                                    form={configForm}
-                                    onChange={changeConfig}
-                                />
-                            )}
+                            {confirmAction?.config && <ConfigSummary config={confirmAction.config} />}
                         </>
                     ) : (
                         <>
@@ -1099,16 +1231,15 @@ const Publish = () => {
                                 </Alert>
                             )}
 
-                            {configTarget && configForm && (
-                                <ConfigFormFields
-                                    form={configForm}
-                                    onChange={changeConfig}
-                                />
-                            )}
+                            {confirmAction?.config && <ConfigSummary config={confirmAction.config} />}
                         </>
                     )}
                     <div className="d-flex justify-content-end gap-2">
-                        <Button variant="light" size="sm" className="border small" onClick={closeConfirm}>CANCEL</Button>
+                        {confirmAction?.type === "deploy" && configForm ? (
+                            <Button variant="light" size="sm" className="border small" onClick={backToConfig}>BACK</Button>
+                        ) : (
+                            <Button variant="light" size="sm" className="border small" onClick={closeDialogs}>CANCEL</Button>
+                        )}
                         <Button
                             variant={confirmAction?.type === "stop"
                                 ? "danger"
@@ -1133,35 +1264,7 @@ const Publish = () => {
                                                 : "DEPLOY"}
                         </Button>
                     </div>
-                </Modal.Body>
-            </Modal>
-
-            <Modal size="lg" centered scrollable show={Boolean(configTarget)} onHide={closeConfig}>
-                <Modal.Header closeButton>
-                    <Modal.Title className="small fw-bold text-muted d-inline-flex align-items-center gap-2">
-                        <Gear /> Deployment configuration — {configTarget?.environment}
-                    </Modal.Title>
-                </Modal.Header>
-                <Modal.Body>
-                    {configError && (
-                        <Alert variant="danger" className="small py-2">{configError}</Alert>
-                    )}
-                    {configForm && (
-                        <Form onSubmit={(event) => { event.preventDefault(); submitConfig(); }}>
-                            <ConfigFormFields
-                                form={configForm}
-                                onChange={changeConfig}
-                            />
-                            <div className="d-flex justify-content-end gap-2">
-                                <Button variant="light" size="sm" className="border small" disabled={configSaving} onClick={closeConfig}>
-                                    CANCEL
-                                </Button>
-                                <Button variant="primary" size="sm" className="small d-inline-flex align-items-center gap-2" type="submit" disabled={configSaving}>
-                                    {configSaving && <Spinner animation="border" size="sm" />}
-                                    {configTarget?.instance ? "SAVE" : "CONTINUE"}
-                                </Button>
-                            </div>
-                        </Form>
+                        </>
                     )}
                 </Modal.Body>
             </Modal>

@@ -12,6 +12,7 @@ const Utterances = lazy(() => import('./routes/utterances/Utterances'));
 const History = lazy(() => import('./routes/history/History'));
 const Test = lazy(() => import('./routes/test/Test'));
 const Publish = lazy(() => import('./routes/publish/Publish'));
+const Analyse = lazy(() => import('./routes/analyse/Analyse'));
 const TrainingVersion = lazy(() => import('./routes/history/History').then((module) => ({
     default: module.TrainingVersion
 })));
@@ -173,6 +174,7 @@ const ModelContent = () => {
                     <Route path="history/:trainingId" element={<TrainingVersion />} />
                     <Route path="test" element={<Test />} />
                     <Route path="publish" element={<Publish />} />
+                    <Route path="analyse" element={<Analyse />} />
                     <Route path="build/:labelId/utterances" element={<Utterances />} />
                 </Routes>
             </Suspense>
