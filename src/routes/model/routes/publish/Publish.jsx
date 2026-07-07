@@ -133,11 +133,14 @@ const EnvironmentCard = ({
     // The backend derives the endpoint from the environment's inference
     // host and port, so display and copy always match the real deployment.
     const inferUrl = instance?.endpoint || "";
+    // The endpoint is batch-only: an "inputs" list body returns an
+    // index-aligned {"outputs": [...]} list, one element per input. A single
+    // prediction is just a one-element list.
     const curlSnippet = instance ? [
         `curl -X POST '${inferUrl}?top=${instance.config?.top ?? 1}'`,
         `  -H 'Authorization: Bearer ${instance.api_key}'`,
         `  -H 'Content-Type: application/json'`,
-        `  -d '{"query": "Hello there"}'`
+        `  -d '{"inputs": ["Hello there", "General Kenobi"]}'`
     ].join(" \\\n") : "";
 
     return (

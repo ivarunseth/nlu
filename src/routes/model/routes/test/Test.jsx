@@ -1,8 +1,6 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Badge, Button, ButtonGroup, Card, Col, Form, Nav, Row, Spinner, Tab } from "react-bootstrap";
 import {
-    Clipboard,
-    ClipboardCheck,
     ExclamationTriangle,
     InfoCircle,
     Play,
@@ -37,6 +35,9 @@ import { UserContext } from "../../../../contexts/UserContext";
 import { useSocket } from "../../../../contexts/SocketContext";
 import { SectionLabel, CardHeading, EmptyState } from "../../../../shared/components/SectionCard";
 import { parseApiDate } from "../../../../shared/utils/training";
+import { isErrorPrediction, getLabels, scoresClose, PredictionView, JsonView } from "./components/Prediction";
+import BatchPanel from "./components/BatchPanel";
+import BatchResults from "./components/BatchResults";
 import axios from "axios";
 
 const ENVIRONMENT = "development";
@@ -45,6 +46,11 @@ const ENVIRONMENT = "development";
 // pipeline order. Their deployments are managed from the Publish tab; here
 // they are only queried, each through its own endpoint and API key.
 const COMPARE_ENVIRONMENTS = ["testing", "production"];
+
+// Batch uploads are submitted as sequential chunks of this many inputs,
+// kept under the server's INFERENCE_MAX_BATCH cap so a large CSV streams
+// through as a series of normal-sized requests instead of one giant push.
+const BATCH_CHUNK_SIZE = 100;
 
 // Request/response split, as the request panel's width percentage. The drag
 // handle is centred on this percentage, and the bounds line up with the
@@ -57,19 +63,6 @@ const MAX_SPLIT = 78;
 // Drag-handle width; matches the metric strip's g-3 (1rem) column gutter so
 // the split reads as a continuation of it.
 const SPLIT_GUTTER = 16;
-
-// A prediction that is a plain error payload rather than a model output.
-const isErrorPrediction = (prediction) =>
-    prediction != null && typeof prediction === "object" && !Array.isArray(prediction) && prediction.error;
-
-// The ranked [{ label, score }] list of a text-classification prediction, or
-// null for other model types (which are compared as a whole instead).
-const getOutputs = (prediction) =>
-    prediction != null && typeof prediction === "object" && !Array.isArray(prediction) && Array.isArray(prediction.outputs)
-        ? prediction.outputs
-        : null;
-
-const scoresClose = (a, b) => Math.abs((a || 0) - (b || 0)) < 1e-6;
 
 // Envelope keys the serving loop wraps around every prediction. They naturally
 // differ between environments, so they are excluded when comparing content.
@@ -89,13 +82,13 @@ const comparePredictions = (reference, prediction) => {
     if (reference == null || prediction == null) return null;
     if (isErrorPrediction(reference) || isErrorPrediction(prediction)) return null;
 
-    const referenceOutputs = getOutputs(reference);
-    const outputs = getOutputs(prediction);
-    if (referenceOutputs && outputs) {
-        const labelsMatch = referenceOutputs.length === outputs.length
-            && referenceOutputs.every((item, index) => item.label === outputs[index].label);
+    const referenceLabels = getLabels(reference);
+    const labels = getLabels(prediction);
+    if (referenceLabels && labels) {
+        const labelsMatch = referenceLabels.length === labels.length
+            && referenceLabels.every((item, index) => item.name === labels[index].name);
         if (!labelsMatch) return "differ";
-        const scoresMatch = referenceOutputs.every((item, index) => scoresClose(item.score, outputs[index].score));
+        const scoresMatch = referenceLabels.every((item, index) => scoresClose(item.score, labels[index].score));
         return scoresMatch ? "match" : "scores";
     }
 
@@ -257,134 +250,6 @@ const StatusDot = ({ color }) => (
     />
 );
 
-const ScoreBar = ({ score, variant = "primary" }) => {
-    const percent = Math.max(0, Math.min(100, (score || 0) * 100));
-    return (
-        <div className="d-flex align-items-center gap-3">
-            <div className="flex-grow-1 bg-body-secondary rounded-pill" style={{ height: "10px", overflow: "hidden" }}>
-                <div
-                    className={`bg-${variant} h-100 rounded-pill`}
-                    style={{ width: `${percent}%`, transition: "width 0.4s ease" }}
-                />
-            </div>
-            <span className={`font-monospace fw-bold ${variant === "warning" ? "text-warning-emphasis" : "text-body-emphasis"}`} style={{ minWidth: "64px", textAlign: "right" }}>
-                {percent.toFixed(2)}%
-            </span>
-        </div>
-    );
-};
-
-const TokenTags = ({ query, tags }) => {
-    const tokens = (query || "").trim().split(/\s+/).filter(Boolean);
-    const aligned = tokens.length === tags.length;
-    const items = aligned ? tokens.map((token, index) => ({ token, tag: tags[index] })) : tags.map((tag) => ({ token: null, tag }));
-    return (
-        <div className="d-flex flex-wrap gap-2">
-            {items.map((item, index) => (
-                <div key={index} className="border border-light-subtle rounded text-center bg-body" style={{ minWidth: "60px" }}>
-                    {item.token !== null && (
-                        <div className="px-2 py-1 border-bottom border-light-subtle small fw-medium text-break">{item.token}</div>
-                    )}
-                    <div className="px-2 py-1">
-                        <Badge bg={item.tag && item.tag !== "O" ? "primary" : "secondary-subtle"} text={item.tag && item.tag !== "O" ? undefined : "muted"} className="font-monospace fw-normal">
-                            {item.tag}
-                        </Badge>
-                    </div>
-                </div>
-            ))}
-        </div>
-    );
-};
-
-// `reference` is development's prediction; when supplied, each output whose
-// label differs is flagged in danger and each whose score differs (same label)
-// gets a warning score bar.
-const PredictionView = ({ prediction, query, reference }) => {
-    if (prediction == null) {
-        return <EmptyState icon={<SortDown />} minHeight="100%">Run a query to see the result.</EmptyState>;
-    }
-
-    if (typeof prediction === "object" && !Array.isArray(prediction) && prediction.error) {
-        return (
-            <Alert variant="danger" className="mb-0 d-flex align-items-start gap-2">
-                <ExclamationTriangle className="mt-1 flex-shrink-0" />
-                <div>
-                    <div className="fw-bold small">{prediction.type || "Prediction failed"}</div>
-                    <div className="small">{prediction.error}</div>
-                </div>
-            </Alert>
-        );
-    }
-
-    // Text classification: { outputs: [{ label, score }, ...] } ranked by score.
-    const outputs = getOutputs(prediction);
-    if (outputs) {
-        const referenceOutputs = getOutputs(reference);
-        return (
-            <div>
-                <SectionLabel>{outputs.length > 1 ? "Predicted labels" : "Predicted label"}</SectionLabel>
-                <div className="mt-3 d-flex flex-column gap-3">
-                    {outputs.map((item, index) => {
-                        const referenceOutput = referenceOutputs ? referenceOutputs[index] : null;
-                        const labelMismatch = referenceOutput != null && referenceOutput.label !== item.label;
-                        const scoreMismatch = referenceOutput != null && !labelMismatch && !scoresClose(referenceOutput.score, item.score);
-                        return (
-                            <div key={index}>
-                                <div className="d-flex align-items-center gap-2 mb-2">
-                                    <Badge
-                                        bg={labelMismatch ? "danger" : index === 0 ? "primary" : "secondary-subtle"}
-                                        text={labelMismatch || index === 0 ? undefined : "body-emphasis"}
-                                        className="fw-medium px-3 py-2 border"
-                                    >
-                                        {item.label}
-                                    </Badge>
-                                </div>
-                                <ScoreBar score={item.score} variant={scoreMismatch ? "warning" : "primary"} />
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
-        );
-    }
-
-    // Natural language understanding: { intent, slots: [...] }
-    if (typeof prediction === "object" && !Array.isArray(prediction) && "intent" in prediction) {
-        return (
-            <div>
-                <div className="mb-4">
-                    <SectionLabel>Intent</SectionLabel>
-                    <div className="mt-2">
-                        <Badge bg="primary" className="fs-6 fw-medium px-3 py-2">{prediction.intent}</Badge>
-                    </div>
-                </div>
-                {Array.isArray(prediction.slots) && (
-                    <div>
-                        <SectionLabel>Slots</SectionLabel>
-                        <div className="mt-2">
-                            <TokenTags query={query} tags={prediction.slots} />
-                        </div>
-                    </div>
-                )}
-            </div>
-        );
-    }
-
-    // Named entity recognition: [tag, tag, ...]
-    if (Array.isArray(prediction)) {
-        return (
-            <div>
-                <SectionLabel>Entities</SectionLabel>
-                <div className="mt-2">
-                    <TokenTags query={query} tags={prediction} />
-                </div>
-            </div>
-        );
-    }
-
-    return <pre className="p-3 mb-0 bg-body-tertiary border-0 rounded small">{JSON.stringify(prediction, null, 2)}</pre>;
-};
-
 // One environment's column in the side-by-side comparison. The development
 // column passes `isReference`; the others pass development's prediction as
 // `reference` so the header can flag agreement and, in JSON view, show a diff.
@@ -443,68 +308,6 @@ const CompareColumn = ({ name, version, deployed, loading, entry, query, referen
     );
 };
 
-// Classic JSON syntax-highlight palette (keys / strings / numbers / booleans /
-// null); per-theme values live in index.css.
-const JSON_COLORS = {
-    key: "var(--app-json-key)",
-    string: "var(--app-json-string)",
-    number: "var(--app-json-number)",
-    boolean: "var(--app-json-boolean)",
-    null: "var(--app-json-null)"
-};
-
-const highlightJson = (json) => json
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(
-        /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false)\b|\bnull\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g,
-        (match) => {
-            let type = "number";
-            if (/^"/.test(match)) {
-                type = /:$/.test(match) ? "key" : "string";
-            } else if (/true|false/.test(match)) {
-                type = "boolean";
-            } else if (/null/.test(match)) {
-                type = "null";
-            }
-            return `<span style="color:${JSON_COLORS[type]}">${match}</span>`;
-        }
-    );
-
-const JsonView = ({ data }) => {
-    const [copied, setCopied] = useState(false);
-    const json = useMemo(() => JSON.stringify(data, null, 2), [data]);
-    const html = useMemo(() => highlightJson(json), [json]);
-
-    const handleCopy = async () => {
-        try {
-            await navigator.clipboard.writeText(json);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-        } catch (error) {
-            console.error(error);
-        }
-    };
-
-    return (
-        <div className="position-relative h-100">
-            <Button
-                variant="light"
-                size="sm"
-                className="border position-absolute end-0 top-0 m-2 d-inline-flex align-items-center gap-1"
-                onClick={handleCopy}
-            >
-                {copied ? <ClipboardCheck className="text-success"   /> : <Clipboard />}
-            </Button>
-            <pre
-                className="p-3 mb-0 bg-body-tertiary border-0 rounded small overflow-auto h-100"
-                dangerouslySetInnerHTML={{ __html: html }}
-            />
-        </div>
-    );
-};
-
 // Line-by-line diff of a comparison environment's raw response against
 // development's, so envelope and score differences are visible at a glance.
 // const JsonDiffView = ({ data, reference }) => {
@@ -560,6 +363,14 @@ const Test = () => {
     const [alert, setAlert] = useState(null);
     const [loading, setLoading] = useState(false);
     const [sendError, setSendError] = useState(false);
+
+    // Batch mode: which input surface is active, and the results of the
+    // last CSV run ([{ input, meta, prediction }], index-aligned to the
+    // uploaded rows; prediction is null while its chunk is in flight).
+    const [mode, setMode] = useState("single");
+    const [batchResults, setBatchResults] = useState(null);
+    const [batchRunning, setBatchRunning] = useState(false);
+    const [batchProgress, setBatchProgress] = useState(null);
 
     // Environment comparison: the testing/production instances (keyed by
     // environment name), whether the fan-out is enabled, which environments
@@ -733,6 +544,8 @@ const Test = () => {
         setResult(null);
         setLatency(null);
         setCompareResults(null);
+        setBatchResults(null);
+        setBatchProgress(null);
 
         if (labelCount > 0) {
             setTop(1);
@@ -813,10 +626,12 @@ const Test = () => {
             try {
                 const response = await axios.post(
                     instance.endpoint,
-                    { query },
+                    { inputs: [query] },
                     { params: { top }, headers: { Authorization: `Bearer ${instance.api_key}` } }
                 );
-                return [name, { prediction: response.data, latency: Math.round(performance.now() - startedAt) }];
+                const prediction = response.data?.outputs?.[0]
+                    ?? { error: "No output was returned.", type: "Missing" };
+                return [name, { prediction, latency: Math.round(performance.now() - startedAt) }];
             } catch (error) {
                 const data = error.response?.data;
                 const prediction = data && (data.error || data.type)
@@ -852,12 +667,18 @@ const Test = () => {
         try {
             const response = await axios.post(
                 `/api/infer/${modelId}`,
-                { query },
+                // The endpoint is batch-only; a single query is a one-element
+                // batch whose sole output is unwrapped here. That output may
+                // itself be an { error, type } envelope, which PredictionView
+                // renders like any other failure.
+                { inputs: [query] },
                 // The inference plane authenticates with the deployment's own
                 // API key, not the user session token.
                 { params: { top }, headers: { Authorization: `Bearer ${deployedInstance?.api_key || ""}` } }
             );
-            setResult({ query, prediction: response.data, version: deployedVersion });
+            const prediction = response.data?.outputs?.[0]
+                ?? { error: "No output was returned.", type: "Missing" };
+            setResult({ query, prediction, version: deployedVersion });
             setLatency(Math.round(performance.now() - startedAt));
         } catch (error) {
             const status = error.response?.status;
@@ -877,6 +698,68 @@ const Test = () => {
         } finally {
             setLoading(false);
         }
+    };
+
+    // Run every parsed CSV row through the deployed model. Rows go out in
+    // BATCH_CHUNK_SIZE chunks of one `{ inputs }` request each; outputs
+    // stream into `batchResults` index-aligned to the rows, and every row
+    // ends with either a prediction or an { error, type } envelope.
+    const handleRunBatch = async (rows) => {
+        if (!isDeployed || batchRunning || rows.length === 0) return;
+        setBatchRunning(true);
+        setAlert(null);
+        setActiveTab("batch");
+        setBatchProgress({ done: 0, total: rows.length });
+        const results = rows.map((row) => ({ ...row, prediction: null }));
+        setBatchResults([...results]);
+
+        const headers = { Authorization: `Bearer ${deployedInstance?.api_key || ""}` };
+        const startedAt = performance.now();
+        for (let start = 0; start < rows.length; start += BATCH_CHUNK_SIZE) {
+            const chunk = rows.slice(start, start + BATCH_CHUNK_SIZE);
+            try {
+                const response = await axios.post(
+                    `/api/infer/${modelId}`,
+                    { inputs: chunk.map((row) => row.input) },
+                    { params: { top }, headers }
+                );
+                const outputs = response.data?.outputs || [];
+                chunk.forEach((row, index) => {
+                    results[start + index].prediction = outputs[index]
+                        ?? { error: "No output was returned for this input.", type: "Missing" };
+                });
+            } catch (error) {
+                if (error.response?.status === 404) {
+                    // The deployment vanished mid-run: flag the remaining
+                    // rows instead of dropping them and stop submitting.
+                    setAlert({
+                        variant: "warning",
+                        message: "The selected version isn't serving yet. Click reload to redeploy, then run the batch again."
+                    });
+                    for (let index = start; index < rows.length; index++) {
+                        results[index].prediction = {
+                            error: "Not run — the deployed version isn't serving.",
+                            type: "NotServing"
+                        };
+                    }
+                    setBatchProgress({ done: rows.length, total: rows.length });
+                    setBatchResults([...results]);
+                    break;
+                }
+                const data = error.response?.data;
+                const failure = {
+                    error: data?.error || error.message,
+                    type: data?.type || (error.response?.status === 504 ? "Timeout" : "RequestFailed")
+                };
+                chunk.forEach((row, index) => {
+                    results[start + index].prediction = { ...failure };
+                });
+            }
+            setBatchProgress({ done: Math.min(start + BATCH_CHUNK_SIZE, rows.length), total: rows.length });
+            setBatchResults([...results]);
+        }
+        setLatency(Math.round(performance.now() - startedAt));
+        setBatchRunning(false);
     };
 
     return (
@@ -974,7 +857,34 @@ const Test = () => {
                                         )}
                                     </Form.Group>
 
-                                    <Form onSubmit={handleSubmit} className="d-flex flex-column flex-grow-1">
+                                    <ButtonGroup size="sm" className="mb-3 align-self-start">
+                                        <Button
+                                            variant="light"
+                                            className="border d-inline-flex align-items-center gap-1"
+                                            active={mode === "single"}
+                                            onClick={() => {
+                                                setMode("single");
+                                                setActiveTab((previous) => (previous === "batch" ? "result" : previous));
+                                            }}
+                                        >
+                                            <CardText />&nbsp;Single
+                                        </Button>
+                                        <Button
+                                            variant="light"
+                                            className="border d-inline-flex align-items-center gap-1"
+                                            active={mode === "batch"}
+                                            onClick={() => {
+                                                setMode("batch");
+                                                setActiveTab("batch");
+                                            }}
+                                        >
+                                            <Files />&nbsp;Batch
+                                        </Button>
+                                    </ButtonGroup>
+
+                                    {/* Both surfaces stay mounted (hidden via d-none) so the
+                                        parsed CSV survives toggling between the modes. */}
+                                    <Form onSubmit={handleSubmit} className={`${mode === "single" ? "d-flex" : "d-none"} flex-column flex-grow-1`}>
                                         <Form.Label className="mb-1"><SectionLabel>Input</SectionLabel></Form.Label>
                                         <Form.Control
                                             as="textarea"
@@ -1075,6 +985,19 @@ const Test = () => {
                                             </Button>
                                         </div>
                                     </Form>
+
+                                    <div className={mode === "batch" ? "d-flex flex-column flex-grow-1" : "d-none"}>
+                                        <BatchPanel
+                                            isDeployed={isDeployed}
+                                            busy={busy || loading}
+                                            running={batchRunning}
+                                            progress={batchProgress}
+                                            top={top}
+                                            labelCount={labelCount}
+                                            onTopChange={setTop}
+                                            onRun={handleRunBatch}
+                                        />
+                                    </div>
                                 </>
                             )}
                         </Card.Body>
@@ -1116,6 +1039,9 @@ const Test = () => {
                                     <Nav.Item>
                                         <Nav.Link eventKey="json"><TabTitle icon={<Braces />}>JSON</TabTitle></Nav.Link>
                                     </Nav.Item>
+                                    <Nav.Item>
+                                        <Nav.Link eventKey="batch"><TabTitle icon={<Files />}>Batch</TabTitle></Nav.Link>
+                                    </Nav.Item>
 
                                         <Nav.Item>
                                             <Nav.Link disabled={!compareAvailable} eventKey="compare"><TabTitle icon={<ColumnsGap />}>Compare</TabTitle></Nav.Link>
@@ -1134,6 +1060,13 @@ const Test = () => {
                                         ) : (
                                             <EmptyState icon={<Braces />} minHeight="100%">The raw response will appear here.</EmptyState>
                                         )}
+                                    </Tab.Pane>
+                                    <Tab.Pane eventKey="batch" className="h-100">
+                                        <BatchResults
+                                            results={batchResults}
+                                            running={batchRunning}
+                                            progress={batchProgress}
+                                        />
                                     </Tab.Pane>
                                     {compareAvailable && (
                                         <Tab.Pane eventKey="compare" className="h-100 d-flex flex-column">
