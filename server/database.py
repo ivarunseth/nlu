@@ -186,13 +186,10 @@ class Model(db.Model):
             instance = self.instances.filter(Instance.environment == environment).first()
             
             if config[environment.name]:
-                # Keep the key and task id stable across redeploys, and the
-                # deployment config stable across reloads of the environment.
-                api_key, carried, task_id = None, None, None
+                # Keep the key stable across redeploys, and the deployment
+                # config stable across reloads of the environment.
+                api_key, carried = None, None
                 if instance:
-                    # Capture the id before forget() clears it, so the
-                    # recreated instance keeps serving under the same one.
-                    task_id = instance.task_id
                     instance_task = instance._get_task()
                     if instance_task:
                         if not instance.ready(instance_task):
@@ -213,7 +210,7 @@ class Model(db.Model):
                 elif params is not None:
                     carried = params
 
-                instance = Instance.create(environment, self, training, api_key=api_key, config=carried, task_id=task_id)
+                instance = Instance.create(environment, self, training, api_key=api_key, config=carried)
                 db.session.add(instance)
                 instance.start(**kwargs)
             
@@ -630,20 +627,17 @@ class Instance(db.Model):
         if task:
             if not self.ready(task):
                 self.stop(task)
-            # Preserve the task id across the restart.
-            self.forget(task, reset=False)
+            self.forget(task)
         self.date_receive = timestamp()
         self.start(**kwargs)
 
     @staticmethod
-    def create(environment, model, training, api_key=None, config=None, task_id=None):
+    def create(environment, model, training, api_key=None, config=None):
         return Instance(
             environment=environment,
             model=model,
             training=training,
-            # Assigned once and reused for the life of the deployment, so the
-            # task id stays stable across restarts, reloads and lazy revives.
-            task_id=task_id or uuid.uuid4().hex,
+            # task_id is minted fresh by start() on every (re)start.
             api_key=api_key or generate_secret(current_app.config['INFERENCE_API_KEY_NBYTES']),
             # Instances always carry a complete config, so partial or absent
             # input is normalized over the environment's defaults here.
@@ -675,14 +669,11 @@ class Instance(db.Model):
                 except:
                     pass
 
-    def forget(self, task=None, reset=True):
+    def forget(self, task=None):
         task = task or self._get_task()
         if task and isinstance(task, WorkerResult):
             task.forget()
-            # A restart clears the old result but keeps the id (reset=False) so
-            # the revived task runs under the same, stable task id.
-            if reset:
-                self.task_id = None
+            self.task_id = None
         # Make the model unroutable in its environment. A resident serving task
         # notices the missing route on its next loop and shuts itself down.
         registry_for(self.environment.name).revoke(self.model_id)
@@ -695,10 +686,10 @@ class Instance(db.Model):
         environment's Redis; the serving task is started lazily by the first
         prediction request. Set ``lazy=False`` in the model's options to launch it eagerly
         """
-        # Reuse the id assigned at creation so it stays stable across restarts;
-        # only mint one defensively if an instance somehow lacks it.
-        if not self.task_id:
-            self.task_id = uuid.uuid4().hex
+        # Mint a fresh task id on every (re)start so each serving task runs
+        # under its own id. The route carries it so a lazy revive of this same
+        # deployment reuses it until the next start/restart.
+        self.task_id = uuid.uuid4().hex
 
         registry = registry_for(self.environment.name)
 

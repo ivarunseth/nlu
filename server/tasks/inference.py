@@ -36,10 +36,17 @@ def model(self, model_id, path, model_type, **kwargs):
     heartbeat_ttl = setting('heartbeat_ttl', max(int(heartbeat_interval * 3), 1), int)
     output_ttl = setting('output_ttl', config.INFERENCE_OUTPUT_TTL, int)
 
+    # The route names the task id that owns this deployment; a run that was
+    # superseded while still queued must not load or serve under it.
+    if route is not None and route.task_id and route.task_id != self.request.id:
+        return
+
     lock = registry.lock(model_id, timeout=heartbeat_ttl)
 
     try:
-        if not lock.acquire():
+        # Wait briefly for a superseded predecessor to notice the republished
+        # route and release the lock, so restarts hand over without a dead start.
+        if not lock.acquire(blocking=True, blocking_timeout=heartbeat_ttl):
             return
     except LockError:
         return
@@ -64,7 +71,9 @@ def model(self, model_id, path, model_type, **kwargs):
 
         while True:
             route = registry.route(model_id)
-            if route is None:
+            # Exit when unpublished, or when a restart republished the route
+            # under a new task id: this run no longer owns the deployment.
+            if route is None or (route.task_id and route.task_id != self.request.id):
                 break
 
             raw = registry.watch(queue, batch_size)
@@ -110,11 +119,21 @@ def model(self, model_id, path, model_type, **kwargs):
                     last_heartbeat = now
 
     finally:
-        if online:
-            registry.offline(model_id)
-            registry.purge(model_id)
         try:
-            lock.release()
-        except LockError:
-            pass
+            owned = lock.owned()
+        except Exception:
+            owned = False
+        # Clean up only while still holding the serving lock: a superseded
+        # task that lost it must not wipe the alive flag, start claim or
+        # cached outputs of the replacement that already took over.
+        if owned:
+            if online:
+                registry.offline(model_id)
+                registry.purge(model_id)
+        
+            try:
+                lock.release()
+            except LockError:
+                pass
+        
         shutil.rmtree(directory, ignore_errors=True)
