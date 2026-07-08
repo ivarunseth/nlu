@@ -32,7 +32,9 @@ import {
     ArrowCounterclockwise,
     FiletypeCsv,
     FiletypePng,
-    Collection
+    Collection,
+    Stopwatch,
+    Bullseye
 } from "react-bootstrap-icons";
 import {
     LineChart,
@@ -56,7 +58,7 @@ import { useSocket } from "../../../../contexts/SocketContext";
 import { CardHeading, EmptyMessage } from "../../../../shared/components/SectionCard";
 import downloadBlob from "../../../../shared/utils/downloadBlob";
 import chartPng from "../../../../shared/utils/chartPng";
-import { getReport, getTrainingAccuracy, getConfusionMatrix, reportRows } from "../../../../shared/utils/training";
+import { getReport, getTrainingAccuracy, getTrainingTrainAccuracy, getLatestHistoryMetric, getTrainingRuntime, formatDuration, getConfusionMatrix, reportRows } from "../../../../shared/utils/training";
 import { Link, useParams } from "react-router-dom";
 import useDebounce from "../../../../shared/hooks/useDebounce";
 import axios from "axios";
@@ -551,7 +553,15 @@ const TabTitle = ({ icon, children }) => (
 );
 
 const MetricStrip = ({ training, onStopTraining, stoppingTraining, onRestartTraining, restartingTraining }) => {
-    const accuracy = getTrainingAccuracy(training);
+    const testAccuracy = getTrainingAccuracy(training);
+    const active = isTrainingActive(training);
+    // While a run is active the train accuracy streams in live via history;
+    // once it succeeds the final evaluated train accuracy takes over.
+    const trainAccuracy = training?.status === 'SUCCESS'
+        ? getTrainingTrainAccuracy(training)
+        : getLatestHistoryMetric(training, 'accuracy');
+    const hasTestAccuracy = training?.status === 'SUCCESS' && testAccuracy !== null;
+    const hasTrainAccuracy = trainAccuracy !== null && trainAccuracy !== undefined;
 
     const items = [
         { label: 'Version', value: training?.version, icon: <Hash /> },
@@ -594,11 +604,36 @@ const MetricStrip = ({ training, onStopTraining, stoppingTraining, onRestartTrai
         { label: 'Started', value: training?.created_at, icon: <Clock /> },
         { label: 'Completed', value: training?.date_done || '-', icon: <Calendar3 /> },
         {
-            label: 'Accuracy',
-            value: training?.status === 'SUCCESS' && accuracy !== null ? (
-                <span className="fw-bold">{(accuracy * 100).toFixed(2)}%</span>
-            ) : '-',
+            label: 'Train Accuracy',
+            value: (
+                <div className="d-flex align-items-center justify-content-between w-100">
+                    <span className="fw-bold text-body-emphasis font-monospace">
+                        {hasTrainAccuracy
+                            ? `${(trainAccuracy * 100).toFixed(2)}%`
+                            : '—'}
+                    </span>
+
+                    {active && (
+                        <Spinner
+                            animation="border"
+                            size="sm"
+                            variant="primary"
+                        />
+                    )}
+                </div>
+            ),
             icon: <GraphUp />
+        },
+        {
+            label: 'Test Accuracy',
+            value: hasTestAccuracy
+                ? (
+                    <span className="fw-bold text-body-emphasis font-monospace">
+                        {(testAccuracy * 100).toFixed(2)}%
+                    </span>
+                )
+                : '—',
+            icon: <Bullseye />
         }
     ];
 
@@ -611,7 +646,7 @@ const MetricStrip = ({ training, onStopTraining, stoppingTraining, onRestartTrai
                             <div className="text-primary me-3 fs-4">
                                 {item.icon}
                             </div>
-                            <div>
+                            <div className="flex-grow-1" style={{ minWidth: 0 }}>
                                 <div className="text-muted small fw-bold" style={{ fontSize: '0.65rem' }}>{item.label}</div>
                                 <div className="text-body-emphasis small fw-medium">{item.value || '-'}</div>
                             </div>
@@ -695,12 +730,12 @@ const ConfusionMatrix = ({ training, split }) => {
                         <thead className="sticky-top bg-body shadow-sm" style={{ zIndex: 10 }}>
                             <tr className="border-bottom border-light-subtle">
                                 <th className="border-end border-light-subtle bg-body-tertiary text-center p-0"
-                                    style={{ 
-                                        width: '120px', 
-                                        minWidth: '120px', 
-                                        position: 'sticky', 
-                                        left: 0, 
-                                        zIndex: 11 
+                                    style={{
+                                        width: '120px',
+                                        minWidth: '120px',
+                                        position: 'sticky',
+                                        left: 0,
+                                        zIndex: 11
                                     }}>
                                     <div className="d-flex flex-column text-muted fw-bold p-1" style={{ fontSize: '0.55rem', lineHeight: 1.1 }}>
                                         <div className="text-end pe-1 border-bottom pb-1 mb-1">PREDICTED &rarr;</div>
@@ -720,14 +755,14 @@ const ConfusionMatrix = ({ training, split }) => {
                             {matrix.map((row, rowIndex) => (
                                 <tr key={rowIndex} className="border-bottom border-light-subtle">
                                     <td className="border-end border-light-subtle fw-bold text-muted text-end px-2 py-2 text-truncate bg-body-tertiary"
-                                        style={{ 
-                                            width: '120px', 
-                                            minWidth: '120px', 
-                                            position: 'sticky', 
-                                            left: 0, 
+                                        style={{
+                                            width: '120px',
+                                            minWidth: '120px',
+                                            position: 'sticky',
+                                            left: 0,
                                             zIndex: 9,
                                             fontSize: '0.7rem'
-                                        }} 
+                                        }}
                                         title={labels[rowIndex]}>
                                         {labels[rowIndex]}
                                     </td>
@@ -1289,7 +1324,7 @@ const TrainingVersion = () => {
                 try {
                     setLoading(true);
                     const headers = { "Authorization": `Bearer ${user.token}` };
-                    
+
                     // Fetch current training
                     const trainingResponse = await axios.get(`/api/models/${modelId}/trainings/${trainingId}`, {
                         params: { extended: '1' },
@@ -1303,7 +1338,7 @@ const TrainingVersion = () => {
                         params: { extended: '1', per_page: 100 },
                         headers
                     });
-                    
+
                     const allTrainings = listResponse.data.trainings || [];
                     const currentIndex = allTrainings.findIndex(t => t.id === currentTraining.id);
                     let previous = null;
@@ -1395,9 +1430,9 @@ const TrainingVersion = () => {
                         onRestartTraining={() => setShowRestartConfirmation(true)}
                         restartingTraining={restartingTraining}
                     />
-                    <TrainingInspector 
-                        training={training} 
-                        previousTraining={previousTraining} 
+                    <TrainingInspector
+                        training={training}
+                        previousTraining={previousTraining}
                         trainingData={trainingData}
                         previousTrainingData={previousTrainingData}
                     />
@@ -2131,14 +2166,16 @@ const History = () => {
                                         <th><Activity className="text-muted" />&nbsp;Status</th>
                                         <th><Clock className="text-muted" />&nbsp;Started</th>
                                         <th><Calendar3 className="text-muted" />&nbsp;Completed</th>
-                                        <th><GraphUp className="text-muted" />&nbsp;Accuracy (%)</th>
+                                        <th><Stopwatch className="text-muted" />&nbsp;Runtime</th>
+                                        <th><GraphUp className="text-muted" />&nbsp;Train acc (%)</th>
+                                        <th><Bullseye className="text-muted" />&nbsp;Test acc (%)</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {loading ? (
                                         <tr >
                                             <td
-                                                colSpan={6}
+                                                colSpan={8}
                                                 style={{
                                                     verticalAlign: 'middle'
                                                 }}
@@ -2164,12 +2201,19 @@ const History = () => {
                                                 <td>{getTrainingStatusBadge(training.status)}</td>
                                                 <td className="small text-muted">{training.created_at}</td>
                                                 <td className="small text-muted">{training.date_done}</td>
+                                                <td className="small text-muted">{formatDuration(getTrainingRuntime(training)) || ''}</td>
+                                                <td className="font-monospace">{(() => {
+                                                    const trainAcc = training.status === 'SUCCESS'
+                                                        ? getTrainingTrainAccuracy(training)
+                                                        : getLatestHistoryMetric(training, 'accuracy');
+                                                    return trainAcc !== null && trainAcc !== undefined ? (trainAcc * 100).toFixed(2) : '';
+                                                })()}</td>
                                                 <td className="font-monospace">{training.status === 'SUCCESS' && getTrainingAccuracy(training) !== null && (getTrainingAccuracy(training) * 100).toFixed(2)}</td>
                                             </tr>
                                         )) : query !== '' ? (
                                             <tr>
                                                 <td
-                                                    colSpan={6}
+                                                    colSpan={8}
                                                     style={{
                                                         verticalAlign: 'middle'
                                                     }}
@@ -2182,7 +2226,7 @@ const History = () => {
                                         ) : (
                                             <tr>
                                                 <td
-                                                    colSpan={6}
+                                                    colSpan={8}
                                                     style={{
                                                         verticalAlign: 'middle'
                                                     }}
@@ -2263,142 +2307,142 @@ const History = () => {
                         </div>
                     </Modal.Body>
                 ) : (
-                <Form noValidate onSubmit={handleContinueTraining}>
-                    <Modal.Body>
-                        <div style={{ minHeight: '18rem' }}>
-                            <Tabs
-                                variant="pills"
-                                activeKey={trainingTab}
-                                onSelect={(key) => setTrainingTab(key)}
-                                className="small mb-3"
-                                justify
-                            >
-                                <Tab eventKey="data" title="Data">
-                                    <Row>
-                                        <Col sm={6}>{renderSliderControl('test_split', 'Test split')}</Col>
-                                        <Col sm={6}>{renderSliderControl('validation_split', 'Validation split')}</Col>
-                                    </Row>
-                                </Tab>
-                                <Tab eventKey="model" title="Model">
-                                    <TrainingField id="training-architecture" label="Architecture" help={PARAMETER_DOCS.architecture}>
-                                        <Form.Select
-                                            size="sm"
-                                            value={paramters.architecture}
-                                            onChange={(e) => handleArchitectureChange(e.target.value)}
-                                        >
-                                            {architectureOptions.map((architecture) => (
-                                                <option key={architecture} value={architecture}>
-                                                    {ARCHITECTURE_LABELS[architecture] || architecture}
-                                                </option>
-                                            ))}
-                                        </Form.Select>
-                                    </TrainingField>
-                                    {paramters.architecture === 'transformer' && (
-                                        <>
-                                            <TrainingField id="training-pretrained-model" label="Pretrained model" help={PARAMETER_DOCS.pretrained_model}>
-                                                <Form.Select
-                                                    size="sm"
-                                                    value={paramters.pretrained_model}
-                                                    onChange={(e) => updateParameter('pretrained_model', e.target.value)}
-                                                >
-                                                    {PRETRAINED_MODELS.map((pretrainedModel) => (
-                                                        <option key={pretrainedModel} value={pretrainedModel}>{pretrainedModel}</option>
-                                                    ))}
-                                                </Form.Select>
-                                            </TrainingField>
-                                            {renderSwitchControl('trainable', 'Trainable encoder')}
-                                        </>
-                                    )}
-                                    <Row>
-                                        <Col sm={6}>
-                                            {paramters.architecture === 'transformer'
-                                                ? renderNumberControl('max_seq_len', 'Sequence length')
-                                                : renderNumberControl('sequence_length', 'Sequence length')}
-                                        </Col>
-                                        {['deep_neural_network', 'recurrent_neural_network'].includes(paramters.architecture) && (
-                                            <>
-                                                <Col sm={6}>{renderNumberControl('max_tokens', 'Max tokens')}</Col>
-                                                <Col sm={6}>{renderNumberControl('embedding_dims', 'Embedding dimensions')}</Col>
-                                            </>
-                                        )}
-                                        {paramters.architecture === 'recurrent_neural_network' && (
-                                            <Col sm={6}>{renderNumberControl('lstm_dims', 'LSTM dimensions')}</Col>
-                                        )}
-                                        {paramters.architecture === 'transformer' && model?.type !== 'named_entity_recognition' && (
-                                            <Col sm={6}>{renderNumberControl('units', 'Dense units')}</Col>
-                                        )}
-                                        {(paramters.architecture !== 'transformer' || model?.type !== 'named_entity_recognition') && (
-                                            <Col sm={6}>{renderSliderControl('dropout', 'Dropout rate')}</Col>
-                                        )}
-                                    </Row>
-                                </Tab>
-                                <Tab eventKey="schedule" title="Schedule">
-                                    <Row>
-                                        <Col sm={6}>{renderNumberControl('epochs', 'Epochs')}</Col>
-                                        <Col sm={6}>{renderNumberControl('batch_size', 'Batch size')}</Col>
-                                        <Col sm={6}>{renderNumberControl('learning_rate', 'Learning rate')}</Col>
-                                    </Row>
-                                </Tab>
-                                <Tab eventKey="callbacks" title="Callbacks">
-                                    {renderSwitchControl('early_stopping', 'Early stopping')}
-                                    {paramters.early_stopping && (
+                    <Form noValidate onSubmit={handleContinueTraining}>
+                        <Modal.Body>
+                            <div style={{ minHeight: '18rem' }}>
+                                <Tabs
+                                    variant="pills"
+                                    activeKey={trainingTab}
+                                    onSelect={(key) => setTrainingTab(key)}
+                                    className="small mb-3"
+                                    justify
+                                >
+                                    <Tab eventKey="data" title="Data">
                                         <Row>
-                                            <Col sm={6}>
-                                                <TrainingField id="training-monitor" label="Monitor" help={PARAMETER_DOCS.monitor}>
+                                            <Col sm={6}>{renderSliderControl('test_split', 'Test split')}</Col>
+                                            <Col sm={6}>{renderSliderControl('validation_split', 'Validation split')}</Col>
+                                        </Row>
+                                    </Tab>
+                                    <Tab eventKey="model" title="Model">
+                                        <TrainingField id="training-architecture" label="Architecture" help={PARAMETER_DOCS.architecture}>
+                                            <Form.Select
+                                                size="sm"
+                                                value={paramters.architecture}
+                                                onChange={(e) => handleArchitectureChange(e.target.value)}
+                                            >
+                                                {architectureOptions.map((architecture) => (
+                                                    <option key={architecture} value={architecture}>
+                                                        {ARCHITECTURE_LABELS[architecture] || architecture}
+                                                    </option>
+                                                ))}
+                                            </Form.Select>
+                                        </TrainingField>
+                                        {paramters.architecture === 'transformer' && (
+                                            <>
+                                                <TrainingField id="training-pretrained-model" label="Pretrained model" help={PARAMETER_DOCS.pretrained_model}>
                                                     <Form.Select
                                                         size="sm"
-                                                        value={paramters.monitor}
-                                                        onChange={(e) => updateParameter('monitor', e.target.value)}
+                                                        value={paramters.pretrained_model}
+                                                        onChange={(e) => updateParameter('pretrained_model', e.target.value)}
                                                     >
-                                                        {monitorOptions.map(([value, label]) => (
-                                                            <option key={value} value={value}>{label}</option>
+                                                        {PRETRAINED_MODELS.map((pretrainedModel) => (
+                                                            <option key={pretrainedModel} value={pretrainedModel}>{pretrainedModel}</option>
                                                         ))}
                                                     </Form.Select>
                                                 </TrainingField>
+                                                {renderSwitchControl('trainable', 'Trainable encoder')}
+                                            </>
+                                        )}
+                                        <Row>
+                                            <Col sm={6}>
+                                                {paramters.architecture === 'transformer'
+                                                    ? renderNumberControl('max_seq_len', 'Sequence length')
+                                                    : renderNumberControl('sequence_length', 'Sequence length')}
                                             </Col>
-                                            <Col sm={6}>{renderNumberControl('patience', 'Patience')}</Col>
-                                        </Row>
-                                    )}
-                                    {model?.type === 'text_classification' && (
-                                        <>
-                                            {renderSwitchControl('pruning', 'Weight pruning')}
-                                            {paramters.pruning && (
-                                                <Row>
-                                                    <Col sm={6}>{renderSliderControl('initial_sparsity', 'Initial sparsity')}</Col>
-                                                    <Col sm={6}>{renderSliderControl('final_sparsity', 'Final sparsity')}</Col>
-                                                    <Col sm={6}>{renderNumberControl('pruning_begin_step', 'Begin step')}</Col>
-                                                    <Col sm={6}>{renderNumberControl('pruning_end_step', 'End step')}</Col>
-                                                    <Col sm={6}>{renderNumberControl('pruning_frequency', 'Update frequency')}</Col>
-                                                </Row>
+                                            {['deep_neural_network', 'recurrent_neural_network'].includes(paramters.architecture) && (
+                                                <>
+                                                    <Col sm={6}>{renderNumberControl('max_tokens', 'Max tokens')}</Col>
+                                                    <Col sm={6}>{renderNumberControl('embedding_dims', 'Embedding dimensions')}</Col>
+                                                </>
                                             )}
-                                        </>
-                                    )}
-                                    <Row>
-                                        <Col sm={6}>{renderNumberControl('weight_decay_rate', 'Weight decay')}</Col>
-                                        <Col sm={6}>{renderNumberControl('num_warmup_steps', 'Warmup steps')}</Col>
-                                    </Row>
-                                </Tab>
-                                <Tab eventKey="export" title="Export">
-                                    <TrainingField id="training-save-format" label="Save format" help={PARAMETER_DOCS.save_format}>
-                                        <Form.Select
-                                            size="sm"
-                                            value={paramters.save_format}
-                                            onChange={(e) => updateParameter('save_format', e.target.value)}
-                                        >
-                                            {SAVE_FORMAT_OPTIONS.map(([value, label]) => (
-                                                <option key={value} value={value}>{label}</option>
-                                            ))}
-                                        </Form.Select>
-                                    </TrainingField>
-                                </Tab>
-                            </Tabs>
-                        </div>
-                        <div className="d-flex justify-content-end gap-2">
-                            <Button variant="light" size="sm" className="border small" onClick={handleCloseStartTraining}>CANCEL</Button>
-                            <Button variant="primary" size="sm" className="small" type="submit">CONTINUE</Button>
-                        </div>
-                    </Modal.Body>
-                </Form>
+                                            {paramters.architecture === 'recurrent_neural_network' && (
+                                                <Col sm={6}>{renderNumberControl('lstm_dims', 'LSTM dimensions')}</Col>
+                                            )}
+                                            {paramters.architecture === 'transformer' && model?.type !== 'named_entity_recognition' && (
+                                                <Col sm={6}>{renderNumberControl('units', 'Dense units')}</Col>
+                                            )}
+                                            {(paramters.architecture !== 'transformer' || model?.type !== 'named_entity_recognition') && (
+                                                <Col sm={6}>{renderSliderControl('dropout', 'Dropout rate')}</Col>
+                                            )}
+                                        </Row>
+                                    </Tab>
+                                    <Tab eventKey="schedule" title="Schedule">
+                                        <Row>
+                                            <Col sm={6}>{renderNumberControl('epochs', 'Epochs')}</Col>
+                                            <Col sm={6}>{renderNumberControl('batch_size', 'Batch size')}</Col>
+                                            <Col sm={6}>{renderNumberControl('learning_rate', 'Learning rate')}</Col>
+                                        </Row>
+                                    </Tab>
+                                    <Tab eventKey="callbacks" title="Callbacks">
+                                        {renderSwitchControl('early_stopping', 'Early stopping')}
+                                        {paramters.early_stopping && (
+                                            <Row>
+                                                <Col sm={6}>
+                                                    <TrainingField id="training-monitor" label="Monitor" help={PARAMETER_DOCS.monitor}>
+                                                        <Form.Select
+                                                            size="sm"
+                                                            value={paramters.monitor}
+                                                            onChange={(e) => updateParameter('monitor', e.target.value)}
+                                                        >
+                                                            {monitorOptions.map(([value, label]) => (
+                                                                <option key={value} value={value}>{label}</option>
+                                                            ))}
+                                                        </Form.Select>
+                                                    </TrainingField>
+                                                </Col>
+                                                <Col sm={6}>{renderNumberControl('patience', 'Patience')}</Col>
+                                            </Row>
+                                        )}
+                                        {model?.type === 'text_classification' && (
+                                            <>
+                                                {renderSwitchControl('pruning', 'Weight pruning')}
+                                                {paramters.pruning && (
+                                                    <Row>
+                                                        <Col sm={6}>{renderSliderControl('initial_sparsity', 'Initial sparsity')}</Col>
+                                                        <Col sm={6}>{renderSliderControl('final_sparsity', 'Final sparsity')}</Col>
+                                                        <Col sm={6}>{renderNumberControl('pruning_begin_step', 'Begin step')}</Col>
+                                                        <Col sm={6}>{renderNumberControl('pruning_end_step', 'End step')}</Col>
+                                                        <Col sm={6}>{renderNumberControl('pruning_frequency', 'Update frequency')}</Col>
+                                                    </Row>
+                                                )}
+                                            </>
+                                        )}
+                                        <Row>
+                                            <Col sm={6}>{renderNumberControl('weight_decay_rate', 'Weight decay')}</Col>
+                                            <Col sm={6}>{renderNumberControl('num_warmup_steps', 'Warmup steps')}</Col>
+                                        </Row>
+                                    </Tab>
+                                    <Tab eventKey="export" title="Export">
+                                        <TrainingField id="training-save-format" label="Save format" help={PARAMETER_DOCS.save_format}>
+                                            <Form.Select
+                                                size="sm"
+                                                value={paramters.save_format}
+                                                onChange={(e) => updateParameter('save_format', e.target.value)}
+                                            >
+                                                {SAVE_FORMAT_OPTIONS.map(([value, label]) => (
+                                                    <option key={value} value={value}>{label}</option>
+                                                ))}
+                                            </Form.Select>
+                                        </TrainingField>
+                                    </Tab>
+                                </Tabs>
+                            </div>
+                            <div className="d-flex justify-content-end gap-2">
+                                <Button variant="light" size="sm" className="border small" onClick={handleCloseStartTraining}>CANCEL</Button>
+                                <Button variant="primary" size="sm" className="small" type="submit">CONTINUE</Button>
+                            </div>
+                        </Modal.Body>
+                    </Form>
                 )}
             </Modal>
             <Modal centered show={Boolean(trainingAction)} onHide={() => setTrainingAction(null)}>
