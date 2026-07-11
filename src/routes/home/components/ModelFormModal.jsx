@@ -52,8 +52,8 @@ const ModelFormModal = ({
                         <Form.Floating>
                             <Form.Select id="model-type" value={type} onChange={(e) => onTypeChange(e.target.value)}>
                                 <option value="text_classification">Text classification</option>
-                                <option value="token_classification">Token classification</option>
-                                <option value="language_understanding">Language understanding</option>
+                                <option value="named_entity_recognition">Named entity recognition</option>
+                                <option value="natural_language_understanding">Language understanding</option>
                             </Form.Select>
                             <Form.Label htmlFor="model-type">Type</Form.Label>
                         </Form.Floating>

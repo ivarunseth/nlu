@@ -141,3 +141,22 @@ code {
   -ms-overflow-style: none;  /* IE and Edge */
   scrollbar-width: none;  /* Firefox */
 }
+
+.entity-picker-item {
+    cursor: pointer;
+    transition: background-color 0.12s ease;
+    border-radius: 6px;
+    margin: 0 6px;
+}
+
+.entity-picker-item:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+.entity-picker-item:active {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+.entity-picker-item .entity-dot {
+    flex-shrink: 0;
+}

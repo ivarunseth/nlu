@@ -16,7 +16,7 @@ import { PredictionView, JsonView, isErrorPrediction, getLabels } from "./Predic
 
 // Compact per-row summary of a prediction, matching PredictionView's shape
 // branching: top label + score (classification), intent badge (NLU), entity
-// count (NER), a danger badge for error envelopes.
+// count (named entity recognition), a danger badge for error envelopes.
 const RowSummary = ({ prediction }) => {
     if (prediction == null) {
         return <Spinner animation="border" size="sm" variant="secondary" />;
@@ -38,8 +38,10 @@ const RowSummary = ({ prediction }) => {
     if (typeof prediction === "object" && !Array.isArray(prediction) && "intent" in prediction) {
         return <Badge bg="primary" className="fw-medium">{prediction.intent}</Badge>;
     }
-    if (Array.isArray(prediction)) {
-        const entities = prediction.filter((tag) => tag && tag !== "O").length;
+    if (typeof prediction === "object" && !Array.isArray(prediction) && Array.isArray(prediction.tags)) {
+        const entities = Array.isArray(prediction.entities)
+            ? prediction.entities.length
+            : prediction.tags.filter((tag) => tag && tag !== "O").length;
         return (
             <Badge bg="secondary-subtle" text="body-emphasis" className="border fw-normal">
                 {entities} entit{entities === 1 ? "y" : "ies"}
@@ -90,7 +92,7 @@ const exportRow = (row, metaColumns) => {
 // The Batch tab of the response panel: a glanceable summary strip, a
 // filterable/sortable list with one row per input, and an expandable detail
 // per row that reuses the single-mode renderers.
-const BatchResults = ({ results, running, progress }) => {
+const BatchResults = ({ results, running, progress, colorOf }) => {
     const [search, setSearch] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
     const [sortBy, setSortBy] = useState("order");
@@ -307,7 +309,7 @@ const BatchResults = ({ results, running, progress }) => {
                                                     <JsonView data={row.prediction} />
                                                 </div>
                                             ) : (
-                                                <PredictionView prediction={row.prediction} query={row.input} />
+                                                <PredictionView prediction={row.prediction} query={row.input} colorOf={colorOf} />
                                             )}
                                         </div>
                                     )}

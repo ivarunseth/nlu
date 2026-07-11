@@ -2,11 +2,14 @@ import { useMemo, useState } from "react";
 import { Alert, Badge, Button } from "react-bootstrap";
 import { Clipboard, ClipboardCheck, ExclamationTriangle, SortDown } from "react-bootstrap-icons";
 import { SectionLabel, EmptyState } from "../../../../../shared/components/SectionCard";
+import TokenTags from "../../../../../shared/components/TokenTags";
+import EntityHighlights from "../../../../../shared/components/EntityHighlights";
 
 // Prediction rendering shared by the Test page's single, compare and batch
 // result surfaces. The output shape is self-describing, so no model-type
 // flag is threaded through: text classification is { outputs: [{ label,
-// score }] }, NLU is { intent, slots }, NER is a plain tag list.
+// score }] }, NLU is { intent, slots }, named entity recognition is { tags,
+// entities }.
 
 // A prediction that is a plain error payload rather than a model output.
 export const isErrorPrediction = (prediction) =>
@@ -17,6 +20,14 @@ export const isErrorPrediction = (prediction) =>
 export const getLabels = (prediction) =>
     prediction != null && typeof prediction === "object" && !Array.isArray(prediction) && Array.isArray(prediction.labels)
         ? prediction.labels
+        : null;
+
+// The [{ entity, value, start, end, score }] list of a named-entity-recognition
+// prediction (possibly empty), or null when the prediction is not NER. NER
+// predictions are self-describing by their `tags` array.
+export const getEntities = (prediction) =>
+    prediction != null && typeof prediction === "object" && !Array.isArray(prediction) && Array.isArray(prediction.tags)
+        ? (Array.isArray(prediction.entities) ? prediction.entities : [])
         : null;
 
 export const scoresClose = (a, b) => Math.abs((a || 0) - (b || 0)) < 1e-6;
@@ -38,32 +49,13 @@ export const ScoreBar = ({ score, variant = "primary" }) => {
     );
 };
 
-export const TokenTags = ({ query, tags }) => {
-    const tokens = (query || "").trim().split(/\s+/).filter(Boolean);
-    const aligned = tokens.length === tags.length;
-    const items = aligned ? tokens.map((token, index) => ({ token, tag: tags[index] })) : tags.map((tag) => ({ token: null, tag }));
-    return (
-        <div className="d-flex flex-wrap gap-2">
-            {items.map((item, index) => (
-                <div key={index} className="border border-light-subtle rounded text-center bg-body" style={{ minWidth: "60px" }}>
-                    {item.token !== null && (
-                        <div className="px-2 py-1 border-bottom border-light-subtle small fw-medium text-break">{item.token}</div>
-                    )}
-                    <div className="px-2 py-1">
-                        <Badge bg={item.tag && item.tag !== "O" ? "primary" : "secondary-subtle"} text={item.tag && item.tag !== "O" ? undefined : "muted"} className="font-monospace fw-normal">
-                            {item.tag}
-                        </Badge>
-                    </div>
-                </div>
-            ))}
-        </div>
-    );
-};
-
 // `reference` is development's prediction; when supplied, each output whose
 // label differs is flagged in danger and each whose score differs (same label)
-// gets a warning score bar.
-export const PredictionView = ({ prediction, query, reference }) => {
+// gets a warning score bar. `colorOf` maps an entity/slot name to a colour and
+// is threaded to the entity highlights and IOB token chips so a prediction
+// paints each entity in the colour assigned to it in Build (not a hash); when
+// omitted, those components fall back to the deterministic name-based palette.
+export const PredictionView = ({ prediction, query, reference, colorOf }) => {
     if (prediction == null) {
         return <EmptyState icon={<SortDown />} minHeight="100%">Run a query to see the result.</EmptyState>;
     }
@@ -126,7 +118,7 @@ export const PredictionView = ({ prediction, query, reference }) => {
                     <div>
                         <SectionLabel>Slots</SectionLabel>
                         <div className="mt-2">
-                            <TokenTags query={query} tags={prediction.slots} />
+                            <TokenTags query={query} tags={prediction.slots} colorOf={colorOf} />
                         </div>
                     </div>
                 )}
@@ -134,13 +126,24 @@ export const PredictionView = ({ prediction, query, reference }) => {
         );
     }
 
-    // Named entity recognition: [tag, tag, ...]
-    if (Array.isArray(prediction)) {
+    // Named entity recognition: { tags: [...], entities: [...] } with one IOB
+    // tag per whitespace token of the query. Show the reconstructed entities
+    // highlighted over the query, then the per-token IOB chips.
+    const entities = getEntities(prediction);
+    if (entities) {
         return (
             <div>
-                <SectionLabel>Entities</SectionLabel>
+                {entities.length > 0 && (
+                    <div className="mb-4">
+                        <SectionLabel>Entities</SectionLabel>
+                        <div className="mt-2">
+                            <EntityHighlights text={query} entities={entities} colorOf={colorOf} />
+                        </div>
+                    </div>
+                )}
+                <SectionLabel>Tokens</SectionLabel>
                 <div className="mt-2">
-                    <TokenTags query={query} tags={prediction} />
+                    <TokenTags query={query} tags={prediction.tags} colorOf={colorOf} />
                 </div>
             </div>
         );

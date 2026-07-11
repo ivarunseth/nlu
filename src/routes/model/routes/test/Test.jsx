@@ -34,8 +34,9 @@ import { useParams } from "react-router-dom";
 import { UserContext } from "../../../../contexts/UserContext";
 import { useSocket } from "../../../../contexts/SocketContext";
 import { SectionLabel, CardHeading, EmptyState } from "../../../../shared/components/SectionCard";
+import { entityColor } from "../../../../shared/components/entityColors";
 import { parseApiDate } from "../../../../shared/utils/training";
-import { isErrorPrediction, getLabels, scoresClose, PredictionView, JsonView } from "./components/Prediction";
+import { isErrorPrediction, getLabels, getEntities, scoresClose, PredictionView, JsonView } from "./components/Prediction";
 import BatchPanel from "./components/BatchPanel";
 import BatchResults from "./components/BatchResults";
 import axios from "axios";
@@ -75,9 +76,14 @@ const comparableContent = (prediction) => {
     );
 };
 
+// A named-entity-recognition span's identity for comparison: entity type plus
+// its character boundaries. Two predictions match only if their span sets are
+// identical (a partially-correct span is a different span).
+const entityKey = (entity) => `${entity.entity}${entity.start}${entity.end}`;
+
 // How a comparison environment's prediction relates to development's:
-// "differ" (labels changed), "scores" (same labels, different confidence),
-// "match", or null when either side is missing or an error.
+// "differ" (labels/spans changed), "scores" (same labels/spans, different
+// confidence), "match", or null when either side is missing or an error.
 const comparePredictions = (reference, prediction) => {
     if (reference == null || prediction == null) return null;
     if (isErrorPrediction(reference) || isErrorPrediction(prediction)) return null;
@@ -89,6 +95,21 @@ const comparePredictions = (reference, prediction) => {
             && referenceLabels.every((item, index) => item.name === labels[index].name);
         if (!labelsMatch) return "differ";
         const scoresMatch = referenceLabels.every((item, index) => scoresClose(item.score, labels[index].score));
+        return scoresMatch ? "match" : "scores";
+    }
+
+    // Named entity recognition: compare the reconstructed entity spans, not the
+    // whole JSON (envelope and per-token scores would spuriously "differ").
+    const referenceEntities = getEntities(reference);
+    const entities = getEntities(prediction);
+    if (referenceEntities && entities) {
+        const referenceKeys = referenceEntities.map(entityKey).sort();
+        const keys = entities.map(entityKey).sort();
+        const spansMatch = referenceKeys.length === keys.length
+            && referenceKeys.every((key, index) => key === keys[index]);
+        if (!spansMatch) return "differ";
+        const referenceScore = Object.fromEntries(referenceEntities.map((entity) => [entityKey(entity), entity.score]));
+        const scoresMatch = entities.every((entity) => scoresClose(referenceScore[entityKey(entity)], entity.score));
         return scoresMatch ? "match" : "scores";
     }
 
@@ -254,7 +275,7 @@ const StatusDot = ({ color }) => (
 // column passes `isReference`; the others pass development's prediction as
 // `reference` so the header can flag agreement and, in JSON view, show a diff.
 // `view` is "result" (rendered prediction) or "json" (raw / diff).
-const CompareColumn = ({ name, version, deployed, loading, entry, query, reference, isReference, view }) => {
+const CompareColumn = ({ name, version, deployed, loading, entry, query, reference, isReference, view, colorOf }) => {
     const prediction = entry?.prediction;
     const status = isReference ? null : comparePredictions(reference, prediction);
     const badge = status ? COMPARE_STATUS[status] : null;
@@ -277,7 +298,7 @@ const CompareColumn = ({ name, version, deployed, loading, entry, query, referen
         //     : <JsonView data={prediction} />;
         body = <JsonView data={prediction} />;
     } else {
-        body = <PredictionView prediction={prediction} query={query} reference={isReference ? undefined : reference} />;
+        body = <PredictionView prediction={prediction} query={query} reference={isReference ? undefined : reference} colorOf={colorOf} />;
     }
 
     return (
@@ -358,6 +379,7 @@ const Test = () => {
     const [query, setQuery] = useState("");
     const [top, setTop] = useState(1);
     const [labelCount, setLabelCount] = useState(0);
+    const [labels, setLabels] = useState([]);
     const [result, setResult] = useState(null);
     const [latency, setLatency] = useState(null);
     const [alert, setAlert] = useState(null);
@@ -439,6 +461,16 @@ const Test = () => {
         return map;
     }, [trainings]);
 
+    // Map an entity/slot name to the colour assigned to it in Build, so a
+    // prediction's highlighted spans and IOB token chips read in the same colour
+    // language as the annotation workspace. Names with no stored label (e.g. an
+    // entity the model predicts that was never defined) fall back to the
+    // deterministic name-based palette.
+    const colorOf = useMemo(() => {
+        const byName = new Map(labels.map((label) => [label.name, label.color]));
+        return (name) => byName.get(name) || entityColor(name);
+    }, [labels]);
+
     const deployedVersion = deployedTrainingId != null ? versionOf[String(deployedTrainingId)] : null;
     const isDeployed = deployedTrainingId != null;
     const busy = deploying || stopping;
@@ -475,7 +507,9 @@ const Test = () => {
                 const [trainingsResponse, instancesResponse, labelsResponse] = await Promise.all([
                     axios.get(`/api/models/${modelId}/trainings`, { params: { per_page: 100 }, headers }),
                     axios.get(`/api/models/${modelId}/instances`, { headers }),
-                    axios.get(`/api/models/${modelId}/labels`, { params: { per_page: 1 }, headers })
+                    // Pull the labels with their assigned colours so a prediction
+                    // paints each entity in the colour it was given in Build.
+                    axios.get(`/api/models/${modelId}/labels`, { params: { per_page: 500 }, headers })
                 ]);
 
                 const successful = (trainingsResponse.data.trainings || [])
@@ -484,6 +518,7 @@ const Test = () => {
                 setTrainings(successful);
 
                 setLabelCount(labelsResponse.data.total || 0);
+                setLabels(labelsResponse.data.labels || []);
 
                 const instances = instancesResponse.data.instances || [];
                 setOtherInstances(Object.fromEntries(
@@ -1052,7 +1087,7 @@ const Test = () => {
                                     style={{ height: "calc(100vh - 460px)", minHeight: "260px" }}
                                 >
                                     <Tab.Pane eventKey="result" className="h-100 overflow-auto no-scrollbar">
-                                        <PredictionView prediction={result?.prediction} query={result?.query} />
+                                        <PredictionView prediction={result?.prediction} query={result?.query} colorOf={colorOf} />
                                     </Tab.Pane>
                                     <Tab.Pane eventKey="json" className="h-100">
                                         {result ? (
@@ -1066,6 +1101,7 @@ const Test = () => {
                                             results={batchResults}
                                             running={batchRunning}
                                             progress={batchProgress}
+                                            colorOf={colorOf}
                                         />
                                     </Tab.Pane>
                                     {compareAvailable && (
@@ -1088,7 +1124,7 @@ const Test = () => {
                                                         <span className="text-muted small">
                                                             {compareView === "json"
                                                                 ? "Lines added or removed versus development are highlighted."
-                                                                : "Compared on predicted labels and their scores."}
+                                                                : "Compared on the predicted output versus development."}
                                                         </span>
                                                         <ButtonGroup size="sm">
                                                             <Button
@@ -1130,6 +1166,7 @@ const Test = () => {
                                                                     query={result?.query}
                                                                     isReference
                                                                     view={compareView}
+                                                                    colorOf={colorOf}
                                                                 />
                                                             </Col>
                                                             {activeCompareTargets.map((name) => (
@@ -1143,6 +1180,7 @@ const Test = () => {
                                                                         query={result?.query}
                                                                         reference={result?.prediction}
                                                                         view={compareView}
+                                                                        colorOf={colorOf}
                                                                     />
                                                                 </Col>
                                                             ))}
