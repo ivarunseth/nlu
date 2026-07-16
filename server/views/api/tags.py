@@ -51,12 +51,15 @@ def create_tag(modelId, utteranceId):
             abort(400, f'Slot {slot.name} belongs to intent {slot.intent.name}, '
                        f'not this utterance\'s intent')
         tag = Tag.create(data, utterance, slot=slot)
+        db.session.add(tag)
+        slot.entity.catalogue_surfaces([tag.value])
     else:
         entity = model.entities.filter(Entity.id == data.get('entity_id')).first()
         if entity is None:
             abort(404, 'Entity not found: %s' % data.get('entity_id'))
         tag = Tag.create(data, utterance, entity)
-    db.session.add(tag)
+        db.session.add(tag)
+        entity.catalogue_surfaces([tag.value])
     db.session.commit()
     return utterance.to_dict(), 201
 

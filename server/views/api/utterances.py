@@ -183,6 +183,7 @@ def _replace_annotations(model, utterance, spans):
     for tag in utterance.tags.all():
         db.session.delete(tag)
     db.session.flush()
+    catalogue = {}  # owning entity -> {surface strings}
     if model.kind == 'natural_language_understanding':
         # Language understanding spans reference slots — only the ones
         # scoped to this utterance's intent, so an inline edit can never
@@ -195,17 +196,23 @@ def _replace_annotations(model, utterance, spans):
             if slot is None:
                 abort(404, 'Slot not defined on this intent: %s'
                       % (span.get('slot_id') or span.get('label')))
-            db.session.add(Tag.create(span, utterance, slot=slot))
-        return
-    # The name key stays 'label' — the display-name convention shared with
-    # Tag.to_dict.
-    entities = {entity.name: entity for entity in model.entities.all()}
-    for span in sorted(spans, key=lambda item: item.get('start', 0)):
-        entity = model.entities.filter(Entity.id == span['entity_id']).first() \
-            if 'entity_id' in span else entities.get(span.get('label'))
-        if entity is None:
-            abort(404, 'Entity not found: %s' % (span.get('entity_id') or span.get('label')))
-        db.session.add(Tag.create(span, utterance, entity))
+            tag = Tag.create(span, utterance, slot=slot)
+            db.session.add(tag)
+            catalogue.setdefault(slot.entity, {})[tag.value] = None
+    else:
+        # The name key stays 'label' — the display-name convention shared with
+        # Tag.to_dict.
+        entities = {entity.name: entity for entity in model.entities.all()}
+        for span in sorted(spans, key=lambda item: item.get('start', 0)):
+            entity = model.entities.filter(Entity.id == span['entity_id']).first() \
+                if 'entity_id' in span else entities.get(span.get('label'))
+            if entity is None:
+                abort(404, 'Entity not found: %s' % (span.get('entity_id') or span.get('label')))
+            tag = Tag.create(span, utterance, entity)
+            db.session.add(tag)
+            catalogue.setdefault(entity, {})[tag.value] = None
+    for entity, values in catalogue.items():
+        entity.catalogue_surfaces(values)
 
 
 @api.delete('/models/<modelId>/utterances/<utteranceId>')

@@ -1,9 +1,8 @@
 import axios from "axios";
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Alert, Badge, Button, Card, Form, Modal, Spinner, Table } from "react-bootstrap";
-import { Bookmarks, BookmarkStar, InfoCircle, Pen, PlusLg, Quote, Search, Tags, Trash } from "react-bootstrap-icons";
+import { BookmarkStar, InfoCircle, Pen, PlusLg, Quote, Tags, Trash } from "react-bootstrap-icons";
 import { useParams } from "react-router-dom";
-import { ModelContext } from "../../../../../contexts/ModelContext";
 import { UserContext } from "../../../../../contexts/UserContext";
 import AppPagination from "../../../../../shared/components/AppPagination";
 import DeleteConfirmationModal from "../../../../../shared/components/DeleteConfirmationModal";
@@ -28,24 +27,20 @@ const parseSynonyms = (raw) => {
 
 // The drill-in of one entity, on both named entity recognition and language
 // understanding models: the authored value catalogue — each canonical value
-// with its synonyms, editable in place — plus the values discovered in the
-// annotated dataset that are not catalogued yet, promotable in one click.
-// The catalogue feeds training-data generation: closed-list entities
-// enumerate through it, open-list entities use it as samples besides the
-// UNK generalization.
+// with its synonyms, editable in place. Values are catalogued automatically
+// on import and annotation, so this is the single source of truth. The
+// catalogue feeds training-data generation: closed-list entities enumerate
+// through it, open-list entities use it as samples besides the UNK
+// generalization.
 const EntityValues = ({ entityId }) => {
     const { modelId } = useParams();
     const { user } = useContext(UserContext);
-    const { model } = useContext(ModelContext);
-    const nlu = model?.kind === "natural_language_understanding";
 
     const [alert, setAlert] = useState(null);
     const [entity, setEntity] = useState(null);
     const [values, setValues] = useState([]);
-    const [discovered, setDiscovered] = useState([]);
     const [loading, setLoading] = useState(true);
     const [page, setPage] = useState(1);
-    const [discoveredPage, setDiscoveredPage] = useState(1);
 
     const [showForm, setShowForm] = useState(false);
     const [current, setCurrent] = useState(null);
@@ -53,7 +48,6 @@ const EntityValues = ({ entityId }) => {
     const [synonymsText, setSynonymsText] = useState("");
     const [toDelete, setToDelete] = useState(null);
     const [submitting, setSubmitting] = useState(false);
-    const [promoting, setPromoting] = useState(null);
 
     const headers = useMemo(() => ({ Authorization: `Bearer ${user?.token}` }), [user]);
 
@@ -70,7 +64,6 @@ const EntityValues = ({ entityId }) => {
             );
             setEntity(response.data.entity);
             setValues(response.data.values);
-            setDiscovered(response.data.discovered);
         } catch (error) {
             showError(error);
         } finally {
@@ -146,26 +139,9 @@ const EntityValues = ({ entityId }) => {
         }
     };
 
-    // One-click promotion of a dataset value into the stored catalogue.
-    const handlePromote = async (item) => {
-        try {
-            setPromoting(item.value);
-            await axios.post(
-                `/api/models/${modelId}/entities/${entityId}/values`,
-                { value: item.value, synonyms: [] }, { headers }
-            );
-            getValues();
-        } catch (error) {
-            showError(error);
-        } finally {
-            setPromoting(null);
-        }
-    };
-
     const synonymsTotal = values.reduce((total, value) => total + value.synonyms.length, 0);
     const coveredSpans = values.reduce((total, value) => total + (value.count || 0), 0);
     const pagedValues = values.slice((page - 1) * PER_PAGE, page * PER_PAGE);
-    const pagedDiscovered = discovered.slice((discoveredPage - 1) * PER_PAGE, discoveredPage * PER_PAGE);
 
     return (
         <>
@@ -179,8 +155,7 @@ const EntityValues = ({ entityId }) => {
                 items={[
                     { label: "Values", value: values.length, icon: <Quote /> },
                     { label: "Synonyms", value: synonymsTotal, icon: <Tags /> },
-                    { label: "Covered spans", value: coveredSpans, icon: <BookmarkStar /> },
-                    { label: "Discovered", value: discovered.length, icon: <Search /> }
+                    { label: "Covered spans", value: coveredSpans, icon: <BookmarkStar /> }
                 ]}
             />
             <div className="d-flex align-items-center mt-4">
@@ -289,86 +264,6 @@ const EntityValues = ({ entityId }) => {
                     perPage={PER_PAGE}
                     maxVisiblePages={MAX_VISIBLE_PAGES}
                     onPageChange={setPage}
-                />
-            </div>
-            <Card className="border-light overflow-hidden mt-4">
-                <CardHeading
-                    icon={<Search />}
-                    title="Discovered in dataset"
-                    right={
-                        <span className="text-muted" style={{ fontSize: "0.7rem" }}>
-                            {discovered.length} uncatalogued value{discovered.length === 1 ? "" : "s"}
-                        </span>
-                    }
-                />
-                <Card.Body className="p-0">
-                    <Table responsive hover className="mb-0 align-middle">
-                        <thead>
-                            <tr>
-                                <th className="ps-3">Value</th>
-                                <th className="text-center">Count</th>
-                                {nlu && <th>Slots</th>}
-                                {nlu && <th>Intents</th>}
-                                <th className="text-center">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {loading ? (
-                                <tr>
-                                    <td colSpan={nlu ? 5 : 3} className="text-center py-4">
-                                        <Spinner animation="border" />
-                                    </td>
-                                </tr>
-                            ) : discovered.length > 0 ? pagedDiscovered.map((item) => (
-                                <tr key={item.value}>
-                                    <td className="ps-3 text-break">{item.value}</td>
-                                    <td className="text-center">
-                                        <Badge bg="light" text="dark" className="border fw-normal font-monospace">
-                                            {item.count}
-                                        </Badge>
-                                    </td>
-                                    {nlu && <td className="small text-muted">{item.slots.join(", ")}</td>}
-                                    {nlu && (
-                                        <td className="small text-muted">
-                                            <Bookmarks className="me-1" size={12} />
-                                            {item.intents.join(", ")}
-                                        </td>
-                                    )}
-                                    <td className="text-center">
-                                        <Button
-                                            variant="light"
-                                            size="sm"
-                                            className="border"
-                                            disabled={promoting === item.value}
-                                            title={`Add ${item.value} to the catalogue`}
-                                            aria-label={`Add ${item.value} to the catalogue`}
-                                            onClick={() => handlePromote(item)}
-                                        >
-                                            {promoting === item.value ? <Spinner animation="border" size="sm" /> : <PlusLg />}
-                                        </Button>
-                                    </td>
-                                </tr>
-                            )) : (
-                                <tr>
-                                    <td colSpan={nlu ? 5 : 3} className="text-center py-4">
-                                        <EmptyMessage icon={<InfoCircle />}>
-                                            every annotated value is catalogued — new ones will
-                                            surface here as the dataset grows.
-                                        </EmptyMessage>
-                                    </td>
-                                </tr>
-                            )}
-                        </tbody>
-                    </Table>
-                </Card.Body>
-            </Card>
-            <div className="mt-3">
-                <AppPagination
-                    page={discoveredPage}
-                    total={discovered.length}
-                    perPage={PER_PAGE}
-                    maxVisiblePages={MAX_VISIBLE_PAGES}
-                    onPageChange={setDiscoveredPage}
                 />
             </div>
             <Modal centered show={showForm} onHide={closeForm}>

@@ -424,8 +424,8 @@ const IntentWorkspace = ({ intentId }) => {
                             entities={slots}
                             query={slotQuery}
                             noun="slot"
-                            secondary={(slot) => slot.entity?.name}
                             titleOf={(slot) => (slot.entity ? `${slot.name} → ${slot.entity.name}` : slot.name)}
+                            linkOf={(slot) => `/models/${modelId}/build?tab=entities&entity=${slot.entity?.id}`}
                             onEdit={handleOpenEditSlot}
                             onDelete={setSlotToDelete}
                         />

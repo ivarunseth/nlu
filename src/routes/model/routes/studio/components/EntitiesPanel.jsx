@@ -13,8 +13,7 @@ export const EntityDot = ({ color }) => (
 
 // The entity registry of a named entity recognition model — or, retitled,
 // the slot registry of a language understanding one: one chip per row with its
-// colour, span count and edit/delete actions. `secondary` optionally renders a
-// muted sub-label inside the chip (a slot's mapped entity name); `titleOf`
+// colour, span count and edit/delete actions. `titleOf`
 // overrides the chip's hover title (defaults to the row's description);
 // `linkOf` turns the chip's name into a drill-in link (the value catalogue).
 const EntitiesPanel = ({
@@ -24,7 +23,6 @@ const EntitiesPanel = ({
     onEdit,
     onDelete,
     noun = "entity",
-    secondary,
     linkOf,
     titleOf = (entity) => entity.description || undefined
 }) => {
@@ -69,11 +67,6 @@ const EntitiesPanel = ({
                                     </Link>
                                 ) : (
                                     <span className="fw-medium small text-break text-truncate" style={{maxWidth:"120px"}}>{entity.name}</span>
-                                )}
-                                {secondary && secondary(entity) && (
-                                    <span className="text-muted small text-truncate" style={{ maxWidth: "100px" }}>
-                                        {secondary(entity)}
-                                    </span>
                                 )}
                                 <span className="text-muted font-monospace" style={{ fontSize: "0.7rem" }}>
                                     {entity.annotations_count}

@@ -299,18 +299,25 @@ class Model(db.Model):
             ids = dataset_io.bulk_insert(
                 Utterance, utterance_rows, returning=Utterance.id)
             tag_rows = []
+            catalogue = {}  # owning entity -> {surface strings in this batch}
             for (text, _, spans), utterance_id in zip(pending, ids):
                 for start, end, entity, slot in spans:
+                    # The catalogue owner: the span's entity, or the slot's
+                    # mapped entity on language understanding models.
+                    owner = entity if entity is not None else slot.entity
+                    catalogue.setdefault(owner, {})[text[start:end]] = None
                     tag_rows.append({
                         'utterance_id': utterance_id,
                         'entity_id': entity.id if entity is not None else None,
                         'slot_id': slot.id if slot is not None else None,
-                        'start': start, 
+                        'start': start,
                         'end': end,
                         'value': text[start:end],
                         'created_at': timestamp(),
                     })
             dataset_io.bulk_insert(Tag, tag_rows)
+            for owner, values in catalogue.items():
+                owner.catalogue_surfaces(values)
             imported += len(pending)
             pending.clear()
 

@@ -32,44 +32,29 @@ def _get_entity(modelId, entityId):
 def get_entity_values(modelId, entityId):
     """
     The entity drill-in payload: the stored catalogue — each value with its
-    synonyms and how many annotated spans it currently covers — plus the
-    ``discovered`` section: annotated surface strings not yet catalogued,
-    with occurrence counts and (on language understanding models) the slots
-    and intents they appeared under.
+    synonyms and how many annotated spans it currently covers. Annotated
+    values are catalogued automatically on import and annotation, so there
+    is no separate "discovered" section.
     """
     model, entity = _get_entity(modelId, entityId)
 
-    # One pass over the entity's annotated surfaces; everything below is
+    # One pass over the entity's annotated surfaces; coverage counts are
     # aggregated in Python so each request costs a single dataset query.
     surfaces = entity.annotation_surfaces()
     occurrences = {}
     for value, slot_name, intent_name in surfaces:
         key = normalize_term(value).lower()
-        item = occurrences.setdefault(key, {'value': value, 'count': 0, 'slots': set(), 'intents': set()})
-        item['count'] += 1
-        if slot_name:
-            item['slots'].add(slot_name)
-        if intent_name:
-            item['intents'].add(intent_name)
+        occurrences[key] = occurrences.get(key, 0) + 1
 
-    values, covered = [], set()
+    values = []
     for value in entity.values.order_by(Value.id.asc()).all():
         terms = {normalize_term(term).lower() for term in value.terms()}
-        covered |= terms
-        count = sum(occurrences[term]['count'] for term in terms if term in occurrences)
+        count = sum(occurrences.get(term, 0) for term in terms)
         values.append(value.to_dict(count=count))
-
-    discovered = [
-        {'value': item['value'], 'count': item['count'],
-         'slots': sorted(item['slots']), 'intents': sorted(item['intents'])}
-        for key, item in occurrences.items() if key not in covered
-    ]
-    discovered.sort(key=lambda item: (-item['count'], item['value']))
 
     return {
         'entity': entity.to_dict(),
         'values': values,
-        'discovered': discovered,
         'total': len(values)
     }, 200
 

@@ -5,7 +5,9 @@ from flask import abort, url_for
 from .. import db
 from ..utils.dataset import next_label_color, normalize_term
 from ..utils.common import timestamp, format_timestamp
+from ..utils import io as dataset_io
 
+from .value import Value
 from .tag import Tag
 from .slot import Slot
 from .utterance import Utterance
@@ -80,13 +82,38 @@ class Entity(db.Model):
                 terms.add(normalize_term(synonym.text).lower())
         return terms
 
+    def catalogue_surfaces(self, surfaces):
+        """
+        Insert uncatalogued surface strings as values (without synonyms) —
+        the auto-cataloguing behind dataset import and span annotation.
+        Comparison is the catalogue's usual one, lowercased
+        ``normalize_term``, against existing values and synonyms and within
+        the batch (first spelling wins). Never aborts: blanks and duplicates
+        are silently skipped, so annotating can never fail because of the
+        catalogue. Requires ``self.id`` (flush auto-created entities first).
+        """
+        taken = self.catalogued_terms()
+        rows = []
+        for surface in surfaces:
+            term = normalize_term(surface)
+            key = term.lower()
+            if not term or key in taken:
+                continue
+            taken.add(key)
+            rows.append({'entity_id': self.id, 'value': term,
+                         'created_at': timestamp()})
+        if rows:
+            # Default batched path only: values.updated_at relies on the
+            # insert-path column default, which COPY would bypass.
+            dataset_io.bulk_insert(Value, rows)
+
     def annotation_surfaces(self):
         """
         The surface strings annotated for this entity across the dataset, as
         ``(value, slot_name|None, intent_name|None)`` rows — via ``entity_id``
         on a named entity recognition model, via the entity's slots on a
         language understanding one. Feeds the value catalogue's occurrence
-        counts and its "discovered in dataset" section.
+        counts.
         """
         if self.model is not None and self.model.kind == 'natural_language_understanding':
             return db.session.query(Tag.value, Slot.name, Intent.name) \
