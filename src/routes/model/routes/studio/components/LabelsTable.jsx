@@ -1,28 +1,33 @@
 import { Badge, Card, Form, Spinner, Table } from "react-bootstrap";
-import { Calendar3, BlockquoteLeft, Clock, InfoCircle, Search, Tag, Tags } from "react-bootstrap-icons";
+import { Calendar3, BlockquoteLeft, Clock, InfoCircle, Search, Tag, Bookmarks } from "react-bootstrap-icons";
 import { Link } from "react-router-dom";
 import { CardHeading, EmptyMessage } from "../../../../../shared/components/SectionCard";
 
 const LabelsTable = ({
     modelId,
+    noun = "label",
     loading,
     labels,
     total,
     query,
     selectedIds,
     onToggleRow,
-    onToggleAll
+    onToggleAll,
+    // Where a row's name links to; language understanding overrides this so
+    // an intent drills into its workspace instead of the utterances page.
+    labelLink
 }) => {
     const allSelected = labels.length > 0 && labels.every((label) => selectedIds.has(label.id));
+    const linkTo = labelLink || ((label) => `/models/${modelId}/build/${label.id}/utterances`);
 
     return (
         <Card className="border-light overflow-hidden">
             <CardHeading
-                icon={<Tags />}
-                title="Labels"
+                icon={<Bookmarks />}
+                title={`${noun.charAt(0).toUpperCase()}${noun.slice(1)}s`}
                 right={
                     <span className="text-muted" style={{ fontSize: "0.7rem" }}>
-                        {total} label{total === 1 ? "" : "s"}
+                        {total} {noun}{total === 1 ? "" : "s"}
                     </span>
                 }
             />
@@ -67,7 +72,7 @@ const LabelsTable = ({
                                 </td>
                                 <td>
                                     <Link
-                                        to={`/models/${modelId}/build/${label.id}/utterances`}
+                                        to={linkTo(label)}
                                         className="text-decoration-none"
                                     >
                                         {label.name}
@@ -85,7 +90,7 @@ const LabelsTable = ({
                             <tr>
                                 <td colSpan={5} style={{ verticalAlign: "middle" }}>
                                     <EmptyMessage icon={<Search />}>
-                                        could not find the label you are looking for.
+                                        could not find the {noun} you are looking for.
                                     </EmptyMessage>
                                 </td>
                             </tr>
@@ -93,7 +98,7 @@ const LabelsTable = ({
                             <tr>
                                 <td colSpan={5} style={{ verticalAlign: "middle" }}>
                                     <EmptyMessage icon={<InfoCircle />}>
-                                        looks like you have no labels.
+                                        looks like you have no {noun}s.
                                     </EmptyMessage>
                                 </td>
                             </tr>

@@ -22,6 +22,7 @@ const AnnotationWorkspace = ({
     query,
     entities,
     suggestions,
+    showIntent,
     onAnnotate,
     onRemoveAnnotation,
     onEdit,
@@ -68,7 +69,7 @@ const AnnotationWorkspace = ({
                     </span>
                 }
             />
-            <div ref={scrollRef} className="overflow-auto" style={{ minHeight: "50vh", maxHeight: "50vh" }}>
+            <div ref={scrollRef} className="overflow-auto no-scrollbar" style={{ minHeight: "50vh", maxHeight: "50vh" }}>
                 <ListGroup variant="flush" style={{ marginBottom: 0 }}>
                     {loading ? (
                         <ListGroup.Item
@@ -86,6 +87,7 @@ const AnnotationWorkspace = ({
                                     utterance={utterance}
                                     entities={entities}
                                     suggestions={suggestions}
+                                    showIntent={showIntent}
                                     onAnnotate={onAnnotate}
                                     onRemoveAnnotation={onRemoveAnnotation}
                                     onEdit={onEdit}

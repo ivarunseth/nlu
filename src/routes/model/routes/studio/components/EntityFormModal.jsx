@@ -1,5 +1,8 @@
-import { Button, Col, Form, InputGroup, Modal, Row, Spinner } from "react-bootstrap";
+import { Button, ButtonGroup, Col, Form, InputGroup, Modal, Row, Spinner, ToggleButton } from "react-bootstrap";
 
+// `listType`/`onListTypeChange` are optional: the modal doubles as the slot
+// form on legacy surfaces, and slots carry no value-space type — the
+// open/closed choice renders only when the caller manages entities.
 const EntityFormModal = ({
     show,
     title,
@@ -8,11 +11,13 @@ const EntityFormModal = ({
     name,
     color,
     description,
+    listType,
     onHide,
     onSubmit,
     onNameChange,
     onColorChange,
-    onDescriptionChange
+    onDescriptionChange,
+    onListTypeChange
 }) => (
     <Modal centered show={show} onHide={onHide}>
         <Modal.Header closeButton>
@@ -60,6 +65,35 @@ const EntityFormModal = ({
                         The colour highlights this entity's spans.
                     </Form.Text>
                 </Form.Group>
+                {onListTypeChange && (
+                    <Form.Group className="mb-3">
+                        <ButtonGroup className="w-100">
+                            {[
+                                { value: "open", label: "Open list" },
+                                { value: "closed", label: "Closed list" }
+                            ].map((option) => (
+                                <ToggleButton
+                                    key={option.value}
+                                    id={`entity-list-type-${option.value}`}
+                                    type="radio"
+                                    variant="outline-secondary"
+                                    size="sm"
+                                    name="entity-list-type"
+                                    value={option.value}
+                                    checked={(listType || "open") === option.value}
+                                    onChange={(e) => onListTypeChange(e.currentTarget.value)}
+                                >
+                                    {option.label}
+                                </ToggleButton>
+                            ))}
+                        </ButtonGroup>
+                        <Form.Text muted>
+                            {(listType || "open") === "closed"
+                                ? "A finite, manageable set of values (coffee_type, device_type) — training enumerates the value catalogue."
+                                : "Not enumerable (person, place) — training also generalizes to unseen values with UNK variants."}
+                        </Form.Text>
+                    </Form.Group>
+                )}
                 <Form.Group className="mb-3">
                     <Form.Floating>
                         <Form.Control

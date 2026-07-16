@@ -77,7 +77,7 @@ const EntityPicker = ({
                     )}
 
                     <div
-                        className="py-1"
+                        className="py-1 no-scrollbar"
                         style={{
                             maxHeight: 240,
                             overflowY: "auto",
@@ -100,6 +100,13 @@ const EntityPicker = ({
 
                                     <span className="ms-2 flex-grow-1 text-truncate">
                                         {entity.name}
+                                        {/* {entity.entity && (
+                                            // A slot row: show the entity the
+                                            // slot maps to beside its role name.
+                                            <span className="text-muted small ms-2">
+                                                {entity.entity.name}
+                                            </span>
+                                        )} */}
                                     </span>
 
                                     {entity.name === suggestedName && (

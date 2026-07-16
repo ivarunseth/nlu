@@ -14,7 +14,12 @@ import LabelsTable from "./components/LabelsTable";
 const PER_PAGE = 7;
 const MAX_VISIBLE_PAGES = 5;
 
-const ClassificationBuild = () => {
+// Also serves as the Intents tab of a language understanding model: `noun`
+// renames the surfaces, `labelLink` reroutes a row's drill-in (an intent
+// opens its workspace, not the utterances page) and `onMutate` tells the
+// parent a create/delete changed the totals its overview strip reports,
+// while the flow itself stays the classification one.
+const ClassificationBuild = ({ noun = "label", labelLink, onMutate }) => {
     const { modelId } = useParams();
     const { user } = useContext(UserContext);
     const [alert, setAlert] = useState(null);
@@ -95,7 +100,7 @@ const ClassificationBuild = () => {
         try {
             setSubmitting(true);
             const headers = { Authorization: `Bearer ${user.token}` };
-            const response = await axios.post(`/api/models/${modelId}/labels`, buildFormData(), { headers });
+            const response = await axios.post(`/api/models/${modelId}/intents`, buildFormData(), { headers });
 
             if (page === 1) {
                 setLabels((prevLabels) => (
@@ -107,6 +112,7 @@ const ClassificationBuild = () => {
             } else {
                 setPage(1);
             }
+            onMutate?.();
         } catch (error) {
             setAlert({ variant: "danger", message: error.response.data.error });
         } finally {
@@ -117,7 +123,7 @@ const ClassificationBuild = () => {
     const handleDownload = async (label) => {
         try {
             const headers = { Authorization: `Bearer ${user.token}` };
-            const response = await axios.get(`/api/models/${modelId}/labels/${label.id}?format=csv`, {
+            const response = await axios.get(`/api/models/${modelId}/intents/${label.id}?format=csv`, {
                 responseType: "blob",
                 headers
             });
@@ -146,7 +152,7 @@ const ClassificationBuild = () => {
             setSubmitting(true);
             const headers = { Authorization: `Bearer ${user.token}` };
             const response = await axios.put(
-                `/api/models/${modelId}/labels/${currentLabel.id}`,
+                `/api/models/${modelId}/intents/${currentLabel.id}`,
                 buildFormData(),
                 { headers }
             );
@@ -174,15 +180,15 @@ const ClassificationBuild = () => {
             setSubmitting(true);
             const headers = { Authorization: `Bearer ${user.token}` };
             const idsToDelete = labelsToDelete.map((label) => label.id);
-            await Promise.all(idsToDelete.map((id) => axios.delete(`/api/models/${modelId}/labels/${id}`, { headers })));
+            await Promise.all(idsToDelete.map((id) => axios.delete(`/api/models/${modelId}/intents/${id}`, { headers })));
 
             const remainingOnPage = labels.length - idsToDelete.length;
             if (remainingOnPage > 0) {
                 setLoading(true);
                 const params = { page, per_page: PER_PAGE };
                 if (debouncedQuery !== "") params.query = debouncedQuery;
-                const response = await axios.get(`/api/models/${modelId}/labels`, { params, headers });
-                setLabels(response.data.labels);
+                const response = await axios.get(`/api/models/${modelId}/intents`, { params, headers });
+                setLabels(response.data.intents);
                 setTotal(response.data.total);
             } else if (page > 1) {
                 setPage(page - 1);
@@ -195,6 +201,7 @@ const ClassificationBuild = () => {
                 idsToDelete.forEach((id) => next.delete(id));
                 return next;
             });
+            onMutate?.();
         } catch (error) {
             setAlert({ variant: "danger", message: error.response.data.message });
         } finally {
@@ -225,8 +232,8 @@ const ClassificationBuild = () => {
                     const headers = { Authorization: `Bearer ${user.token}` };
                     const params = { page, per_page: PER_PAGE };
                     if (debouncedQuery !== "") params.query = debouncedQuery;
-                    const response = await axios.get(`/api/models/${modelId}/labels`, { params, headers });
-                    setLabels(response.data.labels);
+                    const response = await axios.get(`/api/models/${modelId}/intents`, { params, headers });
+                    setLabels(response.data.intents);
                     setTotal(response.data.total);
                 } catch (error) {
                     setAlert({ variant: "danger", message: error.response.data.message });
@@ -245,8 +252,8 @@ const ClassificationBuild = () => {
                     {alert && <Alert variant={alert.variant} onClose={() => setAlert(null)} dismissible>{alert.message}</Alert>}
                 </Col>
             </Row>
-            <Row className="mt-4">
-                <Col>
+            <Row className="mt-4 g-2 align-items-center">
+                <Col xs={12} md="auto">
                     <ButtonToolbar>
                         <ButtonGroup className="me-2">
                             <Button
@@ -254,7 +261,7 @@ const ClassificationBuild = () => {
                                 className="border"
                                 onClick={() => setShowCreateForm(true)}
                             >
-                                <PlusLg />&nbsp;create label
+                                <PlusLg />&nbsp;create {noun}
                             </Button>
                         </ButtonGroup>
                         <ButtonGroup>
@@ -295,7 +302,7 @@ const ClassificationBuild = () => {
                     <Form>
                         <Form.Control
                             type="text"
-                            placeholder="search for labels..."
+                            placeholder={`search for ${noun}s...`}
                             value={query}
                             onChange={(e) => setQuery(e.target.value)}
                         />
@@ -306,6 +313,7 @@ const ClassificationBuild = () => {
                 <Col>
                     <LabelsTable
                         modelId={modelId}
+                        noun={noun}
                         loading={loading}
                         labels={labels}
                         total={total}
@@ -313,6 +321,7 @@ const ClassificationBuild = () => {
                         selectedIds={selectedIds}
                         onToggleRow={toggleRowSelection}
                         onToggleAll={toggleAllSelection}
+                        labelLink={labelLink}
                     />
                     <div className="mt-3">
                         <AppPagination
@@ -327,7 +336,7 @@ const ClassificationBuild = () => {
             </Row>
             <LabelFormModal
                 show={showCreateForm}
-                title="Create label"
+                title={`Create ${noun}`}
                 validated={validated}
                 submitting={submitting}
                 name={name}
@@ -341,7 +350,7 @@ const ClassificationBuild = () => {
             />
             <LabelFormModal
                 show={showEditForm}
-                title="Edit label"
+                title={`Edit ${noun}`}
                 validated={validated}
                 submitting={submitting}
                 name={name}
@@ -355,9 +364,15 @@ const ClassificationBuild = () => {
             />
             <DeleteConfirmationModal
                 show={showDeleteConfirmation}
-                title="Delete label"
-                items={labelsToDelete.map((label) => label.name)}
-                itemType="label"
+                title={`Delete ${noun}`}
+                items={labelsToDelete.map((label) => (
+                    // Deleting an intent cascades to its utterances and their
+                    // slot annotations; the confirmation says how many go.
+                    noun === "intent"
+                        ? `${label.name} (removes ${label.utterances_count} utterance${label.utterances_count === 1 ? "" : "s"} and their slot annotations)`
+                        : label.name
+                ))}
+                itemType={noun}
                 submitting={submitting}
                 onHide={handleCloseDeleteConfirmation}
                 onDelete={handleDelete}

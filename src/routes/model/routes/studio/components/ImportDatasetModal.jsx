@@ -9,11 +9,22 @@ export const DATASET_FORMATS = [
     { value: "json", label: "JSON spans — {text, entities:[…]} per line" }
 ];
 
-// Imports a pre-annotated dataset into a named entity recognition model.
-// Holds its own file/format state; the parent runs the upload and passes back
-// a { imported, created, errors } summary, which stays shown until the modal
-// is closed so the annotator can read the per-line error report.
-const ImportDatasetModal = ({ show, submitting, summary, onHide, onSubmit }) => {
+// Language understanding datasets carry an intent per record and a slot
+// (with its entity type) per span, so they interchange in the intent-aware
+// formats (CoNLL has nowhere to put either). Intents, entities, slots and
+// the slot→entity mapping are auto-created on import.
+export const NLU_DATASET_FORMATS = [
+    { value: "inline", label: "Inline — intent, TAB, {slot@entity: value} text per line" },
+    { value: "csv", label: "CSV — utterances, labels (intent), IOB tags + # slots: legend" },
+    { value: "json", label: "JSON — {text, intent, entities:[{slot, entity, …}]} per line" }
+];
+
+// Imports a pre-annotated dataset into a named entity recognition or
+// language understanding model. Holds its own file/format state; the parent
+// runs the upload and passes back a { imported, created, errors } summary,
+// which stays shown until the modal is closed so the annotator can read the
+// per-line error report.
+const ImportDatasetModal = ({ show, submitting, summary, formats = DATASET_FORMATS, onHide, onSubmit }) => {
     const [file, setFile] = useState(null);
     const [format, setFormat] = useState("inline");
 
@@ -38,7 +49,7 @@ const ImportDatasetModal = ({ show, submitting, summary, onHide, onSubmit }) => 
                     <Form.Group className="mb-3">
                         <Form.Floating>
                             <Form.Select id="import-format" value={format} onChange={(e) => setFormat(e.target.value)}>
-                                {DATASET_FORMATS.map((item) => (
+                                {formats.map((item) => (
                                     <option key={item.value} value={item.value}>{item.label}</option>
                                 ))}
                             </Form.Select>

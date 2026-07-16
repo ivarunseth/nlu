@@ -1,10 +1,13 @@
 import axios from "axios";
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Button, Card, Col, Dropdown, Form, InputGroup, Row } from "react-bootstrap";
-import { BookmarkStar, CheckCircle, Download, GripVertical, PlusLg, Quote, Tags, Upload } from "react-bootstrap-icons";
-import { useParams } from "react-router-dom";
+import { useContext, useEffect, useMemo, useState } from "react";
+import { Alert, Button, Col, Dropdown, Form, InputGroup, Row } from "react-bootstrap";
+import { Bookmarks  , BracesAsterisk, PencilSquare, Download, PlusLg, Quote, Tags, Upload, Diagram2 } from "react-bootstrap-icons";
+import { useParams, useSearchParams } from "react-router-dom";
+import { ModelContext } from "../../../../contexts/ModelContext";
 import { UserContext } from "../../../../contexts/UserContext";
 import DeleteConfirmationModal from "../../../../shared/components/DeleteConfirmationModal";
+import MetricsStrip from "../../../../shared/components/MetricsStrip";
+import SplitPane from "../../../../shared/components/SplitPane";
 import { COLORS, nextEntityColor } from "../../../../shared/components/entityColors";
 import downloadBlob from "../../../../shared/utils/downloadBlob";
 import { parseInline, formatInline } from "../../../../shared/utils/inline";
@@ -12,66 +15,44 @@ import useDebounce from "../../../../shared/hooks/useDebounce";
 import AnnotationWorkspace from "./components/AnnotationWorkspace";
 import EntitiesPanel from "./components/EntitiesPanel";
 import EntityFormModal from "./components/EntityFormModal";
-import ImportDatasetModal, { DATASET_FORMATS } from "./components/ImportDatasetModal";
+import EntityValues from "./components/EntityValues";
+import ImportDatasetModal, { DATASET_FORMATS, NLU_DATASET_FORMATS } from "./components/ImportDatasetModal";
 
 const PER_PAGE = 10;
-
-// Entities/utterances split, as the entities panel's width percentage.
-// Mirrors the Test page's request/response drag handle (same mechanics and
-// gutter), just narrower bounds since entities is the secondary panel here.
-const DEFAULT_SPLIT = 34;
-const MIN_SPLIT = 22;
-const MAX_SPLIT = 55;
-const SPLIT_GUTTER = 16;
 
 // Default highlight palette for new entities; shared with Test so both
 // surfaces use the same colours, and mirrors the server's fallback.
 const ENTITY_COLORS = COLORS;
 
-// A compact overview strip of dataset health, mirroring the metric strips in
-// History and the analyse page. Rendered above the workspace so an annotator
-// sees coverage at a glance before drilling in.
-const MetricsStrip = ({ stats }) => {
+// Dataset-health items for the shared MetricsStrip: intents (LU only), the
+// entity/slot registry size, utterances, annotated coverage and span total.
+const statItems = (stats, nlu) => {
     const annotatedPct = stats.utterances > 0 ? Math.round((stats.annotated / stats.utterances) * 100) : 0;
-    const items = [
-        { label: "Entities", value: stats.entities, icon: <Tags /> },
+    return [
+        ...(nlu ? [{ label: "Intents", value: stats.intents, icon: <Bookmarks /> }] : []),
+        { label: nlu ? "Slots" : "Entities", value: stats.entities, icon: nlu ? <Diagram2/> : <Tags /> },
         { label: "Utterances", value: stats.utterances, icon: <Quote /> },
-        {
-            label: "Annotated",
-            value: `${annotatedPct}%`,
-            sub: `${stats.annotated} / ${stats.utterances}`,
-            icon: <CheckCircle />
-        },
-        { label: "Entity spans", value: stats.spans, icon: <BookmarkStar /> }
+        { label: "Annotated", value: `${annotatedPct}%`, sub: `${stats.annotated} / ${stats.utterances}`, icon: <PencilSquare /> },
+        { label: nlu ? "Slot spans" : "Entity spans", value: stats.spans, icon: <BracesAsterisk /> }
     ];
-    return (
-        <Row className="g-3 mt-1">
-            {items.map((item, index) => (
-                <Col key={index} xs={6} md={3} lg={true}>
-                    <Card className="h-100">
-                        <Card.Body className="p-3 d-flex align-items-center">
-                            <div className="text-primary me-3 fs-4 lh-1">{item.icon}</div>
-                            <div className="flex-grow-1" style={{ minWidth: 0 }}>
-                                <div className="text-muted small fw-bold" style={{ fontSize: "0.65rem" }}>{item.label}</div>
-                                <div className="text-body-emphasis small fw-medium text-truncate">
-                                    {item.value ?? "-"}
-                                    {item.sub && <span className="text-muted fw-normal ms-1">{item.sub}</span>}
-                                </div>
-                            </div>
-                        </Card.Body>
-                    </Card>
-                </Col>
-            ))}
-        </Row>
-    );
 };
 
 // Build page for named entity recognition models: the entity registry and the
-// annotation workspace side by side. Entities are Label rows; utterances are
-// model-scoped and carry annotated spans instead of belonging to one label.
+// annotation workspace side by side. Utterances are model-scoped and carry
+// annotated spans instead of belonging to one intent.
+// Also serves as the Slots sub-tab of a language understanding model, where
+// the registry is the shared entities, each row shows its intent read-only,
+// and new utterances are authored under an intent in the Intents tab instead.
 const AnnotationBuild = () => {
     const { modelId } = useParams();
     const { user } = useContext(UserContext);
+    const { model } = useContext(ModelContext);
+    const nlu = model?.kind === "natural_language_understanding";
+    // The entity drill-in (?entity=<id>) opens the value catalogue —
+    // add/edit/delete values and synonyms — mirroring the language
+    // understanding Entities tab; the breadcrumb (Model.jsx) walks back out.
+    const [searchParams] = useSearchParams();
+    const entityId = searchParams.get("entity");
     const [alert, setAlert] = useState(null);
 
     const [entities, setEntities] = useState([]);
@@ -84,6 +65,7 @@ const AnnotationBuild = () => {
     const [entityName, setEntityName] = useState("");
     const [entityColor, setEntityColor] = useState(ENTITY_COLORS[0]);
     const [entityDescription, setEntityDescription] = useState("");
+    const [entityListType, setEntityListType] = useState("open");
     const [entityToDelete, setEntityToDelete] = useState(null);
     const [validated, setValidated] = useState(false);
     const [submitting, setSubmitting] = useState(false);
@@ -120,56 +102,6 @@ const AnnotationBuild = () => {
         return map;
     }, [utterances]);
 
-    // Draggable split between the entities and utterances panels. The gutter
-    // (and the split itself) only applies from the lg breakpoint up, where
-    // the two panels sit side by side; below it they stack full width.
-    const [splitPct, setSplitPct] = useState(DEFAULT_SPLIT);
-    const [isWide, setIsWide] = useState(
-        () => typeof window !== "undefined" && window.matchMedia("(min-width: 992px)").matches
-    );
-    const splitRef = useRef(null);
-    const draggingRef = useRef(false);
-
-    useEffect(() => {
-        const mediaQuery = window.matchMedia("(min-width: 992px)");
-        const handleChange = (event) => setIsWide(event.matches);
-        mediaQuery.addEventListener("change", handleChange);
-        return () => mediaQuery.removeEventListener("change", handleChange);
-    }, []);
-
-    useEffect(() => {
-        const handleMove = (event) => {
-            if (!draggingRef.current || !splitRef.current) return;
-            const rect = splitRef.current.getBoundingClientRect();
-            const clientX = event.touches ? event.touches[0].clientX : event.clientX;
-            const pct = ((clientX - rect.left) / rect.width) * 100;
-            setSplitPct(Math.min(MAX_SPLIT, Math.max(MIN_SPLIT, pct)));
-        };
-        const stopDrag = () => {
-            if (!draggingRef.current) return;
-            draggingRef.current = false;
-            document.body.style.userSelect = "";
-            document.body.style.cursor = "";
-        };
-        window.addEventListener("mousemove", handleMove);
-        window.addEventListener("mouseup", stopDrag);
-        window.addEventListener("touchmove", handleMove, { passive: false });
-        window.addEventListener("touchend", stopDrag);
-        return () => {
-            window.removeEventListener("mousemove", handleMove);
-            window.removeEventListener("mouseup", stopDrag);
-            window.removeEventListener("touchmove", handleMove);
-            window.removeEventListener("touchend", stopDrag);
-        };
-    }, []);
-
-    const startDrag = (event) => {
-        draggingRef.current = true;
-        document.body.style.userSelect = "none";
-        document.body.style.cursor = "col-resize";
-        event.preventDefault();
-    };
-
     const showError = (error, fallback = "Something went wrong.") => {
         setAlert({ variant: "danger", message: error?.response?.data?.error || fallback });
     };
@@ -195,6 +127,7 @@ const AnnotationBuild = () => {
         // Default to a colour no existing entity uses, so each is distinct.
         setEntityColor(nextEntityColor(entities.map((entity) => entity.color)));
         setEntityDescription("");
+        setEntityListType("open");
         setValidated(false);
         setShowEntityForm(true);
     };
@@ -204,6 +137,7 @@ const AnnotationBuild = () => {
         setEntityName(entity.name);
         setEntityColor(entity.color || ENTITY_COLORS[0]);
         setEntityDescription(entity.description || "");
+        setEntityListType(entity.list_type || "open");
         setValidated(false);
         setShowEntityForm(true);
     };
@@ -221,15 +155,17 @@ const AnnotationBuild = () => {
         data.append("name", entityName.trim());
         data.append("color", entityColor);
         data.append("description", entityDescription);
+        // Only entities carry an open/closed value-space type.
+        if (!nlu) data.append("list_type", entityListType);
 
         try {
             setSubmitting(true);
             if (currentEntity) {
-                await axios.put(`/api/models/${modelId}/labels/${currentEntity.id}`, data, { headers });
+                await axios.put(`/api/models/${modelId}/entities/${currentEntity.id}`, data, { headers });
                 // Annotations embed the entity name and colour; refresh them.
                 setUtterancesRefresh((n) => n + 1);
             } else {
-                await axios.post(`/api/models/${modelId}/labels`, data, { headers });
+                await axios.post(`/api/models/${modelId}/entities`, data, { headers });
             }
             setEntitiesRefresh((n) => n + 1);
         } catch (error) {
@@ -242,7 +178,7 @@ const AnnotationBuild = () => {
     const handleDeleteEntity = async () => {
         try {
             setSubmitting(true);
-            await axios.delete(`/api/models/${modelId}/labels/${entityToDelete.id}`, { headers });
+            await axios.delete(`/api/models/${modelId}/entities/${entityToDelete.id}`, { headers });
             setEntitiesRefresh((n) => n + 1);
             setUtterancesRefresh((n) => n + 1);
         } catch (error) {
@@ -258,6 +194,14 @@ const AnnotationBuild = () => {
     const handleCreateUtterance = async (value) => {
         const raw = value.trim();
         if (raw === "") return;
+
+        if (nlu) {
+            // Every language understanding utterance is created under an
+            // intent, so authoring happens in the Intents tab; this field
+            // only searches the shared set.
+            setAlert({ variant: "warning", message: "Create utterances under an intent in the Intents tab; this field searches the shared utterances." });
+            return;
+        }
 
         const { text, spans, error } = parseInline(raw);
         if (error) {
@@ -280,8 +224,8 @@ const AnnotationBuild = () => {
             for (const span of spans) {
                 const entity = entities.find((candidate) => candidate.name === span.entity);
                 response = await axios.post(
-                    `/api/models/${modelId}/utterances/${created.id}/annotations`,
-                    { label_id: entity.id, start: span.start, end: span.end },
+                    `/api/models/${modelId}/utterances/${created.id}/tags`,
+                    { entity_id: entity.id, start: span.start, end: span.end },
                     { headers }
                 );
                 created = response.data;
@@ -299,7 +243,7 @@ const AnnotationBuild = () => {
     const handleAnnotate = async (utteranceId, span) => {
         try {
             const response = await axios.post(
-                `/api/models/${modelId}/utterances/${utteranceId}/annotations`,
+                `/api/models/${modelId}/utterances/${utteranceId}/tags`,
                 span,
                 { headers }
             );
@@ -313,7 +257,7 @@ const AnnotationBuild = () => {
     const handleRemoveAnnotation = async (utteranceId, annotationId) => {
         try {
             const response = await axios.delete(
-                `/api/models/${modelId}/utterances/${utteranceId}/annotations/${annotationId}`,
+                `/api/models/${modelId}/utterances/${utteranceId}/tags/${annotationId}`,
                 { headers }
             );
             replaceUtterance(response.data);
@@ -384,7 +328,7 @@ const AnnotationBuild = () => {
         data.append("dataset", file);
         try {
             setImporting(true);
-            const response = await axios.post(`/api/models/${modelId}/annotations/import`, data, { headers });
+            const response = await axios.post(`/api/models/${modelId}/tags/import`, data, { headers });
             setImportSummary(response.data);
             // Pull in the new utterances and any auto-created entities.
             setUtterancesRefresh((n) => n + 1);
@@ -404,7 +348,7 @@ const AnnotationBuild = () => {
     const handleExport = async (format) => {
         try {
             setExporting(true);
-            const response = await axios.get(`/api/models/${modelId}/annotations/export`, {
+            const response = await axios.get(`/api/models/${modelId}/tags/export`, {
                 params: { format },
                 responseType: "blob",
                 headers
@@ -424,8 +368,8 @@ const AnnotationBuild = () => {
                 try {
                     setEntitiesLoading(entities.length === 0);
                     const params = { per_page: 100 };
-                    const response = await axios.get(`/api/models/${modelId}/labels`, { params, headers });
-                    setEntities(response.data.labels);
+                    const response = await axios.get(`/api/models/${modelId}/entities`, { params, headers });
+                    setEntities(response.data.entities);
                 } catch (error) {
                     showError(error);
                 } finally {
@@ -435,7 +379,7 @@ const AnnotationBuild = () => {
             getEntities();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [user, modelId, entitiesRefresh]);
+    }, [user, modelId, entitiesRefresh, nlu]);
 
     // Resets the scrollable list to its first chunk whenever the search
     // query or an entity/annotation change invalidates what's loaded.
@@ -468,7 +412,7 @@ const AnnotationBuild = () => {
         if (user && modelId) {
             const getStats = async () => {
                 try {
-                    const response = await axios.get(`/api/models/${modelId}/annotations/stats`, { headers });
+                    const response = await axios.get(`/api/models/${modelId}/tags/stats`, { headers });
                     setStats(response.data);
                 } catch (error) {
                     showError(error);
@@ -498,6 +442,13 @@ const AnnotationBuild = () => {
         }
     };
 
+    // Drilled into one entity: render just its value catalogue — the
+    // breadcrumb is the way back out, exactly like the language
+    // understanding drill-ins.
+    if (!nlu && entityId) {
+        return <EntityValues key={entityId} entityId={entityId} />;
+    }
+
     return (
         <>
             <Row className="mt-4">
@@ -505,144 +456,127 @@ const AnnotationBuild = () => {
                     {alert && <Alert variant={alert.variant} onClose={() => setAlert(null)} dismissible>{alert.message}</Alert>}
                 </Col>
             </Row>
-            <MetricsStrip stats={stats} />
-            <div
-                ref={splitRef}
-                className={`d-flex mt-4 ${isWide ? "flex-row align-items-stretch" : "flex-column gap-3"}`}
-            >
-                <div
-                    className="d-flex flex-column"
-                    style={isWide
-                        ? { flex: `0 0 calc(${splitPct}% - ${SPLIT_GUTTER / 2}px)`, minWidth: 0 }
-                        : { width: "100%" }}
-                >
-                    <InputGroup className="mb-3">
-                        <Button
-                            variant="light"
-                            className="border"
-                            onClick={handleOpenCreateEntity}
-                        >
-                            <PlusLg className="me-1" />
-                            Create
-                        </Button>
-                        <Form.Control
-                            type="text"
-                            placeholder="search for entities..."
-                            value={entityQuery}
-                            onChange={(e) => setEntityQuery(e.target.value)}
-                        />
-                    </InputGroup>
-                    <EntitiesPanel
-                        loading={entitiesLoading}
-                        entities={entities}
-                        query={entityQuery}
-                        onEdit={handleOpenEditEntity}
-                        onDelete={setEntityToDelete}
-                    />
-                </div>
-
-                {isWide && (
-                    <div
-                        role="separator"
-                        aria-orientation="vertical"
-                        onMouseDown={startDrag}
-                        onTouchStart={startDrag}
-                        onDoubleClick={() => setSplitPct(DEFAULT_SPLIT)}
-                        title="Drag to resize · double-click to reset"
-                        className="d-flex align-items-center justify-content-center flex-shrink-0 text-body-secondary"
-                        style={{ width: `${SPLIT_GUTTER}px`, cursor: "col-resize", touchAction: "none", alignSelf: "stretch" }}
-                    >
-                        <GripVertical size={16} />
-                    </div>
-                )}
-
-                <div
-                    className="d-flex flex-column"
-                    style={isWide
-                        ? { flex: `1 1 calc(${100 - splitPct}% - ${SPLIT_GUTTER / 2}px)`, minWidth: 0 }
-                        : { width: "100%" }}
-                >
-                    <div className="d-flex gap-2 mb-3">
-                        <Form className="flex-grow-1" style={{ minWidth: 0 }}>
+            <MetricsStrip items={statItems(stats, nlu)} />
+            <SplitPane
+                className="mt-4"
+                left={(
+                    <>
+                        <InputGroup className="mb-3">
+                            <Button
+                                variant="light"
+                                className="border"
+                                onClick={handleOpenCreateEntity}
+                            >
+                                <PlusLg className="me-1" />
+                                Create
+                            </Button>
                             <Form.Control
                                 type="text"
-                                placeholder="enter or search an utterance..."
-                                value={query}
-                                onChange={(e) => setQuery(e.target.value)}
-                                onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
-                                        e.preventDefault();
-                                        handleCreateUtterance(e.target.value);
-                                    }
-                                }}
+                                placeholder={nlu ? "search for slots..." : "search for entities..."}
+                                value={entityQuery}
+                                onChange={(e) => setEntityQuery(e.target.value)}
                             />
-                        </Form>
-                        <Button
-                            variant="light"
-                            className="border d-inline-flex align-items-center flex-shrink-0"
-                            onClick={() => setShowImport(true)}
-                            title="Import a pre-annotated dataset"
-                        >
-                            <Upload className="me-1" />
-                            <span className="d-none d-sm-inline">Import</span>
-                        </Button>
-                        <Dropdown>
-                            <Dropdown.Toggle
+                        </InputGroup>
+                        <EntitiesPanel
+                            loading={entitiesLoading}
+                            entities={entities}
+                            query={entityQuery}
+                            noun={nlu ? "slot" : "entity"}
+                            linkOf={nlu ? undefined : (entity) => `/models/${modelId}/build?entity=${entity.id}`}
+                            onEdit={handleOpenEditEntity}
+                            onDelete={setEntityToDelete}
+                        />
+                    </>
+                )}
+                right={(
+                    <>
+                        <div className="d-flex gap-2 mb-3">
+                            <Form className="flex-grow-1" style={{ minWidth: 0 }}>
+                                <Form.Control
+                                    type="text"
+                                    placeholder={nlu ? "search the shared utterances..." : "enter or search an utterance..."}
+                                    value={query}
+                                    onChange={(e) => setQuery(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                            e.preventDefault();
+                                            handleCreateUtterance(e.target.value);
+                                        }
+                                    }}
+                                />
+                            </Form>
+                            <Button
                                 variant="light"
                                 className="border d-inline-flex align-items-center flex-shrink-0"
-                                disabled={exporting || total === 0}
-                                title="Export the dataset"
+                                onClick={() => setShowImport(true)}
+                                title="Import a pre-annotated dataset"
                             >
-                                <Download className="me-1" />
-                                <span className="d-none d-sm-inline">Export</span>
-                            </Dropdown.Toggle>
-                            <Dropdown.Menu align="end">
-                                {DATASET_FORMATS.map((item) => (
-                                    <Dropdown.Item key={item.value} onClick={() => handleExport(item.value)}>
-                                        {item.label}
-                                    </Dropdown.Item>
-                                ))}
-                            </Dropdown.Menu>
-                        </Dropdown>
-                    </div>
-                    <AnnotationWorkspace
-                        loading={loading}
-                        loadingMore={loadingMore}
-                        utterances={utterances}
-                        total={total}
-                        query={query}
-                        entities={entities}
-                        suggestions={suggestions}
-                        onAnnotate={handleAnnotate}
-                        onRemoveAnnotation={handleRemoveAnnotation}
-                        onEdit={handleEditUtterance}
-                        onDelete={handleDeleteUtterance}
-                        onAlert={(message) => setAlert({ variant: "warning", message })}
-                        onLoadMore={handleLoadMoreUtterances}
-                    />
-                </div>
-            </div>
+                                <Upload className="me-1" />
+                                <span className="d-none d-sm-inline">Import</span>
+                            </Button>
+                            <Dropdown>
+                                <Dropdown.Toggle
+                                    variant="light"
+                                    className="border d-inline-flex align-items-center flex-shrink-0"
+                                    disabled={exporting || total === 0}
+                                    title="Export the dataset"
+                                >
+                                    <Download className="me-1" />
+                                    <span className="d-none d-sm-inline">Export</span>
+                                </Dropdown.Toggle>
+                                <Dropdown.Menu align="end">
+                                    {(nlu ? NLU_DATASET_FORMATS : DATASET_FORMATS).map((item) => (
+                                        <Dropdown.Item key={item.value} onClick={() => handleExport(item.value)}>
+                                            {item.label}
+                                        </Dropdown.Item>
+                                    ))}
+                                </Dropdown.Menu>
+                            </Dropdown>
+                        </div>
+                        <AnnotationWorkspace
+                            loading={loading}
+                            loadingMore={loadingMore}
+                            utterances={utterances}
+                            total={total}
+                            query={query}
+                            entities={entities}
+                            suggestions={suggestions}
+                            showIntent={nlu}
+                            onAnnotate={handleAnnotate}
+                            onRemoveAnnotation={handleRemoveAnnotation}
+                            onEdit={handleEditUtterance}
+                            onDelete={handleDeleteUtterance}
+                            onAlert={(message) => setAlert({ variant: "warning", message })}
+                            onLoadMore={handleLoadMoreUtterances}
+                        />
+                    </>
+                )}
+            />
             <EntityFormModal
                 show={showEntityForm}
-                title={currentEntity ? "Edit entity" : "Create entity"}
+                title={currentEntity
+                    ? (nlu ? "Edit slot" : "Edit entity")
+                    : (nlu ? "Create slot" : "Create entity")}
                 validated={validated}
                 submitting={submitting}
                 name={entityName}
                 color={entityColor}
                 description={entityDescription}
+                listType={entityListType}
                 onHide={closeEntityForm}
                 onSubmit={handleSubmitEntity}
                 onNameChange={setEntityName}
                 onColorChange={setEntityColor}
                 onDescriptionChange={setEntityDescription}
+                onListTypeChange={nlu ? undefined : setEntityListType}
             />
             <DeleteConfirmationModal
                 show={entityToDelete != null}
-                title="Delete entity"
+                title={nlu ? "Delete slot" : "Delete entity"}
                 items={entityToDelete ? [
                     `${entityToDelete.name} (removes ${entityToDelete.annotations_count} annotated span${entityToDelete.annotations_count === 1 ? "" : "s"})`
                 ] : []}
-                itemType="entity"
+                itemType={nlu ? "slot" : "entity"}
                 submitting={submitting}
                 onHide={() => setEntityToDelete(null)}
                 onDelete={handleDeleteEntity}
@@ -651,6 +585,7 @@ const AnnotationBuild = () => {
                 show={showImport}
                 submitting={importing}
                 summary={importSummary}
+                formats={nlu ? NLU_DATASET_FORMATS : DATASET_FORMATS}
                 onHide={closeImport}
                 onSubmit={handleImport}
             />

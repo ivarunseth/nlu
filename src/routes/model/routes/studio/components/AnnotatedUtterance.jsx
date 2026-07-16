@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useRef, useState } from "react";
 import { Badge, Button, Form, ListGroup } from "react-bootstrap";
 import { BracesAsterisk, Check2, Pen, Trash, XLg } from "react-bootstrap-icons";
+import { Link, useParams } from "react-router-dom";
 import TokenTags from "../../../../../shared/components/TokenTags";
 import { entityColor, readableTextColor } from "../../../../../shared/components/entityColors";
 import { formatInline } from "../../../../../shared/utils/inline";
@@ -37,12 +38,14 @@ const AnnotatedUtterance = ({
     utterance,
     entities,
     suggestions = {},
+    showIntent = false,
     onAnnotate,
     onRemoveAnnotation,
     onEdit,
     onDelete,
     onAlert
 }) => {
+    const { modelId } = useParams();
     const containerRef = useRef(null);
     const [picker, setPicker] = useState(null);
     const [editing, setEditing] = useState(false);
@@ -113,7 +116,7 @@ const AnnotatedUtterance = ({
     const handlePick = (entity) => {
         window.getSelection()?.removeAllRanges();
         setPicker(null);
-        onAnnotate(utterance.id, { label_id: entity.id, start: picker.start, end: picker.end });
+        onAnnotate(utterance.id, { entity_id: entity.id, start: picker.start, end: picker.end });
     };
 
     // Enter edit mode with the utterance rendered as inline {entity: value}
@@ -198,6 +201,29 @@ const AnnotatedUtterance = ({
                             />
                         )}
                     </div>
+                )}
+                {showIntent && (
+                    // Read-only intent context while tagging slots; set or
+                    // change it in the Intents tab.
+                    <Link
+                        to={`/models/${modelId}/build?tab=intents`}
+                        className="text-decoration-none flex-shrink-0"
+                        title={utterance.intent
+                            ? `Intent: ${utterance.intent.name} — change it in the Intents tab`
+                            : "No intent — set one in the Intents tab"}
+                    >
+                        <Badge
+                            bg={utterance.intent ? undefined : "warning-subtle"}
+                            text={utterance.intent ? undefined : "warning-emphasis"}
+                            className="border fw-normal"
+                            style={utterance.intent ? {
+                                backgroundColor: utterance.intent.color,
+                                color: readableTextColor(utterance.intent.color)
+                            } : undefined}
+                        >
+                            {utterance.intent ? utterance.intent.name : "no intent"}
+                        </Badge>
+                    </Link>
                 )}
                 <Badge
                     bg="secondary-subtle"
