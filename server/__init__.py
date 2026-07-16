@@ -7,7 +7,10 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_socketio import SocketIO
 
-from sqlalchemy import MetaData
+import sqlite3
+
+from sqlalchemy import MetaData, event
+from sqlalchemy.engine import Engine
 
 from redis import StrictRedis
 
@@ -24,6 +27,25 @@ metadata = MetaData(naming_convention={
 })
 db = SQLAlchemy(metadata=metadata)
 migrate = Migrate()
+
+@event.listens_for(Engine, "connect")
+def _set_sqlite_pragma(connection, *args, **kwargs):
+    """
+    Tune every SQLite connection opened in this process (the Flask app's
+    engine and, in the worker processes, the Celery result backend's engine —
+    both point at the same file). WAL lets readers run alongside a writer, and
+    a long busy_timeout makes concurrent writers block on the lock instead of
+    failing immediately with "database is locked". Applies only to SQLite; a
+    Postgres/MySQL backend is left untouched.
+    """
+    if isinstance(connection, sqlite3.Connection):
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
+
+
 socketio = SocketIO(cors_allowed_origins='*',
                     channel='socketio', 
                     logger=True,
@@ -59,7 +81,7 @@ def create_application_server(config_name=os.environ.get('FLASK_ENV', 'developme
     app.register_blueprint(api_bp, url_prefix='/api')
 
     if 'db' not in sys.argv:
-        before_app_first_request(app)
+        before_app_first_request(app, socketio)
 
     return app, socketio
 

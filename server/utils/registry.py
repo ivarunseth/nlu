@@ -1,6 +1,5 @@
 import os
 
-import json
 import time
 import uuid
 import threading
@@ -10,7 +9,11 @@ from typing import Optional
 from redis import StrictRedis
 from redis.exceptions import WatchError
 
-from .config import configs
+from ..config import configs
+
+
+_registries = {}
+_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -99,6 +102,8 @@ class Registry:
 
     def _output(self, model_id, key): return self._key('outputs', model_id, key)
 
+    def _telemetry(self): return self._key('telemetry')
+
     def publish(self, model_id, route: Route):
         # Replace the route atomically; a serving task reads a missing route
         # as a shutdown signal, so it must never observe the gap.
@@ -129,54 +134,6 @@ class Registry:
     def claim(self, model_id, ttl) -> bool:
         return bool(self.redis.set(self._starting(model_id), uuid.uuid4().hex, nx=True, ex=ttl))
 
-    def get(self, model_id, keys, pull=False):
-        """Fetch many outputs in one round-trip, keyed by request id;
-        missing keys are omitted. With ``pull`` each hit is deleted, so
-        it is served exactly once."""
-        if not keys:
-            return {}
-        with self.redis.pipeline(transaction=False) as pipe:
-            for key in keys:
-                if pull:
-                    pipe.getdel(self._output(model_id, key))
-                else:
-                    pipe.get(self._output(model_id, key))
-            values = pipe.execute()
-        return {
-            key: json.loads(raw.decode('utf-8'))
-            for key, raw in zip(keys, values) if raw
-        }
-
-    def pull(self, model_id, key):
-        """Fetch an output and delete it, so it is served exactly once."""
-        raw = self.redis.getdel(self._output(model_id, key))
-        return json.loads(raw.decode('utf-8')) if raw else None
-
-    def push(self, model_id, keys, inputs, **kwargs):
-        """Enqueue many inputs in one round-trip; kwargs apply to each."""
-        messages = [
-            json.dumps({'id': key, 'data': data, **kwargs}).encode('utf-8')
-            for key, data in zip(keys, inputs)
-        ]
-        if messages:
-            self.redis.rpush(self._inputs(model_id), *messages)
-
-    def wait(self, model_id, keys, timeout, interval, pull=False):
-        """Poll a set of keys until all resolve or the deadline passes,
-        returning whatever resolved, keyed by request id."""
-        resolved = {}
-        pending = list(dict.fromkeys(keys))
-        deadline = time.monotonic() + timeout
-        while pending:
-            found = self.get(model_id, pending, pull=pull)
-            if found:
-                resolved.update(found)
-                pending = [key for key in pending if key not in found]
-            if not pending or time.monotonic() >= deadline:
-                break
-            time.sleep(interval)
-        return resolved
-
     def lock(self, model_id, timeout):
         return self.redis.lock(
             self._lock(model_id),
@@ -195,6 +152,46 @@ class Registry:
     def offline(self, model_id):
         self.redis.delete(self._alive(model_id), self._starting(model_id))
 
+    def get(self, keys, pull=False):
+        """Fetch many outputs in one round-trip, keyed by request id;
+        missing keys are omitted. With ``pull`` each hit is deleted, so
+        it is served exactly once."""
+        if not keys:
+            return {}
+        with self.redis.pipeline(transaction=False) as pipe:
+            for key in keys:
+                if pull:
+                    pipe.getdel(key)
+                else:
+                    pipe.get(key)
+            values = pipe.execute()
+        return {key: value for key, value in zip(keys, values) if value}
+
+    def pull(self, key):
+        """Fetch an output and delete it, so it is served exactly once."""
+        return self.redis.getdel(key)
+
+    def push(self, queue, items):
+        """Enqueue many inputs in one round-trip; kwargs apply to each."""
+        if items:
+            self.redis.rpush(queue, *items)
+
+    def wait(self, keys, timeout, interval, pull=False):
+        """Poll a set of keys until all resolve or the deadline passes,
+        returning whatever resolved, keyed by request id."""
+        resolved = {}
+        pending = list(dict.fromkeys(keys))
+        deadline = time.monotonic() + timeout
+        while pending:
+            found = self.get(pending, pull=pull)
+            if found:
+                resolved.update(found)
+                pending = [key for key in pending if key not in found]
+            if not pending or time.monotonic() >= deadline:
+                break
+            time.sleep(interval)
+        return resolved
+
     def watch(self, queue, size):
         with self.redis.pipeline() as pipe:
             while True:
@@ -211,15 +208,12 @@ class Registry:
                 except WatchError:
                     continue
 
-    def set(self, model_id, keys, values, ttl):
+    def set(self, keys, values, ttl):
         """Store caller-serialized values under the given request ids."""
         with self.redis.pipeline(transaction=False) as pipe:
             for key, value in zip(keys, values):
-                pipe.set(self._output(model_id, key), value, ex=ttl)
+                pipe.set(key, value, ex=ttl)
             pipe.execute()
-
-_registries = {}
-_lock = threading.Lock()
 
 
 def registry_for(environment, redis=None) -> Registry:
@@ -238,7 +232,7 @@ def registry_for(environment, redis=None) -> Registry:
         if url:
             client = StrictRedis.from_url(url)
         else:
-            from . import redis as shared
+            from .. import redis as shared
             client = shared
 
         registry = Registry(client, environment)

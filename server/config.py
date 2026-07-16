@@ -13,10 +13,6 @@ class Config(object):
     ALLOWED_EXTENSIONS = {'csv', 'tsv'}
     ALLOWED_MODELS = {'text_classification', 'named_entity_recognition', 'natural_language_understanding'}
 
-    # Per-environment settings. Both apps run once per environment, so each
-    # gets its own host/port: 'server' is the control plane (app.py) and
-    # 'triton' the inference data plane (triton.py); redis_url backs the
-    # environment's registry.
     ALLOWED_ENVIRONMENTS = {
         name: {
             'server': {
@@ -62,6 +58,15 @@ class Config(object):
     INFERENCE_START_TTL = int(os.environ.get('INFERENCE_START_TTL', 120))
     INFERENCE_MAX_BATCH = int(os.environ.get('INFERENCE_MAX_BATCH', 256))
     INFERENCE_BATCH_TIMEOUT = float(os.environ.get('INFERENCE_BATCH_TIMEOUT', 120))
+
+    AUGMENT_ENABLED = os.environ.get('AUGMENT_ENABLED', 'true').lower() in ('1', 'true', 'yes')
+    AUGMENT_UNK_TOKEN = os.environ.get('AUGMENT_UNK_TOKEN', '[UNK]')
+
+    TELEMETRY_BATCH_SIZE = int(os.environ.get('TELEMETRY_BATCH_SIZE', 100))
+    TELEMETRY_INTERVAL = float(os.environ.get('TELEMETRY_INTERVAL', 1.0))
+    TELEMETRY_RETENTION_DAYS = int(os.environ.get('TELEMETRY_RETENTION_DAYS', 30))
+
+    DATASET_IO_BATCH_SIZE = int(os.environ.get('DATASET_IO_BATCH_SIZE', 5000))
 
 
 class DevelopmentConfig(Config):

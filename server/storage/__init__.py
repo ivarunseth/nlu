@@ -12,7 +12,7 @@ from .minio import MinioClient
 from .s3 import S3Client
 from .sftp import SFTPClient
 
-from ..utils import zip_file
+from ..utils.common import zip_file
 
 
 def retry(max_retries=3):

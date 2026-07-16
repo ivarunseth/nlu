@@ -7,7 +7,7 @@ from jwt import decode, ExpiredSignatureError, InvalidTokenError
 from hmac import compare_digest
 
 from .database import User
-from .registry import registry_for
+from .utils.registry import registry_for
 
 from . import db
 
@@ -16,7 +16,7 @@ from . import db
 # token optional auth that is used for open endpoints.
 basic_auth = HTTPBasicAuth()
 token_auth = HTTPTokenAuth('Bearer')
-token_optional_auth = HTTPTokenAuth('Bearer')   
+token_optional_auth = HTTPTokenAuth('Bearer')
 
 
 def extract_bearer_token_from_headers(headers):

@@ -1,10 +1,11 @@
-import json
 import os
-import shutil
-import io
-import zipfile
+
 import time
-from datetime import datetime
+import datetime
+
+import io
+
+import zipfile
 
 from flask import current_app
 from werkzeug.utils import secure_filename
@@ -18,7 +19,7 @@ def timestamp():
 
 
 def format_timestamp(t, format='%d/%m/%Y - %H:%M:%S'):
-    return datetime.strftime(datetime.fromtimestamp(t), format)
+    return datetime.datetime.strftime(datetime.datetime.fromtimestamp(t), format)
 
 
 def generate_secret(nbytes):
