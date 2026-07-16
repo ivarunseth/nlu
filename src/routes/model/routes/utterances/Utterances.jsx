@@ -29,7 +29,7 @@ const Utterances = () => {
         try {
             const data = { text };
             const headers = { Authorization: `Bearer ${user.token}` };
-            const response = await axios.post(`/api/models/${modelId}/labels/${labelId}/utterances`, data, { headers });
+            const response = await axios.post(`/api/models/${modelId}/intents/${labelId}/utterances`, data, { headers });
 
             if (page === 1) {
                 setUtterances((prevUtterances) => (
@@ -55,7 +55,7 @@ const Utterances = () => {
 
         try {
             await axios.put(
-                `/api/models/${modelId}/labels/${labelId}/utterances/${utteranceId}`,
+                `/api/models/${modelId}/intents/${labelId}/utterances/${utteranceId}`,
                 { text: utteranceText },
                 {
                     headers: {
@@ -72,7 +72,7 @@ const Utterances = () => {
         try {
             const headers = { Authorization: `Bearer ${user.token}` };
             await axios.delete(
-                `/api/models/${modelId}/labels/${labelId}/utterances/${utteranceId}`,
+                `/api/models/${modelId}/intents/${labelId}/utterances/${utteranceId}`,
                 { headers }
             );
 
@@ -85,7 +85,7 @@ const Utterances = () => {
                     const params = { page, per_page: PER_PAGE };
                     if (debouncedQuery !== "") params.query = debouncedQuery;
                     const response = await axios.get(
-                        `/api/models/${modelId}/labels/${labelId}/utterances`,
+                        `/api/models/${modelId}/intents/${labelId}/utterances`,
                         { params, headers }
                     );
                     setUtterances(response.data.utterances);
@@ -118,7 +118,7 @@ const Utterances = () => {
                         params.query = debouncedQuery;
                     }
                     const headers = { Authorization: `Bearer ${user.token}` };
-                    const response = await axios.get(`/api/models/${modelId}/labels/${labelId}/utterances`, { params, headers });
+                    const response = await axios.get(`/api/models/${modelId}/intents/${labelId}/utterances`, { params, headers });
                     setUtterances(response.data.utterances);
                     setTotal(response.data.total);
                 } catch (error) {

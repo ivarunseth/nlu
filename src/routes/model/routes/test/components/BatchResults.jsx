@@ -12,7 +12,7 @@ import {
 import Papa from "papaparse";
 import { SectionLabel, EmptyState } from "../../../../../shared/components/SectionCard";
 import downloadBlob from "../../../../../shared/utils/downloadBlob";
-import { PredictionView, JsonView, isErrorPrediction, getLabels } from "./Prediction";
+import { PredictionView, JsonView, isErrorPrediction, getLabels, getIntents } from "./Prediction";
 
 // Compact per-row summary of a prediction, matching PredictionView's shape
 // branching: top label + score (classification), intent badge (NLU), entity
@@ -35,6 +35,23 @@ const RowSummary = ({ prediction }) => {
             </span>
         );
     }
+    const intents = getIntents(prediction);
+    if (intents && intents.length > 0) {
+        const slots = Array.isArray(prediction.entities) ? prediction.entities.length : 0;
+        return (
+            <span className="d-inline-flex align-items-center gap-2">
+                <Badge bg="primary" className="fw-medium">{intents[0].name}</Badge>
+                <span className="font-monospace text-muted small">
+                    {((intents[0].score || 0) * 100).toFixed(1)}%
+                </span>
+                {slots > 0 && (
+                    <Badge bg="secondary-subtle" text="body-emphasis" className="border fw-normal">
+                        {slots} slot{slots === 1 ? "" : "s"}
+                    </Badge>
+                )}
+            </span>
+        );
+    }
     if (typeof prediction === "object" && !Array.isArray(prediction) && "intent" in prediction) {
         return <Badge bg="primary" className="fw-medium">{prediction.intent}</Badge>;
     }
@@ -51,11 +68,11 @@ const RowSummary = ({ prediction }) => {
     return <Badge bg="secondary-subtle" text="body-emphasis" className="border fw-normal">output</Badge>;
 };
 
-// Top-1 confidence of a classification-shaped prediction, else null.
+// Top-1 confidence of a classification- or intent-shaped prediction, else null.
 const topScore = (prediction) => {
-    const labels = getLabels(prediction);
-    return labels && labels.length > 0 && typeof labels[0].score === "number"
-        ? labels[0].score
+    const ranked = getLabels(prediction) || getIntents(prediction);
+    return ranked && ranked.length > 0 && typeof ranked[0].score === "number"
+        ? ranked[0].score
         : null;
 };
 
@@ -70,9 +87,13 @@ const exportRow = (row, metaColumns) => {
     let score = "";
     let output = "";
     if (!error && prediction != null) {
+        const intents = getIntents(prediction);
         if (labels && labels.length > 0) {
             label = labels[0].name;
             score = labels[0].score;
+        } else if (intents && intents.length > 0) {
+            label = intents[0].name;
+            score = intents[0].score;
         } else if (typeof prediction === "object" && !Array.isArray(prediction) && "intent" in prediction) {
             label = prediction.intent;
         }

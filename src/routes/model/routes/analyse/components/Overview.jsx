@@ -25,14 +25,14 @@ const GAP_LIMIT = 0.15;
 
 // The glanceable health summary: metric strip, plain-language one-liner,
 // warnings, and the headline card of each tab with a deep link into it.
-const Overview = ({ dataset, versions, best, instances, ner, goto }) => {
+const Overview = ({ dataset, versions, best, instances, ner, nlu, goto }) => {
     const { modelId } = useParams();
 
     const totals = dataset?.totals || { utterances: 0, labels: 0, empty: 0 };
     const imbalance = dataset?.imbalance;
     const annotation = dataset?.annotation;
-    const thing = ner ? "entity" : "label";
-    const things = ner ? "entities" : "labels";
+    const thing = ner ? "entity" : nlu ? "intent" : "label";
+    const things = ner ? "entities" : nlu ? "intents" : "labels";
     const latest = versions[versions.length - 1];
     const byId = Object.fromEntries(versions.map((version) => [version.id, version]));
 
@@ -95,8 +95,10 @@ const Overview = ({ dataset, versions, best, instances, ner, goto }) => {
 
     const parts = [ner
         ? `${totals.utterances} utterances with ${annotation?.spans ?? 0} spans across ${totals.labels} entities`
-        : `${totals.utterances} utterances across ${totals.labels} labels`];
-    if (best) parts.push(`best version v${best.version} at ${pct(best.accuracy)} test ${ner ? "token accuracy" : "accuracy"}`);
+        : nlu
+            ? `${totals.utterances} utterances across ${totals.labels} intents, carrying ${annotation?.spans ?? 0} slot spans over ${(dataset?.slots || []).length} slots`
+            : `${totals.utterances} utterances across ${totals.labels} labels`];
+    if (best) parts.push(`best version v${best.version} at ${pct(best.accuracy)} test ${ner ? "token accuracy" : nlu ? "intent accuracy" : "accuracy"}`);
     if (weakest) parts.push(`weakest ${thing} “${weakest[0]}” at ${weakest[1].toFixed(2)} F1`);
     const production = deployed.find((entry) => entry.environment === "production");
     parts.push(production ? `production serving v${production.version}` : "nothing in production yet");
@@ -116,10 +118,10 @@ const Overview = ({ dataset, versions, best, instances, ner, goto }) => {
         text: `${totals.empty} ${totals.empty > 1 ? `${things} have` : `${thing} has`} no ${ner ? "spans" : "utterances"} yet.`,
         to: "build"
     });
-    if (ner && annotation && totals.utterances) {
+    if ((ner || nlu) && annotation && totals.utterances) {
         const unannotated = totals.utterances - annotation.annotated;
         if (unannotated > 0) warns.push({
-            text: `${unannotated} utterance${unannotated > 1 ? "s carry" : " carries"} no spans — they train as all-O (fine if intentional).`,
+            text: `${unannotated} utterance${unannotated > 1 ? "s carry" : " carries"} no ${nlu ? "slot " : ""}spans — they train as all-O (fine if intentional).`,
             tab: "dataset"
         });
     }
@@ -202,7 +204,7 @@ const Overview = ({ dataset, versions, best, instances, ner, goto }) => {
                     <Card className="border-light overflow-hidden h-100">
                         <CardHeading
                             icon={<Database />}
-                            title={ner ? "Entity distribution" : "Label distribution"}
+                            title={ner ? "Entity distribution" : nlu ? "Intent distribution" : "Label distribution"}
                             right={
                                 <Button variant="link" size="sm" className="p-0 text-decoration-none" onClick={() => goto("dataset")}>
                                     dataset →
@@ -212,7 +214,7 @@ const Overview = ({ dataset, versions, best, instances, ner, goto }) => {
                         <Card.Body className="p-3">
                             <div style={{ height: "220px" }}>
                                 {dataset?.labels?.length ? (
-                                    <LabelBars labels={dataset.labels} imbalance={imbalance} colored={ner} name={ner ? "spans" : "utterances"} />
+                                    <LabelBars labels={dataset.labels} imbalance={imbalance} colored={ner || nlu} name={ner ? "spans" : "utterances"} />
                                 ) : (
                                     <EmptyMessage icon={<Database />}>No {things} yet.</EmptyMessage>
                                 )}

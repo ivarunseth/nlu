@@ -75,7 +75,7 @@ const ModelsTable = ({
                                 </td>
                                 <td>
                                     <Badge bg="light" text="dark" className="border fw-normal font-monospace">
-                                        {(model.type || "").replace(/_/g, " ")}
+                                        {(model.kind || "").replace(/_/g, " ")}
                                     </Badge>
                                 </td>
                                 <td className="small text-muted">{model.created_at}</td>

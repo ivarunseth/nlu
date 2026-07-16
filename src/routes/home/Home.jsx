@@ -54,6 +54,25 @@ const Home = () => {
 
     const debouncedQuery = useDebounce(query, 500);
 
+    // Annotated datasets import row-by-row and report skipped rows in an
+    // import_summary riding on the model payload; surface it so a partial
+    // import never goes unnoticed.
+    const importAlert = (summary) => {
+        if (!summary) return null;
+        const skipped = summary.errors.length;
+        let message = `Imported ${summary.imported} utterance${summary.imported === 1 ? "" : "s"}`;
+        if (summary.created.length > 0) {
+            message += `, created ${summary.created.length} definition${summary.created.length === 1 ? "" : "s"} (intents, entities and slots)`;
+        }
+        if (skipped > 0) {
+            const first = summary.errors[0];
+            message += `. Skipped ${skipped} row${skipped === 1 ? "" : "s"} — e.g. line ${first.line}: ${first.error}`;
+        } else {
+            message += ".";
+        }
+        return { variant: skipped > 0 ? "warning" : "success", message };
+    };
+
     const resetForm = () => {
         setValidated(false);
         setName("");
@@ -88,7 +107,7 @@ const Home = () => {
             setSubmitting(true);
             const data = new FormData();
             data.append("name", name);
-            data.append("type", type);
+            data.append("kind", type);
             if (dataset) {
                 data.append("dataset", dataset);
                 data.append("header", header);
@@ -96,17 +115,19 @@ const Home = () => {
             data.append("description", description);
             const headers = { Authorization: `Bearer ${user.token}` };
             const response = await axios.post("/api/models", data, { headers });
+            const { import_summary: importSummary, ...createdModel } = response.data;
 
             if (page === 1) {
                 setModels((prevModels) => (
                     prevModels.length + 1 > PER_PAGE
-                        ? [response.data, ...prevModels.slice(0, -1)]
-                        : [response.data, ...prevModels]
+                        ? [createdModel, ...prevModels.slice(0, -1)]
+                        : [createdModel, ...prevModels]
                 ));
                 setTotal((prevTotal) => prevTotal + 1);
             } else {
                 setPage(1);
             }
+            if (importSummary) setAlert(importAlert(importSummary));
         } catch (error) {
             setAlert({ variant: "danger", message: error.response.data.error });
         } finally {
@@ -154,7 +175,9 @@ const Home = () => {
             data.append("description", description);
             const headers = { Authorization: `Bearer ${user.token}` };
             const response = await axios.put(`/api/models/${currentModel.id}`, data, { headers });
-            setModels((prevModels) => prevModels.map((m) => (m.id === currentModel.id ? response.data : m)));
+            const { import_summary: importSummary, ...editedModel } = response.data;
+            setModels((prevModels) => prevModels.map((m) => (m.id === currentModel.id ? editedModel : m)));
+            if (importSummary) setAlert(importAlert(importSummary));
         } catch (error) {
             setAlert({ variant: "danger", message: error.response.data.error });
         } finally {

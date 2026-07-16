@@ -5,7 +5,7 @@ import {
     BarChartFill,
     ChatSquareText,
     Database,
-    Diagram3,
+    Diagram2,
     ExclamationTriangle,
     Files,
     Fonts,
@@ -14,7 +14,7 @@ import {
     Rulers,
     Table as TableIcon,
     Tags,
-    Translate
+    Bookmarks
 } from "react-bootstrap-icons";
 import { Link, useParams } from "react-router-dom";
 import axios from "axios";
@@ -31,8 +31,10 @@ const range = (bin) => (bin.lo === bin.hi ? `${bin.lo}` : `${bin.lo}–${bin.hi}
 // vocabulary, and drift of the current data against a training snapshot.
 // For named entity recognition the distribution counts annotated spans per
 // entity and the `annotation` block adds coverage, span lengths and
-// co-occurrence.
-const Dataset = ({ dataset, versions, ner }) => {
+// co-occurrence. Language understanding composes both: the distribution is
+// utterances per intent, a second card shows spans per slot, and the
+// annotation panels read exactly as they do for named entity recognition.
+const Dataset = ({ dataset, versions, ner, nlu }) => {
     const { modelId } = useParams();
     const { user } = useContext(UserContext);
 
@@ -45,14 +47,16 @@ const Dataset = ({ dataset, versions, ner }) => {
 
     if (!dataset) return null;
     const { totals, imbalance, duplicates, lengths, vocab, annotation } = dataset;
-    const thing = ner ? "entity" : "label";
+    const thing = ner ? "entity" : nlu ? "intent" : "label";
     const unitName = ner ? "spans" : "utterances";
+    const slots = dataset.slots || [];
+    const entities = dataset.entities || [];
 
     if (!totals.labels) {
         return (
-            <EmptyState icon={<Translate />}>
-                No {thing === "entity" ? "entities" : "labels"} yet — author your dataset
-                in <Link to={`/models/${modelId}/build`}>Build</Link>.
+            <EmptyState icon={<Bookmarks />}>
+                No {ner ? "entities" : nlu ? "intents" : "labels"} yet — author your dataset
+                in <Link to={`/models/${modelId}/build${nlu ? "?tab=intents" : ""}`}>Build</Link>.
             </EmptyState>
         );
     }
@@ -113,12 +117,31 @@ const Dataset = ({ dataset, versions, ner }) => {
             value: imbalance ? `${imbalance.ratio} : 1` : "-",
             icon: <BarChartFill />
         }
+    ] : nlu ? [
+        { label: "Utterances", value: totals.utterances, icon: <ChatSquareText /> },
+        {
+            label: "Intents",
+            value: `${totals.labels}${totals.empty ? ` · ${totals.empty} empty` : ""}`,
+            icon: <Bookmarks />
+        },
+        { label: "Slots", value: `${slots.length} · ${entities.length} entit${entities.length === 1 ? "y" : "ies"}`, icon: <Diagram2 /> },
+        {
+            label: "With ≥1 slot",
+            value: annotation ? `${annotation.annotated} (${pct(annotation.coverage)})` : "-",
+            icon: <PencilSquare />
+        },
+        { label: "Slot spans", value: annotation?.spans, icon: <Hash /> },
+        {
+            label: "Imbalance",
+            value: imbalance ? `${imbalance.ratio} : 1` : "-",
+            icon: <BarChartFill />
+        }
     ] : [
         { label: "Utterances", value: totals.utterances, icon: <ChatSquareText /> },
         {
             label: "Labels",
             value: `${totals.labels}${totals.empty ? ` · ${totals.empty} empty` : ""}`,
-            icon: <Translate />
+            icon: <Bookmarks />
         },
         { label: "Mean / label", value: totals.mean, icon: <Hash /> },
         { label: "Median / label", value: totals.median, icon: <Hash /> },
@@ -136,8 +159,8 @@ const Dataset = ({ dataset, versions, ner }) => {
                 <Col xs={12}>
                     <ChartCard
                         icon={<Database />}
-                        title={ner ? "Entity distribution" : "Label distribution"}
-                        name={ner ? "entity_distribution" : "label_distribution"}
+                        title={ner ? "Entity distribution" : nlu ? "Intent distribution" : "Label distribution"}
+                        name={ner ? "entity_distribution" : nlu ? "intent_distribution" : "label_distribution"}
                         height={300}
                         right={
                             <>
@@ -159,12 +182,12 @@ const Dataset = ({ dataset, versions, ner }) => {
                         foot={imbalance && `largest ${imbalance.max.name} (${imbalance.max.count}) · smallest ${imbalance.min.name} (${imbalance.min.count}) · imbalance ${imbalance.ratio}:1`}
                     >
                         {view === "chart" ? (
-                            <LabelBars labels={labels} imbalance={imbalance} colored={ner} name={unitName} />
+                            <LabelBars labels={labels} imbalance={imbalance} colored={ner || nlu} name={unitName} />
                         ) : (
                             <Table hover size="sm" className="mb-0 small align-middle">
                                 <thead className="bg-body-tertiary sticky-top">
                                     <tr>
-                                        <th>{ner ? "Entity" : "Label"}</th>
+                                        <th>{ner ? "Entity" : nlu ? "Intent" : "Label"}</th>
                                         <th className="text-end">{ner ? "Spans" : "Utterances"}</th>
                                         <th className="text-end">Share</th>
                                     </tr>
@@ -173,7 +196,7 @@ const Dataset = ({ dataset, versions, ner }) => {
                                     {labels.map((label) => (
                                         <tr key={label.id}>
                                             <td>
-                                                {ner && label.color && (
+                                                {(ner || nlu) && label.color && (
                                                     <span
                                                         className="d-inline-block me-2 rounded-circle"
                                                         style={{ width: "8px", height: "8px", backgroundColor: label.color }}
@@ -192,7 +215,57 @@ const Dataset = ({ dataset, versions, ner }) => {
                         )}
                     </ChartCard>
                 </Col>
-                {ner && (
+                {nlu && (
+                    <Col xs={12}>
+                        <ChartCard
+                            icon={<Diagram2 />}
+                            title="Slot distribution"
+                            name="slot_distribution"
+                            height={260}
+                            csv={() => [["slot", "spans"], ...slots.map((slot) => [slot.name, slot.count])]}
+                            foot="annotated spans per slot — utterances with no spans still train (as all-O)"
+                        >
+                            {slots.length ? (
+                                <LabelBars labels={slots} colored name="spans" />
+                            ) : (
+                                <EmptyMessage icon={<Diagram2 />}>
+                                    No slots yet — open an intent in{" "}
+                                    <Link to={`/models/${modelId}/build?tab=intents`}>Build</Link>{" "}
+                                    and define its slots there.
+                                </EmptyMessage>
+                            )}
+                        </ChartCard>
+                    </Col>
+                )}
+                {nlu && (
+                    <Col xs={12}>
+                        <ChartCard
+                            icon={<Tags />}
+                            title="Entity distribution"
+                            name="entity_distribution"
+                            height={260}
+                            csv={() => [["entity", "spans", "distinct values"], ...entities.map((entity) => [entity.name, entity.count, entity.values])]}
+                            foot="annotated spans per entity, across every slot mapping to it — value diversity in parentheses"
+                        >
+                            {entities.length ? (
+                                <LabelBars
+                                    labels={entities.map((entity) => ({
+                                        ...entity,
+                                        name: entity.values != null ? `${entity.name} (${entity.values})` : entity.name
+                                    }))}
+                                    colored
+                                    name="spans"
+                                />
+                            ) : (
+                                <EmptyMessage icon={<Tags />}>
+                                    No entities yet — define them in the Entities tab of{" "}
+                                    <Link to={`/models/${modelId}/build?tab=entities`}>Build</Link>.
+                                </EmptyMessage>
+                            )}
+                        </ChartCard>
+                    </Col>
+                )}
+                {(ner || nlu) && (
                     <>
                         <Col lg={6}>
                             <ChartCard
@@ -215,9 +288,9 @@ const Dataset = ({ dataset, versions, ner }) => {
                         <Col lg={6}>
                             <Card className="border-light overflow-hidden h-100">
                                 <CardHeading
-                                    icon={<Diagram3 />}
-                                    title="Entity co-occurrence"
-                                    right={<span className="text-muted" style={{ fontSize: "0.7rem" }}>entities annotated in the same utterance</span>}
+                                    icon={<Diagram2 />}
+                                    title={nlu ? "Slot co-occurrence" : "Entity co-occurrence"}
+                                    right={<span className="text-muted" style={{ fontSize: "0.7rem" }}>{nlu ? "slots" : "entities"} annotated in the same utterance</span>}
                                 />
                                 <Card.Body className="p-0">
                                     {annotation?.cooccurrence?.length ? (
@@ -225,7 +298,7 @@ const Dataset = ({ dataset, versions, ner }) => {
                                             <Table hover size="sm" className="mb-0 small align-middle">
                                                 <thead className="bg-body-tertiary sticky-top">
                                                     <tr>
-                                                        <th className="px-3">Entity pair</th>
+                                                        <th className="px-3">{nlu ? "Slot pair" : "Entity pair"}</th>
                                                         <th className="text-end pe-3">Utterances</th>
                                                     </tr>
                                                 </thead>
@@ -245,14 +318,57 @@ const Dataset = ({ dataset, versions, ner }) => {
                                             </Table>
                                         </div>
                                     ) : (
-                                        <EmptyMessage icon={<Diagram3 />}>
-                                            No utterance carries two different entities yet.
+                                        <EmptyMessage icon={<Diagram2 />}>
+                                            No utterance carries two different {nlu ? "slots" : "entities"} yet.
                                         </EmptyMessage>
                                     )}
                                 </Card.Body>
                             </Card>
                         </Col>
                     </>
+                )}
+                {nlu && (
+                    <Col lg={6}>
+                        <Card className="border-light overflow-hidden h-100">
+                            <CardHeading
+                                icon={<Diagram2 />}
+                                title="Intent ↔ slot"
+                                right={<span className="text-muted" style={{ fontSize: "0.7rem" }}>which slots each intent's utterances carry</span>}
+                            />
+                            <Card.Body className="p-0">
+                                {annotation?.intent_slots?.length ? (
+                                    <div className="overflow-auto" style={{ maxHeight: "300px" }}>
+                                        <Table hover size="sm" className="mb-0 small align-middle">
+                                            <thead className="bg-body-tertiary sticky-top">
+                                                <tr>
+                                                    <th className="px-3">Intent</th>
+                                                    <th>Slot</th>
+                                                    <th className="text-end pe-3">Spans</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {annotation.intent_slots.map((pair) => (
+                                                    <tr key={`${pair.intent}+${pair.slot}`}>
+                                                        <td className="px-3">
+                                                            <Badge bg="secondary-subtle" text="body-emphasis" className="border fw-normal">{pair.intent}</Badge>
+                                                        </td>
+                                                        <td>
+                                                            <Badge bg="secondary-subtle" text="body-emphasis" className="border fw-normal">{pair.slot}</Badge>
+                                                        </td>
+                                                        <td className="text-end pe-3 font-monospace">{pair.count}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </Table>
+                                    </div>
+                                ) : (
+                                    <EmptyMessage icon={<Diagram2 />}>
+                                        No annotated spans on intent-labelled utterances yet.
+                                    </EmptyMessage>
+                                )}
+                            </Card.Body>
+                        </Card>
+                    </Col>
                 )}
                 <Col lg={6}>
                     <Card className="border-light overflow-hidden h-100">
@@ -273,7 +389,7 @@ const Dataset = ({ dataset, versions, ner }) => {
                                         <thead className="bg-body-tertiary sticky-top">
                                             <tr>
                                                 <th className="px-3">Text</th>
-                                                {!ner && <th>Labels</th>}
+                                                {!ner && <th>{nlu ? "Intents" : "Labels"}</th>}
                                                 <th className="text-end pe-3">Count</th>
                                             </tr>
                                         </thead>
@@ -342,7 +458,7 @@ const Dataset = ({ dataset, versions, ner }) => {
                             title="Vocabulary"
                             right={
                                 <Form.Select size="sm" value={vocabLabel} onChange={(e) => setVocabLabel(e.target.value)} style={{ width: "auto" }} aria-label={`Vocabulary ${thing}`}>
-                                    <option value="">{ner ? "whole dataset" : "all labels"}</option>
+                                    <option value="">{ner ? "whole dataset" : nlu ? "all intents" : "all labels"}</option>
                                     {dataset.labels.filter((label) => label.count).map((label) => (
                                         <option key={label.id} value={label.name}>{label.name}</option>
                                     ))}

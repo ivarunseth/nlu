@@ -2,7 +2,9 @@ import { useContext, useEffect, useState } from "react";
 import { Alert, Badge, Button, Card, Col, Form, Row, Spinner, Table } from "react-bootstrap";
 import {
     ArrowClockwise,
+    Bookmarks,
     Broadcast,
+    Diagram2,
     ExclamationTriangle,
     GraphUp,
     Lightning,
@@ -28,11 +30,81 @@ const rate = (part, total) => (total ? `${(part / total * 100).toFixed(1)}%` : "
 
 // One live-feed row over a persisted telemetry record: the prediction (or
 // error) is read out of the stored output JSON — ranked labels for
-// classification, entity spans for named entity recognition.
+// classification, entity spans for named entity recognition, ranked intents
+// plus slot spans for language understanding.
 const FeedRow = ({ record, colorOf }) => {
     const output = record.output && typeof record.output === "object" ? record.output : {};
+    const intents = Array.isArray(output.intents) ? output.intents : null;
     const labels = Array.isArray(output.labels) ? output.labels : null;
-    const entities = Array.isArray(output.tags) && Array.isArray(output.entities) ? output.entities : null;
+    const entities = intents
+        ? (Array.isArray(output.entities) ? output.entities : []).map(
+            // Slot spans carry `slot` (the role) plus `entity` (its type);
+            // rows logged before the split carried the slot under `name`.
+            (span) => ({
+                ...span,
+                slot: span.slot ?? span.name,
+                entity: span.entity ?? span.slot ?? span.name
+            })
+        )
+        : Array.isArray(output.tags) && Array.isArray(output.entities) ? output.entities : null;
+    if (intents) {
+        return (
+            <tr>
+                <td className="px-3 text-muted font-monospace text-nowrap">
+                    {new Date(record.created_at * 1000).toLocaleTimeString()}
+                </td>
+                <td>
+                    <Badge bg="secondary-subtle" text="body-emphasis" className="border font-monospace fw-normal">
+                        {record.environment} v{record.version ?? "?"}
+                    </Badge>
+                </td>
+                <td className="text-break">
+                    {record.input ?? <span className="text-muted">not captured</span>}
+                </td>
+                <td>
+                    {output.error ? (
+                        <Badge bg="danger" title={output.error}>{output.type || "Error"}</Badge>
+                    ) : (
+                        <span className="d-inline-flex flex-wrap align-items-center gap-1">
+                            {intents.length > 0 && (
+                                <>
+                                    <Badge bg="primary-subtle" text="primary-emphasis" className="border fw-normal">
+                                        {intents[0].name}
+                                    </Badge>
+                                    {intents[0].score != null && (
+                                        <span className="text-muted font-monospace me-1" style={{ fontSize: "0.7rem" }}>
+                                            {(intents[0].score * 100).toFixed(1)}%
+                                        </span>
+                                    )}
+                                </>
+                            )}
+                            {(entities || []).map((span, index) => {
+                                // Labelled by slot (the predicted role),
+                                // coloured by the slot's entity type.
+                                const color = colorOf(span.entity);
+                                const detail = span.slot === span.entity ? span.slot : `${span.slot} (${span.entity})`;
+                                return (
+                                    <Badge
+                                        key={index}
+                                        className="border fw-normal"
+                                        bg=""
+                                        style={{ backgroundColor: color, color: readableTextColor(color) }}
+                                        title={span.score != null ? `${detail} · ${(span.score * 100).toFixed(1)}%` : detail}
+                                    >
+                                        {span.value} · {span.slot}
+                                    </Badge>
+                                );
+                            })}
+                        </span>
+                    )}
+                </td>
+                <td className="text-end font-monospace text-nowrap">
+                    {record.latency != null && `${record.latency} ms`}
+                    {record.cached && <Lightning className="text-warning ms-1" title="Served from cache" />}
+                </td>
+            </tr>
+        );
+    }
     return (
         <tr>
             <td className="px-3 text-muted font-monospace text-nowrap">
@@ -96,7 +168,7 @@ const FeedRow = ({ record, colorOf }) => {
 // Live production telemetry over the persisted prediction rows: the analytics
 // endpoint drains the buffered telemetry queues on every read, so polling it
 // keeps the aggregates and the feed moving with the traffic.
-const Traffic = ({ dataset, instances, ner }) => {
+const Traffic = ({ dataset, instances, ner, nlu }) => {
     const { modelId } = useParams();
     const { user } = useContext(UserContext);
 
@@ -138,10 +210,12 @@ const Traffic = ({ dataset, instances, ner }) => {
     ])].sort((a, b) => ENV_ORDER.indexOf(a) - ENV_ORDER.indexOf(b));
 
     // The colour assigned to each entity in Build, falling back to the
-    // deterministic name-based palette for anything unknown.
-    const stored = Object.fromEntries((dataset?.labels || [])
-        .filter((label) => label.color)
-        .map((label) => [label.name, label.color]));
+    // deterministic name-based palette for anything unknown. For language
+    // understanding the slot and entity registries paint the span chips.
+    const stored = Object.fromEntries(
+        [...(dataset?.labels || []), ...(dataset?.slots || []), ...(dataset?.entities || [])]
+            .filter((label) => label.color)
+            .map((label) => [label.name, label.color]));
     const colorOf = (name) => stored[name] || entityColor(name);
 
     const feed = data?.recent || [];
@@ -154,12 +228,23 @@ const Traffic = ({ dataset, instances, ner }) => {
     const scoredUnit = ner ? "spans" : "predictions";
 
     // Live mix share vs its dataset counterpart: predicted labels against
-    // utterances per label, predicted entities against annotated spans.
+    // utterances per label, predicted entities against annotated spans. For
+    // language understanding, intents read against utterances per intent
+    // and slots against annotated spans per slot.
     const mixTotal = ner ? data?.spans?.total : data && data.total - data.errors;
     const datasetTotal = ner ? dataset?.annotation?.spans : dataset?.totals?.utterances;
     const datasetShare = Object.fromEntries((dataset?.labels || []).map((label) => [
         label.name,
         datasetTotal ? label.count / datasetTotal : 0
+    ]));
+    const slotTotal = dataset?.annotation?.spans;
+    const slotShare = Object.fromEntries((dataset?.slots || []).map((slot) => [
+        slot.name,
+        slotTotal ? slot.count / slotTotal : 0
+    ]));
+    const entityShare = Object.fromEntries((dataset?.entities || []).map((entity) => [
+        entity.name,
+        slotTotal ? entity.count / slotTotal : 0
     ]));
 
     const items = data && [
@@ -179,10 +264,10 @@ const Traffic = ({ dataset, instances, ner }) => {
             icon: <Stopwatch />
         },
         { label: "Cache hits", value: rate(data.cache_hits, data.total), icon: <Lightning /> },
-        ...(ner ? [{
-            label: "Spans / request",
+        ...(ner || nlu ? [{
+            label: nlu ? "Slots / request" : "Spans / request",
             value: data.spans?.mean != null ? <span className="font-monospace">{data.spans.mean}</span> : "-",
-            icon: <Tags />
+            icon: <Diagram2 />
         }] : [])
     ];
 
@@ -287,7 +372,7 @@ const Traffic = ({ dataset, instances, ner }) => {
                             <Col lg={4}>
                                 <ChartCard
                                     icon={<Percent />}
-                                    title={ner ? "Span confidence" : "Confidence"}
+                                    title={ner ? "Span confidence" : nlu ? "Intent confidence" : "Confidence"}
                                     name="confidence"
                                     height={200}
                                     csv={() => [["from", "to", scoredUnit], ...bins.map((bin) => [bin.lo, bin.hi, bin.n])]}
@@ -314,7 +399,7 @@ const Traffic = ({ dataset, instances, ner }) => {
                             </Col>
                             <Col lg={4}>
                                 <Card className="border-light overflow-hidden h-100">
-                                    <CardHeading icon={<Tags />} title={ner ? "Predicted entity mix" : "Predicted label mix"} right={
+                                    <CardHeading icon={ner ? <Tags/> : <Bookmarks />} title={ner ? "Predicted entity mix" : nlu ? "Predicted intent mix" : "Predicted label mix"} right={
                                         <span className="text-muted" style={{ fontSize: "0.7rem" }}>vs dataset share</span>
                                     } />
                                     <Card.Body className="p-0">
@@ -323,7 +408,7 @@ const Traffic = ({ dataset, instances, ner }) => {
                                                 <Table hover size="sm" className="mb-0 small align-middle">
                                                     <thead className="bg-body-tertiary sticky-top">
                                                         <tr>
-                                                            <th className="px-3">{ner ? "Entity" : "Label"}</th>
+                                                            <th className="px-3">{ner ? "Entity" : nlu ? "Intent" : "Label"}</th>
                                                             <th className="text-end">Live</th>
                                                             <th className="text-end pe-3">Dataset</th>
                                                         </tr>
@@ -332,7 +417,7 @@ const Traffic = ({ dataset, instances, ner }) => {
                                                         {data.labels.map(([label, count]) => (
                                                             <tr key={label}>
                                                                 <td className="px-3">
-                                                                    {ner && (
+                                                                    {(ner || nlu) && (
                                                                         <span
                                                                             className="d-inline-block me-2 rounded-circle"
                                                                             style={{ width: "8px", height: "8px", backgroundColor: colorOf(label) }}
@@ -350,13 +435,99 @@ const Traffic = ({ dataset, instances, ner }) => {
                                                 </Table>
                                             </div>
                                         ) : (
-                                            <EmptyMessage icon={<Tags />}>
-                                                {ner ? "No predicted entities yet." : "No predicted labels yet."}
+                                            <EmptyMessage icon={ner ? <Tags/> : <Bookmarks />}>
+                                                {ner ? "No predicted entities yet." : nlu ? "No predicted intents yet." : "No predicted labels yet."}
                                             </EmptyMessage>
                                         )}
                                     </Card.Body>
                                 </Card>
                             </Col>
+                            {nlu && (
+                                <Col lg={4}>
+                                    <Card className="border-light overflow-hidden h-100">
+                                        <CardHeading icon={<Diagram2 />} title="Predicted slot mix" right={
+                                            <span className="text-muted" style={{ fontSize: "0.7rem" }}>vs dataset share</span>
+                                        } />
+                                        <Card.Body className="p-0">
+                                            {(data.slot_labels || []).length ? (
+                                                <div className="overflow-auto" style={{ maxHeight: "300px" }}>
+                                                    <Table hover size="sm" className="mb-0 small align-middle">
+                                                        <thead className="bg-body-tertiary sticky-top">
+                                                            <tr>
+                                                                <th className="px-3">Slot</th>
+                                                                <th className="text-end">Live</th>
+                                                                <th className="text-end pe-3">Dataset</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {data.slot_labels.map(([slot, count]) => (
+                                                                <tr key={slot}>
+                                                                    <td className="px-3">
+                                                                        <span
+                                                                            className="d-inline-block me-2 rounded-circle"
+                                                                            style={{ width: "8px", height: "8px", backgroundColor: colorOf(slot) }}
+                                                                        />
+                                                                        {slot}
+                                                                    </td>
+                                                                    <td className="text-end font-monospace">{rate(count, data.spans?.total)}</td>
+                                                                    <td className="text-end pe-3 font-monospace text-muted">
+                                                                        {slotShare[slot] != null ? `${(slotShare[slot] * 100).toFixed(1)}%` : "-"}
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </Table>
+                                                </div>
+                                            ) : (
+                                                <EmptyMessage icon={<Diagram2 />}>No predicted slots yet.</EmptyMessage>
+                                            )}
+                                        </Card.Body>
+                                    </Card>
+                                </Col>
+                            )}
+                            {nlu && (
+                                <Col lg={4}>
+                                    <Card className="border-light overflow-hidden h-100">
+                                        <CardHeading icon={<Tags />} title="Predicted entity mix" right={
+                                            <span className="text-muted" style={{ fontSize: "0.7rem" }}>vs dataset share</span>
+                                        } />
+                                        <Card.Body className="p-0">
+                                            {(data.entity_labels || []).length ? (
+                                                <div className="overflow-auto" style={{ maxHeight: "300px" }}>
+                                                    <Table hover size="sm" className="mb-0 small align-middle">
+                                                        <thead className="bg-body-tertiary sticky-top">
+                                                            <tr>
+                                                                <th className="px-3">Entity</th>
+                                                                <th className="text-end">Live</th>
+                                                                <th className="text-end pe-3">Dataset</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {data.entity_labels.map(([entity, count]) => (
+                                                                <tr key={entity}>
+                                                                    <td className="px-3">
+                                                                        <span
+                                                                            className="d-inline-block me-2 rounded-circle"
+                                                                            style={{ width: "8px", height: "8px", backgroundColor: colorOf(entity) }}
+                                                                        />
+                                                                        {entity}
+                                                                    </td>
+                                                                    <td className="text-end font-monospace">{rate(count, data.spans?.total)}</td>
+                                                                    <td className="text-end pe-3 font-monospace text-muted">
+                                                                        {entityShare[entity] != null ? `${(entityShare[entity] * 100).toFixed(1)}%` : "-"}
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </Table>
+                                                </div>
+                                            ) : (
+                                                <EmptyMessage icon={<Tags />}>No predicted entities yet.</EmptyMessage>
+                                            )}
+                                        </Card.Body>
+                                    </Card>
+                                </Col>
+                            )}
                             <Col xs={12}>
                                 <Card className="border-light overflow-hidden">
                                     <CardHeading

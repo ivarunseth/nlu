@@ -18,14 +18,27 @@ const METRICS = [
     { key: "weighted F1", color: COLORS[6], get: (v) => v.weighted?.f1 }
 ];
 
+// The slot half of a language understanding version, from the entity-level
+// scores the fixed evaluate stores (type + boundaries must match exactly).
+const NLU_METRICS = [
+    { key: "slot F1 (entity)", color: COLORS[2], get: (v) => v.slots?.f1 },
+    { key: "slot precision (entity)", color: COLORS[7], get: (v) => v.slots?.precision },
+    // The palette's eight colours are all taken; Tableau brown matches it.
+    { key: "slot recall (entity)", color: "#9C755F", get: (v) => v.slots?.recall }
+];
+
 // Cross-version model quality: trends, overfit gap, per-label F1 movement,
 // persistent confusions and the best-version recommendation. For named
 // entity recognition the stored report is token-level over IOB tags:
 // accuracy reads as token accuracy, per-entity F1 collapses the B-/I- tag
-// scores, and the confusions are tag pairs.
-const Versions = ({ versions, best, confusions, win, setWin, ner }) => {
+// scores, and the confusions are tag pairs. For language understanding the
+// headline metrics are the intent metrics and the slot half adds
+// entity-level F1 trends plus a per-slot table.
+const Versions = ({ versions, best, confusions, win, setWin, ner, nlu }) => {
     const { modelId } = useParams();
-    const [selected, setSelected] = useState(["test accuracy", "macro F1"]);
+    const [selected, setSelected] = useState(nlu
+        ? ["test accuracy", "macro F1", "slot F1 (entity)"]
+        : ["test accuracy", "macro F1"]);
 
     if (!versions.length) {
         return (
@@ -35,14 +48,18 @@ const Versions = ({ versions, best, confusions, win, setWin, ner }) => {
         );
     }
 
+    const metrics = nlu ? [...METRICS, ...NLU_METRICS] : METRICS;
     const sliced = win > 0 ? versions.slice(-win) : versions;
     const data = sliced.map((version) => Object.fromEntries([
         ["version", version.version],
-        ...METRICS.map((metric) => [metric.key, metric.get(version)])
+        ...metrics.map((metric) => [metric.key, metric.get(version)])
     ]));
     const gaps = sliced.filter((version) => version.gap != null)
         .map((version) => ({ version: version.version, gap: version.gap }));
     const names = [...new Set(sliced.flatMap((version) => Object.keys(version.labels || {})))].sort();
+    const slotNames = nlu
+        ? [...new Set(sliced.flatMap((version) => Object.keys(version.slots?.labels || {})))].sort()
+        : [];
 
     const toggle = (key) => {
         setSelected((prev) => prev.includes(key)
@@ -52,7 +69,7 @@ const Versions = ({ versions, best, confusions, win, setWin, ner }) => {
 
     const bar = (
         <div className="d-flex flex-wrap align-items-center column-gap-3 row-gap-2 px-3 py-2 bg-body-tertiary border-bottom border-light-subtle">
-            {METRICS.map((metric) => (
+            {metrics.map((metric) => (
                 <Form.Check
                     key={metric.key}
                     type="checkbox"
@@ -140,11 +157,13 @@ const Versions = ({ versions, best, confusions, win, setWin, ner }) => {
                             ["version", ...selected],
                             ...data.map((row) => [row.version, ...selected.map((key) => row[key] ?? "")])
                         ]}
-                        foot={ner && "token-level metrics over IOB tags — a partially matched span still scores its matched tokens"}
+                        foot={ner
+                            ? "token-level metrics over IOB tags — a partially matched span still scores its matched tokens"
+                            : nlu && "accuracy and macro/weighted metrics score the intent; the slot metrics are entity-level — a span counts only when type and boundaries match"}
                     >
                         <TrendLines
                             data={data}
-                            lines={METRICS.filter((metric) => selected.includes(metric.key))}
+                            lines={metrics.filter((metric) => selected.includes(metric.key))}
                         />
                     </ChartCard>
                 </Col>
@@ -168,7 +187,7 @@ const Versions = ({ versions, best, confusions, win, setWin, ner }) => {
                     <Card className="border-light overflow-hidden h-100">
                         <CardHeading
                             icon={<Grid3x3Gap />}
-                            title={ner ? "Per-entity F1" : "Per-label F1"}
+                            title={ner ? "Per-entity F1" : nlu ? "Per-intent F1" : "Per-label F1"}
                             right={
                                 <span className="text-muted" style={{ fontSize: "0.7rem" }}>
                                     {ner ? "B-/I- tag scores merged per entity · test split" : "test split, by version"}
@@ -181,7 +200,7 @@ const Versions = ({ versions, best, confusions, win, setWin, ner }) => {
                                     <Table size="sm" className="mb-0 text-center align-middle font-monospace small">
                                         <thead className="bg-body-tertiary sticky-top">
                                             <tr>
-                                                <th className="text-start px-3">{ner ? "Entity" : "Label"}</th>
+                                                <th className="text-start px-3">{ner ? "Entity" : nlu ? "Intent" : "Label"}</th>
                                                 {sliced.map((version) => (
                                                     <th key={version.id}>v{version.version}</th>
                                                 ))}
@@ -264,6 +283,67 @@ const Versions = ({ versions, best, confusions, win, setWin, ner }) => {
                         </Card.Body>
                     </Card>
                 </Col>
+                {nlu && (
+                    <Col xs={12}>
+                        <Card className="border-light overflow-hidden">
+                            <CardHeading
+                                icon={<Grid3x3Gap />}
+                                title="Per-slot F1"
+                                right={
+                                    <span className="text-muted" style={{ fontSize: "0.7rem" }}>
+                                        entity-level: type and boundaries must match · test split
+                                    </span>
+                                }
+                            />
+                            <Card.Body className="p-0">
+                                {slotNames.length ? (
+                                    <div className="overflow-auto" style={{ maxHeight: "400px" }}>
+                                        <Table size="sm" className="mb-0 text-center align-middle font-monospace small">
+                                            <thead className="bg-body-tertiary sticky-top">
+                                                <tr>
+                                                    <th className="text-start px-3">Slot</th>
+                                                    {sliced.map((version) => (
+                                                        <th key={version.id}>v{version.version}</th>
+                                                    ))}
+                                                    <th title="Change from the first to the last version in the window">Δ</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {slotNames.map((name) => {
+                                                    const series = sliced.map((version) => version.slots?.labels?.[name]);
+                                                    const known = series.filter((f1) => f1 != null);
+                                                    const delta = known.length > 1 ? known[known.length - 1] - known[0] : null;
+                                                    return (
+                                                        <tr key={name}>
+                                                            <td className="text-start px-3 fw-bold text-muted">{name}</td>
+                                                            {series.map((f1, index) => (
+                                                                <td
+                                                                    key={sliced[index].id}
+                                                                    title={f1 != null ? `${name} · v${sliced[index].version} · F1 ${f1.toFixed(4)}` : undefined}
+                                                                    style={f1 != null ? {
+                                                                        backgroundColor: `rgba(13, 110, 253, ${0.08 + f1 * 0.72})`,
+                                                                        color: f1 > 0.6 ? "#fff" : "var(--bs-body-color)"
+                                                                    } : undefined}
+                                                                >
+                                                                    {f1 != null ? f1.toFixed(2) : "–"}
+                                                                </td>
+                                                            ))}
+                                                            <td className={delta == null ? "text-muted" : delta >= 0 ? "text-success" : "text-danger"}>
+                                                                {delta == null ? "–" : `${delta >= 0 ? "+" : ""}${delta.toFixed(2)}`}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </Table>
+                                    </div>
+                                ) : (
+                                    <EmptyMessage icon={<Grid3x3Gap />}>No per-slot entity scores available.</EmptyMessage>
+                                )}
+                            </Card.Body>
+                        </Card>
+                    </Col>
+                )}
             </Row>
         </>
     );

@@ -4,12 +4,13 @@ import { Clipboard, ClipboardCheck, ExclamationTriangle, SortDown } from "react-
 import { SectionLabel, EmptyState } from "../../../../../shared/components/SectionCard";
 import TokenTags from "../../../../../shared/components/TokenTags";
 import EntityHighlights from "../../../../../shared/components/EntityHighlights";
+import { entityColor } from "../../../../../shared/components/entityColors";
 
 // Prediction rendering shared by the Test page's single, compare and batch
 // result surfaces. The output shape is self-describing, so no model-type
-// flag is threaded through: text classification is { outputs: [{ label,
-// score }] }, NLU is { intent, slots }, named entity recognition is { tags,
-// entities }.
+// flag is threaded through: text classification is { labels: [{ name,
+// score }] }, natural language understanding is { intents: [{ name, score }],
+// entities: [...] }, named entity recognition is { tags, entities }.
 
 // A prediction that is a plain error payload rather than a model output.
 export const isErrorPrediction = (prediction) =>
@@ -29,6 +30,25 @@ export const getEntities = (prediction) =>
     prediction != null && typeof prediction === "object" && !Array.isArray(prediction) && Array.isArray(prediction.tags)
         ? (Array.isArray(prediction.entities) ? prediction.entities : [])
         : null;
+
+// The ranked [{ name, score }] intent list of a natural-language-understanding
+// prediction, or null for other model types. NLU predictions are
+// self-describing by their `intents` array.
+export const getIntents = (prediction) =>
+    prediction != null && typeof prediction === "object" && !Array.isArray(prediction) && Array.isArray(prediction.intents)
+        ? prediction.intents
+        : null;
+
+// The [{ slot, entity, value, start, end, score }] span list of an NLU
+// prediction (possibly empty), or null when the prediction is not NLU.
+// Older payloads carried the slot under `name` and no entity.
+export const getSlotEntities = (prediction) =>
+    getIntents(prediction) != null
+        ? (Array.isArray(prediction.entities) ? prediction.entities : [])
+        : null;
+
+// A prediction span's slot name, tolerating the pre-split `name` key.
+export const slotOf = (span) => span.slot ?? span.name;
 
 export const scoresClose = (a, b) => Math.abs((a || 0) - (b || 0)) < 1e-6;
 
@@ -104,7 +124,73 @@ export const PredictionView = ({ prediction, query, reference, colorOf }) => {
         );
     }
 
-    // Natural language understanding: { intent, slots: [...] }
+    // Natural language understanding: { intents: [{ name, score }, ...],
+    // entities: [{ name, value, start, end, score }, ...] } — the ranked
+    // intents as badge + score bar (classification-style) and the predicted
+    // slots highlighted over the query (named-entity-style).
+    const intents = getIntents(prediction);
+    if (intents) {
+        const referenceIntents = getIntents(reference);
+        const slotEntities = getSlotEntities(prediction);
+        return (
+            <div>
+                <div className={slotEntities.length > 0 ? "mb-4" : undefined}>
+                    <SectionLabel>{intents.length > 1 ? "Predicted intents" : "Predicted intent"}</SectionLabel>
+                    <div className="mt-3 d-flex flex-column gap-3">
+                        {intents.map((item, index) => {
+                            const referenceIntent = referenceIntents ? referenceIntents[index] : null;
+                            const intentMismatch = referenceIntent != null && referenceIntent.name !== item.name;
+                            const scoreMismatch = referenceIntent != null && !intentMismatch && !scoresClose(referenceIntent.score, item.score);
+                            return (
+                                <div key={index}>
+                                    <div className="d-flex align-items-center gap-2 mb-2">
+                                        <Badge
+                                            bg={intentMismatch ? "danger" : index === 0 ? "primary" : "secondary-subtle"}
+                                            text={intentMismatch || index === 0 ? undefined : "body-emphasis"}
+                                            className="fw-medium px-3 py-2 border"
+                                        >
+                                            {item.name}
+                                        </Badge>
+                                    </div>
+                                    <ScoreBar score={item.score} variant={scoreMismatch ? "warning" : "primary"} />
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+                {slotEntities.length > 0 && (
+                    <div>
+                        <SectionLabel>Slots</SectionLabel>
+                        <div className="mt-2">
+                            <EntityHighlights
+                                text={query}
+                                // EntityHighlights labels spans by their
+                                // `entity` key; label by slot (the role) and
+                                // colour by the slot's entity type, so
+                                // `source` and `destination` read as roles
+                                // but share their `location` colour.
+                                entities={slotEntities.map((span) => ({ ...span, entity: slotOf(span) }))}
+                                colorOf={(name) => {
+                                    const span = slotEntities.find((item) => slotOf(item) === name);
+                                    return (colorOf || entityColor)(span?.entity || name);
+                                }}
+                            />
+                        </div>
+                        <div className="mt-2 d-flex flex-wrap gap-2">
+                            {[...new Map(slotEntities.map((span) => [slotOf(span), span.entity])).entries()].map(([slot, entity]) => (
+                                <span key={slot} className="border rounded-pill px-2 py-1 small text-muted">
+                                    {slot}
+                                    {entity && <span className="ms-1">→ {entity}</span>}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    // Legacy natural language understanding payloads: { intent, slots: [...] }
     if (typeof prediction === "object" && !Array.isArray(prediction) && "intent" in prediction) {
         return (
             <div>

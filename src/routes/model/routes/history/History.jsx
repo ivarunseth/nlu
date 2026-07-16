@@ -17,7 +17,7 @@ import {
     Calendar3,
     Check2Circle,
     Clock,
-    GraphUp,
+    Percent,
     ZoomIn,
     ArrowRepeat,
     StopCircleFill,
@@ -33,8 +33,7 @@ import {
     FiletypeCsv,
     FiletypePng,
     Collection,
-    Stopwatch,
-    Bullseye
+    Stopwatch
 } from "react-bootstrap-icons";
 import {
     LineChart,
@@ -225,7 +224,7 @@ const PRETRAINED_MODELS = [
 const ARCHITECTURES_BY_MODEL = {
     text_classification: ['deep_neural_network', 'transformer'],
     named_entity_recognition: ['recurrent_neural_network', 'transformer'],
-    natural_language_understanding: ['transformer']
+    natural_language_understanding: ['deep_neural_network', 'transformer']
 };
 
 const ARCHITECTURE_DEFAULTS = {
@@ -604,15 +603,18 @@ const MetricStrip = ({ training, onStopTraining, stoppingTraining, onRestartTrai
         { label: 'Started', value: training?.created_at, icon: <Clock /> },
         { label: 'Completed', value: training?.date_done || '-', icon: <Calendar3 /> },
         {
-            label: 'Train Accuracy',
+            label: 'Train / Test Accuracy',
             value: (
                 <div className="d-flex align-items-center justify-content-between w-100">
                     <span className="fw-bold text-body-emphasis font-monospace">
                         {hasTrainAccuracy
-                            ? `${(trainAccuracy * 100).toFixed(2)}%`
+                            ? `${(trainAccuracy * 100).toFixed(2)}`
                             : '—'}
+                        /
+                    {hasTestAccuracy
+                        ? `${(testAccuracy * 100).toFixed(2)}`
+                        : '—'}
                     </span>
-
                     {active && (
                         <Spinner
                             animation="border"
@@ -622,18 +624,7 @@ const MetricStrip = ({ training, onStopTraining, stoppingTraining, onRestartTrai
                     )}
                 </div>
             ),
-            icon: <GraphUp />
-        },
-        {
-            label: 'Test Accuracy',
-            value: hasTestAccuracy
-                ? (
-                    <span className="fw-bold text-body-emphasis font-monospace">
-                        {(testAccuracy * 100).toFixed(2)}%
-                    </span>
-                )
-                : '—',
-            icon: <Bullseye />
+            icon: <Percent />
         }
     ];
 
@@ -675,8 +666,8 @@ const HistoryMetricStrip = ({ total, inProgress, succeeded, bestAccuracy, latest
         succeeded > 0 && { label: 'Succeeded', value: succeeded, icon: <Check2Circle /> },
         bestAccuracy !== null && {
             label: 'Best accuracy',
-            value: <span className="fw-bold">{(bestAccuracy * 100).toFixed(2)}%</span>,
-            icon: <GraphUp />
+            value: <span className="fw-bold">{(bestAccuracy * 100).toFixed(2)}</span>,
+            icon: <Percent />
         }
     ].filter(Boolean);
 
@@ -1500,7 +1491,7 @@ const History = () => {
 
     const socket = useSocket();
 
-    const [paramters, setParameters] = useState(getDefaultParameters(model?.type));
+    const [paramters, setParameters] = useState(getDefaultParameters(model?.kind));
     const [query, setQuery] = useState('');
     const [alert, setAlert] = useState(null);
     const [trainings, setTrainings] = useState([]);
@@ -1617,12 +1608,12 @@ const History = () => {
     useEffect(() => {
         // Don't reset while the form is open or awaiting confirmation.
         if (!showParameters && !showStartConfirmation) {
-            setParameters(getTrainingStartParameters(model?.type, currentTraining));
+            setParameters(getTrainingStartParameters(model?.kind, currentTraining));
         }
-    }, [model?.type, currentTraining?.id, showParameters, showStartConfirmation]);
+    }, [model?.kind, currentTraining?.id, showParameters, showStartConfirmation]);
 
-    const architectureOptions = ARCHITECTURES_BY_MODEL[model?.type || 'text_classification'] || ['deep_neural_network'];
-    const monitorOptions = paramters.architecture === 'transformer' && model?.type !== 'text_classification'
+    const architectureOptions = ARCHITECTURES_BY_MODEL[model?.kind || 'text_classification'] || ['deep_neural_network'];
+    const monitorOptions = paramters.architecture === 'transformer' && model?.kind !== 'text_classification'
         ? [
             ['loss', 'loss'],
             ['val_loss', 'validation loss']
@@ -1666,14 +1657,14 @@ const History = () => {
         const fields = [];
         if (paramters.architecture === 'transformer') {
             fields.push('max_seq_len');
-            if (model?.type !== 'named_entity_recognition') fields.push('units');
+            if (model?.kind !== 'named_entity_recognition') fields.push('units');
         } else {
             fields.push('sequence_length', 'max_tokens', 'embedding_dims');
             if (paramters.architecture === 'recurrent_neural_network') fields.push('lstm_dims');
         }
         fields.push('epochs', 'batch_size', 'learning_rate');
         if (paramters.early_stopping) fields.push('patience');
-        if (model?.type === 'text_classification' && paramters.pruning) {
+        if (model?.kind === 'text_classification' && paramters.pruning) {
             fields.push('pruning_begin_step', 'pruning_end_step', 'pruning_frequency');
         }
         fields.push('weight_decay_rate', 'num_warmup_steps');
@@ -1692,7 +1683,7 @@ const History = () => {
     };
 
     const handleOpenStartTraining = () => {
-        setParameters(getTrainingStartParameters(model?.type, currentTraining));
+        setParameters(getTrainingStartParameters(model?.kind, currentTraining));
         setParameterErrors({});
         setTrainingTab('data');
         setShowStartConfirmation(false);
@@ -2167,8 +2158,8 @@ const History = () => {
                                         <th><Clock className="text-muted" />&nbsp;Started</th>
                                         <th><Calendar3 className="text-muted" />&nbsp;Completed</th>
                                         <th><Stopwatch className="text-muted" />&nbsp;Runtime</th>
-                                        <th><GraphUp className="text-muted" />&nbsp;Train acc (%)</th>
-                                        <th><Bullseye className="text-muted" />&nbsp;Test acc (%)</th>
+                                        <th><Percent className="text-muted" />&nbsp;Train accuracy</th>
+                                        <th><Percent className="text-muted" />&nbsp;Test accuracy</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -2368,10 +2359,10 @@ const History = () => {
                                             {paramters.architecture === 'recurrent_neural_network' && (
                                                 <Col sm={6}>{renderNumberControl('lstm_dims', 'LSTM dimensions')}</Col>
                                             )}
-                                            {paramters.architecture === 'transformer' && model?.type !== 'named_entity_recognition' && (
+                                            {paramters.architecture === 'transformer' && model?.kind !== 'named_entity_recognition' && (
                                                 <Col sm={6}>{renderNumberControl('units', 'Dense units')}</Col>
                                             )}
-                                            {(paramters.architecture !== 'transformer' || model?.type !== 'named_entity_recognition') && (
+                                            {(paramters.architecture !== 'transformer' || model?.kind !== 'named_entity_recognition') && (
                                                 <Col sm={6}>{renderSliderControl('dropout', 'Dropout rate')}</Col>
                                             )}
                                         </Row>
@@ -2403,7 +2394,7 @@ const History = () => {
                                                 <Col sm={6}>{renderNumberControl('patience', 'Patience')}</Col>
                                             </Row>
                                         )}
-                                        {model?.type === 'text_classification' && (
+                                        {model?.kind === 'text_classification' && (
                                             <>
                                                 {renderSwitchControl('pruning', 'Weight pruning')}
                                                 {paramters.pruning && (

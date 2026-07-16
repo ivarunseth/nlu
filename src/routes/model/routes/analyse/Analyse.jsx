@@ -77,7 +77,9 @@ const Analyse = () => {
         loadConfusions();
     }, [user, modelId, win]);
 
-    const ner = (model?.type || dataset?.type) === "named_entity_recognition";
+    const type = model?.kind || dataset?.kind;
+    const ner = type === "named_entity_recognition";
+    const nlu = type === "natural_language_understanding";
 
     return (
         <Row className="mt-4 pb-5">
@@ -110,10 +112,11 @@ const Analyse = () => {
                                 best={best}
                                 instances={instances}
                                 ner={ner}
+                                nlu={nlu}
                                 goto={setTab}
                             />
                         )}
-                        {tab === "dataset" && <Dataset dataset={dataset} versions={versions} ner={ner} />}
+                        {tab === "dataset" && <Dataset dataset={dataset} versions={versions} ner={ner} nlu={nlu} />}
                         {tab === "model" && (
                             <Versions
                                 versions={versions}
@@ -122,9 +125,10 @@ const Analyse = () => {
                                 win={win}
                                 setWin={setWin}
                                 ner={ner}
+                                nlu={nlu}
                             />
                         )}
-                        {tab === "live" && <Traffic dataset={dataset} instances={instances} ner={ner} />}
+                        {tab === "live" && <Traffic dataset={dataset} instances={instances} ner={ner} nlu={nlu} />}
                     </>
                 )}
                 {!loading && !error && tab !== "live" && !versions.length && !dataset?.totals?.utterances && (

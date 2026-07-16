@@ -32,11 +32,12 @@ import {
 } from "react-bootstrap-icons";
 import { useParams } from "react-router-dom";
 import { UserContext } from "../../../../contexts/UserContext";
+import { ModelContext } from "../../../../contexts/ModelContext";
 import { useSocket } from "../../../../contexts/SocketContext";
 import { SectionLabel, CardHeading, EmptyState } from "../../../../shared/components/SectionCard";
 import { entityColor } from "../../../../shared/components/entityColors";
 import { parseApiDate } from "../../../../shared/utils/training";
-import { isErrorPrediction, getLabels, getEntities, scoresClose, PredictionView, JsonView } from "./components/Prediction";
+import { isErrorPrediction, getLabels, getEntities, getIntents, getSlotEntities, scoresClose, PredictionView, JsonView } from "./components/Prediction";
 import BatchPanel from "./components/BatchPanel";
 import BatchResults from "./components/BatchResults";
 import axios from "axios";
@@ -76,10 +77,25 @@ const comparableContent = (prediction) => {
     );
 };
 
-// A named-entity-recognition span's identity for comparison: entity type plus
-// its character boundaries. Two predictions match only if their span sets are
-// identical (a partially-correct span is a different span).
-const entityKey = (entity) => `${entity.entity}${entity.start}${entity.end}`;
+// A span's identity for comparison: its type plus character boundaries. Two
+// predictions match only if their span sets are identical (a partially-
+// correct span is a different span). Natural language understanding spans
+// are keyed by `slot` — the predicted role: `source` vs `destination`
+// matters even when both resolve to `location` (older payloads carried the
+// slot as `name`). Named entity recognition spans carry `entity`.
+const entityKey = (entity) => `${entity.slot ?? entity.entity ?? entity.name}${entity.start}${entity.end}`;
+
+// Same-spans check over two entity lists, plus whether their scores agree.
+const compareEntitySets = (referenceEntities, entities) => {
+    const referenceKeys = referenceEntities.map(entityKey).sort();
+    const keys = entities.map(entityKey).sort();
+    const spansMatch = referenceKeys.length === keys.length
+        && referenceKeys.every((key, index) => key === keys[index]);
+    if (!spansMatch) return "differ";
+    const referenceScore = Object.fromEntries(referenceEntities.map((entity) => [entityKey(entity), entity.score]));
+    const scoresMatch = entities.every((entity) => scoresClose(referenceScore[entityKey(entity)], entity.score));
+    return scoresMatch ? "match" : "scores";
+};
 
 // How a comparison environment's prediction relates to development's:
 // "differ" (labels/spans changed), "scores" (same labels/spans, different
@@ -98,19 +114,26 @@ const comparePredictions = (reference, prediction) => {
         return scoresMatch ? "match" : "scores";
     }
 
+    // Natural language understanding: intents compare like ranked labels,
+    // slots like entity spans; the stricter of the two verdicts wins.
+    const referenceIntents = getIntents(reference);
+    const intents = getIntents(prediction);
+    if (referenceIntents && intents) {
+        const intentsMatch = referenceIntents.length === intents.length
+            && referenceIntents.every((item, index) => item.name === intents[index].name);
+        if (!intentsMatch) return "differ";
+        const spanStatus = compareEntitySets(getSlotEntities(reference), getSlotEntities(prediction));
+        if (spanStatus === "differ") return "differ";
+        const scoresMatch = referenceIntents.every((item, index) => scoresClose(item.score, intents[index].score));
+        return scoresMatch && spanStatus === "match" ? "match" : "scores";
+    }
+
     // Named entity recognition: compare the reconstructed entity spans, not the
     // whole JSON (envelope and per-token scores would spuriously "differ").
     const referenceEntities = getEntities(reference);
     const entities = getEntities(prediction);
     if (referenceEntities && entities) {
-        const referenceKeys = referenceEntities.map(entityKey).sort();
-        const keys = entities.map(entityKey).sort();
-        const spansMatch = referenceKeys.length === keys.length
-            && referenceKeys.every((key, index) => key === keys[index]);
-        if (!spansMatch) return "differ";
-        const referenceScore = Object.fromEntries(referenceEntities.map((entity) => [entityKey(entity), entity.score]));
-        const scoresMatch = entities.every((entity) => scoresClose(referenceScore[entityKey(entity)], entity.score));
-        return scoresMatch ? "match" : "scores";
+        return compareEntitySets(referenceEntities, entities);
     }
 
     return JSON.stringify(comparableContent(reference)) === JSON.stringify(comparableContent(prediction))
@@ -364,7 +387,12 @@ const CompareColumn = ({ name, version, deployed, loading, entry, query, referen
 const Test = () => {
     const { modelId } = useParams();
     const { user } = useContext(UserContext);
+    const { model } = useContext(ModelContext);
     const socket = useSocket();
+    // Annotated model kinds keep a separate entity registry whose colours
+    // the prediction views reuse alongside the intent palette.
+    const annotated = model?.kind === "named_entity_recognition"
+        || model?.kind === "natural_language_understanding";
 
     const [ready, setReady] = useState(false);
 
@@ -498,18 +526,22 @@ const Test = () => {
 
     // Load the model's trained versions and whatever is currently in development.
     useEffect(() => {
-        if (!user || !modelId) return;
+        if (!user || !modelId || !model) return;
         const headers = { Authorization: `Bearer ${user.token}` };
 
         const load = async () => {
             try {
                 setReady(false);
-                const [trainingsResponse, instancesResponse, labelsResponse] = await Promise.all([
+                const [trainingsResponse, instancesResponse, intentsResponse, entitiesResponse] = await Promise.all([
                     axios.get(`/api/models/${modelId}/trainings`, { params: { per_page: 100 }, headers }),
                     axios.get(`/api/models/${modelId}/instances`, { headers }),
-                    // Pull the labels with their assigned colours so a prediction
-                    // paints each entity in the colour it was given in Build.
-                    axios.get(`/api/models/${modelId}/labels`, { params: { per_page: 500 }, headers })
+                    // Pull the intents (and, on annotated kinds, the entities)
+                    // with their assigned colours so a prediction paints each
+                    // name in the colour it was given in Build.
+                    axios.get(`/api/models/${modelId}/intents`, { params: { per_page: 500 }, headers }),
+                    annotated
+                        ? axios.get(`/api/models/${modelId}/entities`, { params: { per_page: 500 }, headers })
+                        : Promise.resolve({ data: { entities: [], total: 0 } })
                 ]);
 
                 const successful = (trainingsResponse.data.trainings || [])
@@ -517,8 +549,11 @@ const Test = () => {
                     .sort((a, b) => b.version - a.version);
                 setTrainings(successful);
 
-                setLabelCount(labelsResponse.data.total || 0);
-                setLabels(labelsResponse.data.labels || []);
+                setLabelCount((intentsResponse.data.total || 0) + (entitiesResponse.data.total || 0));
+                setLabels([
+                    ...(intentsResponse.data.intents || []),
+                    ...(entitiesResponse.data.entities || [])
+                ]);
 
                 const instances = instancesResponse.data.instances || [];
                 setOtherInstances(Object.fromEntries(
@@ -542,7 +577,8 @@ const Test = () => {
             }
         };
         load();
-    }, [user, modelId]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user, modelId, model?.kind]);
 
     // Stay in the task's room for as long as this deployment exists: the
     // backend reuses the task id when the serving task is lazily restarted,
