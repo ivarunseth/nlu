@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 from transformers import AutoConfig, AutoTokenizer, TFAutoModel as AutoModel, create_optimizer
 from .base import BaseNaturalLanguageUnderstanding
+from . import NonPaddingLoss, NonPaddingAccuracy
 
 PRETRAINED_MODELS = [
     'distilbert/distilbert-base-uncased',
@@ -11,6 +12,7 @@ PRETRAINED_MODELS = [
     'ai4bharat/indic-bert',
     'google/muril-base-cased'
 ]
+
 
 class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
     """
@@ -47,6 +49,32 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
             return_tensors='np'
         )
         return {k: np.asarray(v).astype(np.int32) for k, v in tokenized.items()}
+
+    def _word_positions(self, X):
+        """
+        Maps each whitespace token to its first subword's sequences position,
+        mirroring the training-time alignment in ``tokenize_and_align`` so
+        slot predictions read back at exactly the positions their labels
+        were written to.
+        """
+        if self.processor is None:
+            pretrained_model = self.parameters.get('pretrained_model', 'distilbert/distilbert-base-uncased')
+            self.processor = AutoTokenizer.from_pretrained(pretrained_model)
+
+        tokenized = self.processor(
+            X,
+            truncation=True,
+            padding='max_length',
+            max_length=self.parameters.get('max_seq_len', 128)
+        )
+        positions = []
+        for i, text in enumerate(X):
+            first = {}
+            for position, word_idx in enumerate(tokenized.word_ids(batch_index=i)):
+                if word_idx is not None and word_idx not in first:
+                    first[word_idx] = position
+            positions.append([first.get(word) for word in range(len(text.split()))])
+        return positions
 
     def tokenize_and_align(self, X, y_slots):
         """
@@ -85,27 +113,44 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
         Builds a joint BERT model with Intent and Slot heads.
         """
         self.parameters.update(kwargs)
+
         pretrained_model = self.parameters.get('pretrained_model', 'distilbert/distilbert-base-uncased')
         max_seq_len = self.parameters.get('max_seq_len', 128)
         
-        base = AutoModel.from_pretrained(pretrained_model).layers[0]
-        base.trainable = self.parameters.get('trainable', False)
+        encoder = AutoModel.from_pretrained(pretrained_model).layers[0]
+        encoder.trainable = self.parameters.get('trainable', False)
         self.config = AutoConfig.from_pretrained(pretrained_model)
 
-        input_ids = tf.keras.layers.Input((max_seq_len,), name='input_ids', dtype=tf.int32)
-        attention_mask = tf.keras.layers.Input((max_seq_len,), name='attention_mask', dtype=tf.int32)
-        
-        outputs = base({'input_ids': input_ids, 'attention_mask': attention_mask})
-        sequence_output = outputs.last_hidden_state
+        sample = self.preprocess_x(['Hello, World!', 'Testing 1, 2, 3..', 'This is a sample'])
+
+        inputs = {name: tf.keras.layers.Input((max_seq_len,), name=name, dtype=tf.int32) for name in sample}
+
+        outputs = encoder(inputs)
+
+        sequences = outputs.last_hidden_state if hasattr(outputs, 'last_hidden_state') else outputs[:,0,:]
+
+        sequences = tf.keras.layers.Dropout(self.parameters.get('dropout', 0.15))(sequences)
+
+        sequences = tf.keras.layers.Dense(
+            self.parameters.get('units', 768), 
+            activation=self.parameters.get('activation', 'relu')
+        )(sequences)
+
+        sequences = tf.keras.layers.Dropout(self.parameters.get('dropout', 0.15))(sequences)
         
         # Intent head
-        pooled_output = tf.keras.layers.GlobalAveragePooling1D()(sequence_output)
-        intent_logits = tf.keras.layers.Dense(num_labels, activation='softmax', name='intent')(pooled_output)
+        intents = tf.keras.layers.GlobalAveragePooling1D()(sequences)
+
+        intents = tf.keras.layers.Dense(
+            num_labels, activation='softmax', name='intents'
+        )(intents)
         
         # Slot head
-        slot_logits = tf.keras.layers.Dense(num_tags, activation='softmax', name='slots')(sequence_output)
+        slots = tf.keras.layers.Dense(
+            num_tags, activation='softmax', name='slots'
+        )(sequences)
 
-        model = tf.keras.models.Model(inputs=[input_ids, attention_mask], outputs=[intent_logits, slot_logits])
+        model = tf.keras.models.Model(inputs=inputs, outputs=[intents, slots])
         
         optimizer, _ = create_optimizer(
             init_lr=self.parameters.get('learning_rate', 2e-5),
@@ -113,8 +158,23 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
             weight_decay_rate=self.parameters.get('weight_decay_rate', 0.01),
             num_warmup_steps=self.parameters.get('num_warmup_steps', 0)
         )
+
+        loss = {
+            'intents': tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False),
+            'slots': NonPaddingLoss()
+        }
+
+        # Sparse integer targets against softmax heads: the intent head needs
+        # SparseCategoricalAccuracy (plain Accuracy compares shapes exactly and
+        # fails on (batch,1) vs (batch,num_labels)); the slot head uses the
+        # masked accuracy so -100 padded/sub-word positions are ignored.
+        metrics = {
+            'intents': tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy'),
+            'slots': NonPaddingAccuracy()
+        }
         
-        model.compile(optimizer=optimizer, loss=['sparse_categorical_crossentropy', 'sparse_categorical_crossentropy'])
+        model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
+
         return model
 
     def save(self, path, save_format='tf'):

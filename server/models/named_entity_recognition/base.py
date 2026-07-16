@@ -1,7 +1,14 @@
+import os
+import re
+
 import numpy as np
+
 from sklearn.metrics import confusion_matrix, accuracy_score, classification_report
+from sklearn.utils.class_weight import compute_class_weight
 
 from ..base import BaseModel
+from ..augmentation import augment
+from ...utils.dataset import spans_to_tags
 
 class BaseNamedEntityRecognition(BaseModel):
     """
@@ -14,16 +21,23 @@ class BaseNamedEntityRecognition(BaseModel):
 
     def load_data(self, data):
         """
-        Named entity recognition reads ``utterances`` and ``tags`` columns.
+        Named entity recognition reads the authored inline ``utterances.csv``:
+        ``X`` is the utterance text, ``y`` the space-separated IOB tags derived
+        from its ``{entity: value}`` spans (all-``O`` when unannotated).
         """
-        data = super().load_data(data)
-        X = data['utterances'].tolist()
-        y = data['tags'].tolist()
+        rows = self._read_inline(data)
+        X = [text for text, _, _ in rows]
+        y = [' '.join(spans_to_tags(text, spans)) for text, spans, _ in rows]
         return X, y
 
     def predict(self, X, **kwargs):
         """
         Generates predictions for the given input.
+
+        Returns one dict per input, ``{'tags': [...], 'entities': [...]}``:
+        an IOB tag per whitespace token of the input, and the ``B-``/``I-``
+        runs merged into ``{entity, value, start, end, score}`` spans with
+        character offsets into the input.
         """
         preds = super().predict(X, **kwargs)
         if isinstance(preds, list):
@@ -32,11 +46,74 @@ class BaseNamedEntityRecognition(BaseModel):
             preds = preds.logits.numpy()
 
         results = []
-        for i in range(len(X)):
-            slot_indices = np.argmax(preds[i], axis=-1)
-            slot_tags = [self.labels[str(idx)] for idx in slot_indices]
-            results.append(slot_tags)
+        for i, positions in enumerate(self._word_positions(X)):
+            tags, scores = [], []
+            for position in positions:
+                if position is None or position >= len(preds[i]):
+                    # Tokens the model never saw (e.g. truncated) stay outside.
+                    tags.append('O')
+                    scores.append(0.0)
+                    continue
+                probabilities = self._to_probabilities(preds[i][position])
+                index = int(np.argmax(probabilities))
+                tags.append(self.labels[str(index)])
+                scores.append(float(probabilities[index]))
+            results.append({
+                'tags': tags,
+                'entities': self._merge_entities(X[i], tags, scores)
+            })
         return results
+
+    def _word_positions(self, X):
+        """
+        Maps each whitespace token of each input to the sequence position
+        holding its prediction, or ``None`` when it has none (e.g. truncated).
+        Tokens map one-to-one onto positions unless a subclass overrides.
+        """
+        sequence_length = self.parameters.get('sequence_length', 128)
+        return [
+            [i if i < sequence_length else None for i in range(len(text.split()))]
+            for text in X
+        ]
+
+    @staticmethod
+    def _to_probabilities(row):
+        """
+        Normalizes one position's class scores to probabilities, applying a
+        softmax unless the model output already is a distribution.
+        """
+        row = np.asarray(row, dtype='float64')
+        if row.min() >= 0 and np.isclose(row.sum(), 1.0, atol=1e-3):
+            return row
+        exponents = np.exp(row - row.max())
+        return exponents / exponents.sum()
+
+    @staticmethod
+    def _merge_entities(text, tags, scores):
+        """
+        Merges word-level ``B-``/``I-`` runs into entity spans with character
+        offsets into ``text``. An ``I-`` without a matching open span starts
+        one, so imperfect sequences still yield usable entities.
+        """
+        entities, current = [], None
+        words = [match.span() for match in re.finditer(r'\S+', text)]
+        for (start, end), tag, score in zip(words, tags, scores):
+            name = tag[2:] if tag[:2] in ('B-', 'I-') else None
+            if name and tag.startswith('I-') and current and current['entity'] == name:
+                current['end'] = end
+                current['scores'].append(score)
+            elif name:
+                current = {'entity': name, 'start': start, 'end': end, 'scores': [score]}
+                entities.append(current)
+            else:
+                current = None
+        return [{
+            'entity': entity['entity'],
+            'value': text[entity['start']:entity['end']],
+            'start': entity['start'],
+            'end': entity['end'],
+            'score': float(np.mean(entity['scores']))
+        } for entity in entities]
 
     def evaluate(self, X, y, **kwargs):
         """
@@ -50,13 +127,15 @@ class BaseNamedEntityRecognition(BaseModel):
             else:
                 y_true.append(tags)
 
-        y_pred_all = self.predict(X)
-        
-        # Flatten and align for evaluation (similar to LU slots)
+        y_pred_all = [result['tags'] for result in self.predict(X)]
+
+        # Flatten and align for evaluation (similar to LU slots); tokens the
+        # model produced no tag for count as outside.
         y_true_flat = [tag for sublist in y_true for tag in sublist]
         y_pred_flat = []
         for pred, true in zip(y_pred_all, y_true):
-            y_pred_flat.extend(pred[:len(true)])
+            pred = pred[:len(true)]
+            y_pred_flat.extend(pred + ['O'] * (len(true) - len(pred)))
 
         acc = accuracy_score(y_true_flat, y_pred_flat)
         report = classification_report(y_true_flat, y_pred_flat, zero_division=0, output_dict=True)
@@ -105,7 +184,22 @@ class BaseNamedEntityRecognition(BaseModel):
         )
         self.X_train, self.y_train = X_train, y_train
         self.X_test, self.y_test = X_test, y_test
-        X, y = X_train, y_train
+
+        # Expand the TRAIN split only (the held-out test set stays authored),
+        # substituting entity value/synonym terms and, for open-list entities,
+        # UNK generalizations. Deterministic (seeded) and idempotent — derives
+        # only from the authored rows, from the catalogue shipped in the data
+        # dir (entities.json); the entity of a named entity recognition span is
+        # its tag suffix, so the resolver is the identity.
+        spec = self._read_json(os.path.join(data, 'entities.json'), {}) \
+            if isinstance(data, str) and os.path.isdir(data) else {}
+        gen_x, gen_y, _ = augment(
+            self.X_train, self.y_train, [None] * len(self.X_train),
+            lambda intent, name: name, spec,
+        )
+        self.X_train = list(self.X_train) + gen_x
+        self.y_train = list(self.y_train) + gen_y
+        X, y = self.X_train, self.y_train
 
         self.parameters.update({
             'validation_split': validation_split,
@@ -115,6 +209,21 @@ class BaseNamedEntityRecognition(BaseModel):
         })
         y_encoded = self.preprocess_y(y)
         X_processed, y_aligned = self.tokenize_and_align(X, y_encoded)
+
+
+        flat_labels = np.concatenate([np.asarray(seq) for seq in y_encoded])
+
+        classes = np.unique(flat_labels)
+
+        weights = compute_class_weight(
+            class_weight="balanced",
+            classes=classes,
+            y=flat_labels,
+        )
+
+        class_weight = dict(zip(classes, weights))
+
+        sample_weight = np.vectorize(class_weight.get)(y_aligned).astype(np.float32)
         
         num_classes = len(self.labels)
         self.model = self.build(num_classes=num_classes, **kwargs)
@@ -132,8 +241,10 @@ class BaseNamedEntityRecognition(BaseModel):
                 restore_best_weights=True
             ))
         
+        self._fit_data = (X_processed, y_aligned, validation_split)
         self.history = self.model.fit(
             X_processed, y_aligned,
+            sample_weight=sample_weight,
             validation_split=validation_split,
             epochs=epochs,
             batch_size=batch_size,

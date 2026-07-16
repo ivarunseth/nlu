@@ -16,7 +16,12 @@ def train(self, path, model_type, architecture='deep_neural_network', random_sta
     os.makedirs(directory, exist_ok=True)
 
     bucket = os.environ.get('STORAGE_BUCKET', 'data')
-    store.fget(bucket, f'models/{path}/data.csv', os.path.join(directory, 'data.csv'))
+    # The authored dataset and its sidecars (slots.json / entities.json) live
+    # under data/; the model reads them internally. Kept as a subfolder of the
+    # artifact working dir so the final fput_dir re-uploads it alongside the
+    # saved model.
+    data_dir = os.path.join(directory, 'data')
+    store.fget_dir(bucket, f'models/{path}/data', data_dir)
 
     import random
     random.seed(random_state)
@@ -24,11 +29,11 @@ def train(self, path, model_type, architecture='deep_neural_network', random_sta
     from ..models import Model
     model = Model.create(model_type, architecture)
 
-    from ..models.callbacks import TrainingCallback
-    callbacks.append(TrainingCallback(self, wrapper_model=model))
+    from ..models.callbacks import AbortCallback, StatusCallback
+    callbacks = [AbortCallback(self), StatusCallback(self, model)]
 
     history = model.train(
-        data=os.path.join(directory, 'data.csv'),
+        data=data_dir,
         test_split=test_split,
         validation_split=validation_split,
         epochs=epochs,
@@ -37,6 +42,7 @@ def train(self, path, model_type, architecture='deep_neural_network', random_sta
         monitor=monitor,
         patience=patience,
         callbacks=callbacks,
+        random_state=random_state,
         **kwargs
     )
 

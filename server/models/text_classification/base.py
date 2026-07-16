@@ -2,8 +2,10 @@ import os
 import numpy as np
 import math
 from sklearn.metrics import confusion_matrix, accuracy_score, classification_report
+from sklearn.utils.class_weight import compute_class_weight
 
 from ..base import BaseModel
+
 
 class BaseTextClassification(BaseModel):
     """
@@ -66,6 +68,17 @@ class BaseTextClassification(BaseModel):
             **{k: v for k, v in kwargs.items() if k != 'callbacks'}
         })
         y_encoded = self.preprocess_y(y)
+
+        classes = np.unique(y_encoded)
+        
+        class_weights = compute_class_weight(
+            class_weight="balanced",
+            classes=classes,
+            y=y_encoded
+        )
+        
+        class_weight = dict(zip(classes, class_weights))
+
         X_processed = self.preprocess_x(X)
         train_samples = max(1, int(len(y_encoded) * (1 - validation_split)))
         kwargs['num_train_steps'] = max(1, math.ceil(train_samples / batch_size) * epochs)
@@ -89,12 +102,15 @@ class BaseTextClassification(BaseModel):
             import tensorflow_model_optimization as tfmot
             callbacks.append(tfmot.sparsity.keras.UpdatePruningStep())
 
+        self._fit_data = (X_processed, y_encoded, validation_split)
+
         self.history = self.model.fit(
             X_processed, y_encoded,
             validation_split=validation_split,
             epochs=epochs,
             batch_size=batch_size,
             callbacks=callbacks,
+            class_weight=class_weight,
             verbose=1
         )
         

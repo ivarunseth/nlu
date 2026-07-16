@@ -7,6 +7,7 @@ import tensorflow as tf
 from transformers import create_optimizer
 from .base import BaseTextClassification
 
+
 class DNNTextClassification(BaseTextClassification):
     """
     DNN-based architecture for Text Classification.
@@ -61,28 +62,44 @@ class DNNTextClassification(BaseTextClassification):
         sequence_length = self.parameters.get('sequence_length', 100)
         vocab_size = len(self.processor.get_vocabulary())
 
-        output_layer = tf.keras.layers.Dense(num_classes, activation='softmax', name="dense_output")
-        if self.parameters.get('pruning', False):
-            import tensorflow_model_optimization as tfmot
-            output_layer = tfmot.sparsity.keras.prune_low_magnitude(
-                output_layer,
-                pruning_schedule=tfmot.sparsity.keras.PolynomialDecay(
-                    initial_sparsity=self.parameters.get('initial_sparsity', 0),
-                    final_sparsity=self.parameters.get('final_sparsity', 0.5),
-                    begin_step=self.parameters.get('pruning_begin_step', 0),
-                    end_step=self.parameters.get('pruning_end_step', 1000),
-                    frequency=self.parameters.get('pruning_frequency', 100)
-                )
-            )
+        inputs = tf.keras.layers.Input(shape=(sequence_length,), dtype=tf.int32)
 
-        model = tf.keras.models.Sequential([
-            tf.keras.layers.Input(shape=(sequence_length,), dtype=tf.int32),
-            tf.keras.layers.Embedding(vocab_size, embedding_dims),
-            tf.keras.layers.Dropout(dropout),
-            tf.keras.layers.GlobalAveragePooling1D(),
-            tf.keras.layers.Dropout(dropout),
-            output_layer
-        ])
+        outputs = tf.keras.layers.Embedding(vocab_size, embedding_dims)(inputs)
+        outputs = tf.keras.layers.Dropout(dropout)(outputs)
+        outputs = tf.keras.layers.GlobalAveragePooling1D()(outputs)
+        outputs = tf.keras.layers.Dropout(dropout)(outputs)
+        
+        labels = tf.keras.layers.Dense(num_classes, activation='softmax', name="labels")(outputs)
+
+        model = tf.keras.models.Model(inputs=inputs, outputs=labels)
+    
+        if self.parameters.get("pruning", False):
+        
+            import tensorflow_model_optimization as tfmot
+    
+            pruning_schedule = tfmot.sparsity.keras.PolynomialDecay(
+                initial_sparsity=self.parameters.get("initial_sparsity", 0),
+                final_sparsity=self.parameters.get("final_sparsity", 0.5),
+                begin_step=self.parameters.get("pruning_begin_step", 0),
+                end_step=self.parameters.get("pruning_end_step", 1000),
+                frequency=self.parameters.get("pruning_frequency", 100),
+            )
+    
+            def apply_pruning(layer):
+            
+                if isinstance(layer, tf.keras.layers.Dense):
+                
+                    return tfmot.sparsity.keras.prune_low_magnitude(
+                        layer,
+                        pruning_schedule=pruning_schedule,
+                    )
+    
+                return layer
+    
+            model = tf.keras.models.clone_model(
+                model,
+                clone_function=apply_pruning
+            )
 
         optimizer, _ = create_optimizer(
             init_lr=self.parameters.get('learning_rate', 1e-3),
@@ -90,7 +107,13 @@ class DNNTextClassification(BaseTextClassification):
             weight_decay_rate=self.parameters.get('weight_decay_rate', 0),
             num_warmup_steps=self.parameters.get('num_warmup_steps', 0)
         )
-        model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+
+        model.compile(
+            optimizer=optimizer, 
+            loss='sparse_categorical_crossentropy', 
+            metrics=['accuracy']
+        )
+
         return model
 
     def save(self, path, save_format='tf'):

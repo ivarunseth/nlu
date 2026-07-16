@@ -1,10 +1,15 @@
+import time
+
+import json
+
 from hashlib import sha256
 from uuid import uuid4
 
 from flask import current_app, request, abort
 
 from ...auth import api_key_required
-from ...registry import registry_for
+from ...utils.registry import registry_for
+from ...utils import telemetry
 
 from . import triton
 
@@ -12,10 +17,13 @@ from . import triton
 @triton.post('/infer/<model_id>')
 @api_key_required
 def infer(model_id):
-    environment = current_app.config['ENVIRONMENT']
-    registry = registry_for(environment)
+    started = time.perf_counter()
 
+    environment = current_app.config['ENVIRONMENT']
+
+    registry = registry_for(environment)
     route = registry.route(model_id)
+
     if route is None:
         abort(404, 'Model is not published in %s: %s' % (environment, model_id))
 
@@ -26,12 +34,15 @@ def infer(model_id):
         abort(400, 'An "inputs" list is required for batch inference')
 
     inputs = data['inputs']
-    max_batch = current_app.config['INFERENCE_MAX_BATCH']
 
     if not isinstance(inputs, list) or not inputs:
         abort(400, 'A non-empty "inputs" list is required')
+
+    max_batch = current_app.config['INFERENCE_MAX_BATCH']
+
     if len(inputs) > max_batch:
         abort(400, '"inputs" accepts at most %d inputs per request' % max_batch)
+    
     if not all(isinstance(query, str) for query in inputs):
         abort(400, 'Every "inputs" element must be a string')
 
@@ -40,16 +51,21 @@ def infer(model_id):
         if not query.strip():
             keys.append(None)
             continue
+        
         if route.cache:
-            key = sha256(f'{top}:{query}'.encode('utf-8')).hexdigest()
+            hash = sha256(f'{top}:{query}'.encode('utf-8')).hexdigest()
+            key = registry._output(model_id, hash)
         else:
-            key = uuid4().hex
+            key = registry._output(model_id, uuid4().hex)
+
         keys.append(key)
         pending.setdefault(key, query)
 
-    resolved = {}
+    resolved, cached = {}, set()
     if route.cache and pending:
-        resolved = registry.get(model_id, list(pending))
+        resolved = registry.get(list(pending), pull=False)
+        cached = set(resolved)
+
         for key in resolved:
             pending.pop(key, None)
 
@@ -64,16 +80,26 @@ def infer(model_id):
                 queue=environment,
             )
 
-        registry.push(model_id, list(pending), list(pending.values()), top=top)
+        items = [
+            json.dumps({'id': key, 'data': value, "top": top}).encode('utf-8')
+            for key, value in zip(list(pending), list(pending.values()))
+        ]
+        
+        registry.push(registry._inputs(model_id), items)
 
         timeout = current_app.config['INFERENCE_BATCH_TIMEOUT'] \
             or route.timeout or current_app.config['INFERENCE_REQUEST_TIMEOUT']
         interval = route.interval or current_app.config['INFERENCE_POLL_INTERVAL']
 
-        resolved.update(registry.wait(
-            model_id, list(pending), timeout, interval, pull=not route.cache))
+        raw = registry.wait(list(pending), timeout, interval, pull=not route.cache)
 
-    outputs = []
+        resolved.update({key: json.loads(value.decode('utf-8')) \
+                         for key, value in raw.items()})
+
+    latency = round((time.perf_counter() - started) * 1000, 2)
+
+    outputs, records = [], []
+
     for query, key in zip(inputs, keys):
         if key is None:
             outputs.append({
@@ -82,20 +108,36 @@ def infer(model_id):
                 'type': 'ValidationError',
             })
             continue
+        
         output = resolved.get(key)
+
+        if isinstance(output, (bytes, bytearray)):
+            output = json.loads(output.decode('utf-8'))
+        
         if output is None:
-            outputs.append({
+            output = {
                 'input': query,
                 'error': 'Prediction timed out for model %s' % model_id,
                 'type': 'Timeout',
-            })
-        else:
-            outputs.append(output)
+            }
+        
+        outputs.append(output)
+        
+        records.append(telemetry.record(
+            model_id, environment, route.version, query, output,
+            cached=key in cached, latency=latency,
+        ))
 
-    return {
+    try:
+        telemetry.push(registry, records)
+    except Exception:
+        current_app.logger.exception('telemetry push failed')
+
+    response = {
         'environment': environment,
         'model': route.name,
         'version': route.version,
         'outputs': outputs,
-    }, 200
+    }
 
+    return response, 200

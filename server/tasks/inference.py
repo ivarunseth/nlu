@@ -18,7 +18,7 @@ def model(self, model_id, path, model_type, **kwargs):
     environment = kwargs.get('environment', os.environ.get('FLASK_ENV', 'production'))
     bucket = kwargs.get('bucket', config.STORAGE_BUCKET)
 
-    from ..registry import registry_for
+    from ..utils.registry import registry_for
     registry = registry_for(environment)
     route = registry.route(model_id)
 
@@ -93,11 +93,11 @@ def model(self, model_id, path, model_type, **kwargs):
                     for i, (input, output) in enumerate(zip(inputs, outputs)):
                         outputs[i] = json.dumps({'input': input, **output}).encode('utf-8')
 
-                    registry.set(model_id, keys, outputs, ttl=output_ttl)
+                    registry.set(keys, outputs, ttl=output_ttl)
                 
                 except Exception as error:
                     failure = json.dumps({'error': str(error), 'type': type(error).__name__})
-                    registry.set(model_id, keys, [failure] * len(keys), ttl=output_ttl)
+                    registry.set(keys, [failure] * len(keys), ttl=output_ttl)
                 
                 idle_since = time.monotonic()
             

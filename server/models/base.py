@@ -5,8 +5,9 @@ import numpy as np
 import tensorflow as tf
 import onnxruntime as ort
 
+from sklearn.utils import compute_class_weight, compute_sample_weight
 
-class BaseModel:
+class BaseModel:    
     """
     Base class for all NLU models.
     """
@@ -23,10 +24,17 @@ class BaseModel:
         self.parameters = {}
         self.labels = None
         self.tags = None
+        # Language understanding only: the {intent: {slot: entity}} map
+        # persisted with the artifact so inference can report each predicted
+        # slot's entity. Metadata for enrichment — never a training input.
+        self.slots = None
         self.processor = None
         self.model_type = None
         self.architecture = None
         self.history = None
+        # Processed (inputs, targets, validation_split) handed to model.fit;
+        # TrainingCallback reads it to compute an untrained baseline.
+        self._fit_data = None
 
     @staticmethod
     def _read_json(path, default=None):
@@ -186,10 +194,12 @@ class BaseModel:
         })
         
         self._write_json(os.path.join(path, 'labels.json'), self.labels)
-        # Use case specific files (tags for LU)
+        # Use case specific files (tags + slot→entity map for LU)
         if hasattr(self, 'tags') and self.tags:
             self._write_json(os.path.join(path, 'tags.json'), self.tags)
-            
+        if getattr(self, 'slots', None):
+            self._write_json(os.path.join(path, 'slots.json'), self.slots)
+
         self._write_json(os.path.join(path, 'parameters.json'), self.parameters)
 
         if self.model:
@@ -223,6 +233,11 @@ class BaseModel:
         if os.path.exists(tags_path):
             instance.tags = cls._read_json(tags_path)
 
+        # The LU intent → slot → entity map, when the artifact carries one.
+        slots_path = os.path.join(path, 'slots.json')
+        if os.path.exists(slots_path):
+            instance.slots = cls._read_json(slots_path)
+
         instance.model_type = parameters.get('model_type')
         instance.architecture = parameters.get('architecture')
 
@@ -246,15 +261,46 @@ class BaseModel:
         """
         raise NotImplementedError("Subclasses must implement build()")
 
+    def _read_frame(self, data):
+        """
+        Resolves a data source to a ``pandas.DataFrame``. ``data`` may be a
+        ``DataFrame``, a path to ``utterances.csv``, or the **data directory**
+        the training task downloads (its ``utterances.csv`` is read). Not
+        overridden — subclass ``load_data`` shapes ``(X, y)`` on top of it.
+        """
+        if isinstance(data, pd.DataFrame):
+            return data
+        if isinstance(data, str) and os.path.isdir(data):
+            data = os.path.join(data, 'utterances.csv')
+        return pd.read_csv(data)
+
     def load_data(self, data):
         """
-        Reads a data source into an ``(X, y)`` pair.
-
-        ``data`` may be a path to a CSV file or an already-loaded
-        ``pandas.DataFrame``. The columns that are read and the shape of ``y``
-        depend on the model type and are defined by ``load_data()``.
+        Reads a data source into a ``pandas.DataFrame``. The columns each model
+        type reads and the shape of ``y`` are defined by the subclass
+        ``load_data()`` (text classification reads the frame directly; the
+        annotated types parse the inline markup via ``_read_inline``).
         """
-        return data if isinstance(data, pd.DataFrame) else pd.read_csv(data)
+        return self._read_frame(data)
+
+    def _read_inline(self, data):
+        """
+        Parses the inline ``utterances.csv`` into ``(text, spans, intent)``
+        rows: ``spans`` are ``(start, end, name)`` triples (the name a span
+        trains under — its entity for named entity recognition, its slot for
+        language understanding), and ``intent`` comes from the ``labels``
+        column when the file carries one (else ``None``). The inline authoring
+        markup is the same ``{name: value}`` form the annotation workspace and
+        the dataset exporter use, so the round trip is lossless.
+        """
+        from ..utils.dataset import parse_inline
+        frame = data if isinstance(data, pd.DataFrame) else self._read_frame(data)
+        intents = frame['labels'].tolist() if 'labels' in frame.columns else [None] * len(frame)
+        rows = []
+        for cell, intent in zip(frame['utterances'].tolist(), intents):
+            text, spans = parse_inline('' if cell is None else str(cell))
+            rows.append((text, spans, str(intent) if intent is not None else None))
+        return rows
 
     def _train_test_split(self, X, y, test_split=0.2, random_state=101):
         """
@@ -277,6 +323,78 @@ class BaseModel:
                 X, y, test_size=test_split, random_state=random_state
             )
 
+    @staticmethod
+    def _compute_class_weights(labels):
+        """
+        Computes balanced class weights.
+
+        Parameters
+        ----------
+        labels : array-like
+            1D iterable of integer class ids.
+
+        Returns
+        -------
+        dict
+            {class_id: weight}
+        """
+        labels = np.asarray(labels)
+
+        classes = np.unique(labels)
+
+        weights = compute_class_weight(
+            class_weight="balanced",
+            classes=classes,
+            y=labels,
+        )
+
+        return dict(zip(classes.tolist(), weights.tolist()))
+
+    @staticmethod
+    def _compute_sample_weights(labels, class_weights, ignore_value=None):
+        """
+        Builds sample weights from class weights.
+
+        Supports both
+
+            (batch,)
+            (batch, sequence_length)
+
+        Parameters
+        ----------
+        labels : ndarray
+
+        class_weights : dict
+
+        ignore_value : int or None
+            Labels equal to ignore_value receive weight 0.
+
+        Returns
+        -------
+        ndarray
+            Same shape as labels.
+        """
+        labels = np.asarray(labels)
+
+        sample_weights = np.ones(labels.shape, dtype=np.float32)
+
+        if ignore_value is None:
+
+            vectorized = np.vectorize(class_weights.get)
+
+            sample_weights[:] = vectorized(labels)
+
+        else:
+
+            mask = labels != ignore_value
+
+            vectorized = np.vectorize(class_weights.get)
+
+            sample_weights[mask] = vectorized(labels[mask])
+            sample_weights[~mask] = 0.0
+
+        return sample_weights
+    
     def train(self, data, **kwargs):
         """
         Should be implemented by subclasses.
