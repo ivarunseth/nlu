@@ -51,18 +51,6 @@ def get_metadata():
     return target_db.metadata
 
 
-# Tables owned by celery's SQLAlchemy result backend, created at runtime and
-# not part of this app's models. Excluded from autogenerate so revisions never
-# try to create or drop them — that mismatch produced a broken migration once.
-CELERY_TABLES = {'taskmeta', 'tasksetmeta', 'celery_taskmeta', 'celery_tasksetmeta'}
-
-
-def include_name(name, type_, parent_names):
-    if type_ == 'table' and name in CELERY_TABLES:
-        return False
-    return True
-
-
 def run_migrations_offline():
     """Run migrations in 'offline' mode.
 
@@ -77,8 +65,7 @@ def run_migrations_offline():
     """
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url, target_metadata=get_metadata(), literal_binds=True,
-        include_name=include_name
+        url=url, target_metadata=get_metadata(), literal_binds=True
     )
 
     with context.begin_transaction():
@@ -106,8 +93,6 @@ def run_migrations_online():
     conf_args = current_app.extensions['migrate'].configure_args
     if conf_args.get("process_revision_directives") is None:
         conf_args["process_revision_directives"] = process_revision_directives
-    if conf_args.get("include_name") is None:
-        conf_args["include_name"] = include_name
 
     connectable = get_engine()
 
