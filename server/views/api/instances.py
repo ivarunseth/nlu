@@ -2,7 +2,7 @@ from flask import request, g, abort, current_app
 
 from ...auth import token_auth
 from ...database import Instance
-from ...utils import generate_secret
+from ...utils.common import generate_secret
 
 from ... import db
 from . import api

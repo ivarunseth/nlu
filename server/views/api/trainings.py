@@ -62,7 +62,7 @@ def get_training_data(modelId, trainingId):
     training = model.trainings.filter_by(id=trainingId).first()
     if training is None:
         abort(404, 'Training not found: %s' % trainingId)
-    data = store.get(current_app.config['STORAGE_BUCKET'], f'models/{training.path}/data.csv')
+    data = store.get(current_app.config['STORAGE_BUCKET'], f'models/{training.path}/data/utterances.csv')
     if data is None:
         abort(404, 'Training data not found')
     return send_file(data, mimetype='text/csv')
@@ -95,7 +95,7 @@ def start_training(modelId, trainingId):
     task.update_state(
         states.PENDING,
         name=training_tasks.train.name,
-        args=(training.path, model.type),
+        args=(training.path, model.kind),
         kwargs=kwargs,
         retries=0,
         queue='training'
