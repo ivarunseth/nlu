@@ -8,15 +8,15 @@ from transformers import create_optimizer
 from .base import BaseTextClassification
 
 
-class DNNTextClassification(BaseTextClassification):
+class RNNTextClassification(BaseTextClassification):
     """
-    DNN-based architecture for Text Classification.
+    RNN-based architecture for Text Classification.
     Uses TextVectorization and standard Dense layers.
     """
     def __init__(self):
         super().__init__()
         self.processor = None # Will hold TextVectorization layer
-        self.architecture = 'deep_neural_network'
+        self.architecture = 'recurrent_neural_network'
         self.parameters.update({
             'max_tokens': 10000,
             'sequence_length': 100,
@@ -54,28 +54,59 @@ class DNNTextClassification(BaseTextClassification):
 
     def build(self, num_classes, **kwargs):
         """
-        Builds the DNN model.
+        Builds the RNN model.
         """
         self.parameters.update(kwargs)
-        embedding_dims = self.parameters.get('embedding_dims', 64)
-        dropout = self.parameters.get('dropout', 0.2)
+
         sequence_length = self.parameters.get('sequence_length', 100)
         vocab_size = len(self.processor.get_vocabulary())
+        embedding_dims = self.parameters.get('embedding_dims', 64)
+        recurrent_layer = self.parameters.get('recurrent_layer', 'lstm')
+        bidirectional = self.parameters.get('bidirectional', True)
+        units = self.parameters.get('units', 64)
+        activation = self.parameters.get('activation', 'relu')
+        dropout = self.parameters.get('dropout', 0.2)
+        recurrent_dropout = self.parameters.get('recurrent_dropout', 0.2)
 
         inputs = tf.keras.layers.Input(shape=(sequence_length,), dtype=tf.int32)
 
-        outputs = tf.keras.layers.Embedding(vocab_size, embedding_dims)(inputs)
-        outputs = tf.keras.layers.Dropout(dropout)(outputs)
-        outputs = tf.keras.layers.GlobalAveragePooling1D()(outputs)
-        outputs = tf.keras.layers.Dropout(dropout)(outputs)
-        
-        labels = tf.keras.layers.Dense(num_classes, activation='softmax', name="labels")(outputs)
+        outputs = tf.keras.layers.Embedding(
+            input_dim=vocab_size, 
+            output_dim=embedding_dims, 
+            mask_zero=True
+        )(inputs)
 
-        model = tf.keras.models.Model(inputs=inputs, outputs=labels)
+        if recurrent_layer == 'gru':
+            recurrent_layer = tf.keras.layers.GRU(
+                units,
+                dropout=dropout,
+                recurrent_dropout=recurrent_dropout
+            )
+        elif recurrent_layer == 'lstm':
+            recurrent_layer = tf.keras.layers.LSTM(
+                units,
+                dropout=dropout,
+                recurrent_dropout=recurrent_dropout
+            )
+        else:
+            raise ValueError('Invalid value for parameter `recurrent_layer`: %s' % recurrent_layer)
+
+        if bidirectional:
+            outputs = tf.keras.layers.Bidirectional(recurrent_layer)(outputs)
+
+        outputs = tf.keras.layers.Dense(units, activation=activation)(outputs)
+
+        outputs = tf.keras.layers.Dense(
+            num_classes, 
+            activation='softmax', 
+            name='labels'
+        )(outputs)
+        
+        model = tf.keras.models.Model(inputs=inputs, outputs=outputs)
     
         if self.parameters.get("pruning", False):
             model = self._prune_model(model)
-
+        
         optimizer, _ = create_optimizer(
             init_lr=self.parameters.get('learning_rate', 1e-3),
             num_train_steps=self.parameters.get('num_train_steps', 1000),
@@ -97,7 +128,7 @@ class DNNTextClassification(BaseTextClassification):
         """
         super().save(path, save_format)
         
-        # Save vectorizer weights/vocab specifically for DNN
+        # Save vectorizer weights/vocab specifically for RNN
         vocab = self.processor.get_vocabulary()
         with open(os.path.join(path, 'vocab.txt'), 'w', encoding='utf-8') as f:
             f.write('\n'.join(vocab))

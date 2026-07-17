@@ -68,7 +68,7 @@ class DNNNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
         """
         Maps each whitespace token to its slot-prediction position — the
         identity, since the vectorizer emits one token per word — or ``None``
-        past ``sequence_length``. Overrides the base, which reads ``max_seq_len``.
+        past ``sequence_length``. Overrides the base, which reads ``sequence_length``.
         """
         sequence_length = self.parameters.get('sequence_length', 100)
         return [
@@ -136,32 +136,7 @@ class DNNNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
         model = tf.keras.Model(inputs=inputs, outputs=[intents, slots])
     
         if self.parameters.get("pruning", False):
-        
-            import tensorflow_model_optimization as tfmot
-    
-            pruning_schedule = tfmot.sparsity.keras.PolynomialDecay(
-                initial_sparsity=self.parameters.get("initial_sparsity", 0),
-                final_sparsity=self.parameters.get("final_sparsity", 0.5),
-                begin_step=self.parameters.get("pruning_begin_step", 0),
-                end_step=self.parameters.get("pruning_end_step", 1000),
-                frequency=self.parameters.get("pruning_frequency", 100),
-            )
-    
-            def apply_pruning(layer):
-            
-                if isinstance(layer, tf.keras.layers.Dense):
-                
-                    return tfmot.sparsity.keras.prune_low_magnitude(
-                        layer,
-                        pruning_schedule=pruning_schedule,
-                    )
-    
-                return layer
-    
-            model = tf.keras.models.clone_model(
-                model,
-                clone_function=apply_pruning
-            )
+            model = self._prune_model(model)
     
         optimizer, _ = create_optimizer(
             init_lr=self.parameters["learning_rate"],

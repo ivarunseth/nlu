@@ -1,5 +1,6 @@
 from .base import BaseTextClassification
 from .deep_neural_network import DNNTextClassification
+from .recurrent_neural_network import RNNTextClassification
 from .transformer import BERTTextClassification
 
 class TextClassification:
@@ -9,6 +10,7 @@ class TextClassification:
     _architectures = {
         'base': BaseTextClassification,
         'deep_neural_network': DNNTextClassification,
+        'recurrent_neural_network': RNNTextClassification,
         'transformer': BERTTextClassification
     }
 

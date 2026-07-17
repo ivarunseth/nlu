@@ -168,7 +168,7 @@ class BaseNaturalLanguageUnderstanding(BaseModel):
         truncated). Tokens map one-to-one onto positions unless a subclass
         overrides (the transformer maps each word to its first subword).
         """
-        sequence_length = self.parameters.get('max_seq_len', 128)
+        sequence_length = self.parameters.get('sequence_length', 128)
         return [
             [i if i < sequence_length else None for i in range(len(text.split()))]
             for text in X

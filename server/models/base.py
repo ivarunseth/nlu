@@ -77,6 +77,43 @@ class BaseModel:
             with open(os.path.join(path, 'summary.txt'), 'w', encoding='utf-8') as file:
                 file.write(summary)
 
+    def _prune_model(self, model: tf.keras.models.Model):
+        import tensorflow_model_optimization as tfmot
+
+        pruning_schedule = tfmot.sparsity.keras.PolynomialDecay(
+            initial_sparsity=self.parameters.get("initial_sparsity", 0),
+            final_sparsity=self.parameters.get("final_sparsity", 0.5),
+            begin_step=self.parameters.get("pruning_begin_step", 0),
+            end_step=self.parameters.get("pruning_end_step", 1000),
+            frequency=self.parameters.get("pruning_frequency", 100),
+        )
+
+        def apply_pruning(layer):
+            if isinstance(layer, (tf.keras.layers.Dense, tf.keras.layers.LSTM, tf.keras.layers.GRU)):
+                return tfmot.sparsity.keras.prune_low_magnitude(
+                    layer,
+                    pruning_schedule=pruning_schedule,
+                )
+
+            if isinstance(layer, tf.keras.layers.Bidirectional):
+                clone = tf.keras.layers.Bidirectional.from_config(layer.get_config())
+                clone.forward_layer = tfmot.sparsity.keras.prune_low_magnitude(
+                    clone.forward_layer,
+                    pruning_schedule=pruning_schedule
+                )
+                clone.backward_layer = tfmot.sparsity.keras.prune_low_magnitude(
+                    clone.backward_layer,
+                    pruning_schedule=pruning_schedule
+                )
+                return clone
+
+            return layer
+
+        return tf.keras.models.clone_model(
+            model,
+            clone_function=apply_pruning
+        )
+    
     def _save_model_file(self, path, save_format):
         save_format = (save_format or 'saved_model').lower()
         if save_format == 'keras':

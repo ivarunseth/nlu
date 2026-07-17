@@ -23,7 +23,7 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
         self.architecture = 'transformer'
         self.parameters.update({
             'pretrained_model': PRETRAINED_MODELS[0],
-            'max_seq_len': 128,
+            'sequence_length': 128,
             'trainable': False,
             'units': 768,
             'dropout': 0.15,
@@ -45,7 +45,7 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
             X,
             truncation=True,
             padding='max_length',
-            max_length=self.parameters.get('max_seq_len', 128),
+            max_length=self.parameters.get('sequence_length', 128),
             return_tensors='np'
         )
         return {k: np.asarray(v).astype(np.int32) for k, v in tokenized.items()}
@@ -65,7 +65,7 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
             X,
             truncation=True,
             padding='max_length',
-            max_length=self.parameters.get('max_seq_len', 128)
+            max_length=self.parameters.get('sequence_length', 128)
         )
         positions = []
         for i, text in enumerate(X):
@@ -88,7 +88,7 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
             X, 
             truncation=True, 
             padding='max_length', 
-            max_length=self.parameters.get('max_seq_len', 128)
+            max_length=self.parameters.get('sequence_length', 128)
         )
         
         aligned_slots = []
@@ -115,7 +115,7 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
         self.parameters.update(kwargs)
 
         pretrained_model = self.parameters.get('pretrained_model', 'distilbert/distilbert-base-uncased')
-        max_seq_len = self.parameters.get('max_seq_len', 128)
+        sequence_length = self.parameters.get('sequence_length', 128)
         
         encoder = AutoModel.from_pretrained(pretrained_model).layers[0]
         encoder.trainable = self.parameters.get('trainable', False)
@@ -123,11 +123,11 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
 
         sample = self.preprocess_x(['Hello, World!', 'Testing 1, 2, 3..', 'This is a sample'])
 
-        inputs = {name: tf.keras.layers.Input((max_seq_len,), name=name, dtype=tf.int32) for name in sample}
+        inputs = {name: tf.keras.layers.Input((sequence_length,), name=name, dtype=tf.int32) for name in sample}
 
         outputs = encoder(inputs)
 
-        sequences = outputs.last_hidden_state if hasattr(outputs, 'last_hidden_state') else outputs[:,0,:]
+        sequences = outputs.last_hidden_state if hasattr(outputs, 'last_hidden_state') else outputs[0]
 
         sequences = tf.keras.layers.Dropout(self.parameters.get('dropout', 0.15))(sequences)
 

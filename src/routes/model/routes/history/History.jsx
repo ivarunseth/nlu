@@ -278,7 +278,7 @@ const ARCHITECTURE_DEFAULTS = {
         validation_split: { default: 0.1, min: 0, max: 0.5, step: 0.05 },
         epochs: { default: 5, min: 1, max: 100, step: 1 },
         batch_size: { default: 16, min: 4, max: 128, step: 4 },
-        max_seq_len: { default: 128, min: 16, max: 512, step: 8 },
+        sequence_length: { default: 128, min: 16, max: 512, step: 8 },
         trainable: { default: false },
         units: { default: 768, min: 64, max: 1024, step: 64 },
         dropout: { default: 0.15, min: 0, max: 1, step: 0.05 },
@@ -310,7 +310,11 @@ const getDefaultParameters = (modelType = 'text_classification') => {
 };
 
 const getTrainingStartParameters = (modelType = 'text_classification', training = null) => {
-    const previousParameters = training?.kwargs || {};
+    // Trainings recorded before the rename stored the value as max_seq_len.
+    const { max_seq_len, ...previousParameters } = training?.kwargs || {};
+    if (max_seq_len !== undefined && previousParameters.sequence_length === undefined) {
+        previousParameters.sequence_length = max_seq_len;
+    }
     const availableArchitectures = ARCHITECTURES_BY_MODEL[modelType] || ARCHITECTURES_BY_MODEL.text_classification;
     const architecture = availableArchitectures.includes(previousParameters.architecture)
         ? previousParameters.architecture
@@ -333,7 +337,6 @@ const PARAMETER_DOCS = {
     architecture: 'Network architecture the model is built with. Changing it resets the settings below to the architecture defaults.',
     pretrained_model: 'Pretrained encoder the transformer is initialised from.',
     trainable: 'Fine-tune the pretrained encoder weights during training. Slower per epoch, but usually more accurate.',
-    max_seq_len: 'Maximum number of tokens per example. Longer inputs are truncated.',
     sequence_length: 'Maximum number of tokens per example. Longer inputs are truncated, shorter ones padded.',
     max_tokens: 'Maximum vocabulary size of the tokenizer. Less frequent tokens are dropped.',
     embedding_dims: 'Size of the learned word embedding vectors.',
@@ -373,7 +376,6 @@ const PARAMETER_LABELS = {
     batch_size: 'Batch size',
     max_tokens: 'Max tokens',
     sequence_length: 'Sequence length',
-    max_seq_len: 'Sequence length',
     embedding_dims: 'Embedding dimensions',
     lstm_dims: 'LSTM dimensions',
     units: 'Dense units',
@@ -410,7 +412,6 @@ const PARAMETER_TABS = {
     test_split: 'data',
     validation_split: 'data',
     sequence_length: 'model',
-    max_seq_len: 'model',
     max_tokens: 'model',
     embedding_dims: 'model',
     lstm_dims: 'model',
@@ -1656,7 +1657,7 @@ const History = () => {
     const getEditableNumberFields = () => {
         const fields = [];
         if (paramters.architecture === 'transformer') {
-            fields.push('max_seq_len');
+            fields.push('sequence_length');
             if (model?.kind !== 'named_entity_recognition') fields.push('units');
         } else {
             fields.push('sequence_length', 'max_tokens', 'embedding_dims');
@@ -2346,9 +2347,7 @@ const History = () => {
                                         )}
                                         <Row>
                                             <Col sm={6}>
-                                                {paramters.architecture === 'transformer'
-                                                    ? renderNumberControl('max_seq_len', 'Sequence length')
-                                                    : renderNumberControl('sequence_length', 'Sequence length')}
+                                                {renderNumberControl('sequence_length', 'Sequence length')}
                                             </Col>
                                             {['deep_neural_network', 'recurrent_neural_network'].includes(paramters.architecture) && (
                                                 <>
