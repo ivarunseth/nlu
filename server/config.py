@@ -26,11 +26,12 @@ class Config(object):
                 'port': int(os.environ.get(f'INFERENCE_PORT_{name.upper()}', triton_port)),
             },
             'redis_url': os.environ.get(f'REDIS_URL_{name.upper()}', 'redis://localhost:6379/0'),
+            'token_ttl': int(os.environ.get(f'INFERENCE_API_KEY_TTL_{name.upper()}', token_ttl)),
         }
-        for name, server_port, triton_port in (
-            ('development', 5001, 5002),
-            ('testing', 5003, 5004),
-            ('production', 5005, 5006),
+        for name, server_port, triton_port, token_ttl in (
+            ('development', 5001, 5002, 2 * 60 * 60),
+            ('testing', 5003, 5004, 12 * 60 * 60),
+            ('production', 5005, 5006, 30 * 24 * 60 * 60),
         )
     }
     
@@ -47,7 +48,6 @@ class Config(object):
     REQUEST_STATS_WINDOW = 15
     TOKEN_EXPIRY = 720
     
-    INFERENCE_API_KEY_NBYTES = int(os.environ.get('INFERENCE_API_KEY_NBYTES', 32))
     INFERENCE_BATCH_SIZE = int(os.environ.get('INFERENCE_BATCH_SIZE', 32))
     INFERENCE_SLEEP = float(os.environ.get('INFERENCE_SLEEP', 0.005))
     INFERENCE_IDLE_TIMEOUT = float(os.environ.get('INFERENCE_IDLE_TIMEOUT', 300))

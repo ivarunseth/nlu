@@ -223,6 +223,12 @@ const EnvironmentCard = ({
                                 </Button>
                             </div>
                         )}
+                        {instance.api_key_expiry && (
+                            <div className="small text-muted d-flex align-items-center gap-2 mb-1">
+                                <ShieldCheck className="text-primary flex-shrink-0" />
+                                <span>Key expires {instance.api_key_expiry}</span>
+                            </div>
+                        )}
                         <div className="small text-muted d-flex align-items-center gap-2 mb-1">
                             <Link45deg className="text-primary flex-shrink-0" />
                             <span className="fw-bold" style={{ fontSize: "0.7rem" }}>

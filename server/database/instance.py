@@ -11,7 +11,7 @@ from sqlalchemy.orm import relationship
 from .. import db
 from ..utils.registry import registry_for, Route
 from ..tasks import triton, WorkerResult
-from ..utils.common import timestamp, format_timestamp, generate_secret
+from ..utils.common import timestamp, format_timestamp, generate_api_key, api_key_expiry
 
 
 class Instance(db.Model):
@@ -31,7 +31,8 @@ class Instance(db.Model):
     # environment-aware defaults filled in under whatever the user chose.
     config = db.Column(db.JSON, nullable=False)
 
-    _api_key = db.Column('api_key', db.String(64), unique=True, nullable=True)
+    # Wide enough for a signed JWT rather than an opaque secret.
+    _api_key = db.Column('api_key', db.String(512), unique=True, nullable=True)
 
     date_receive = db.Column(db.Integer, default=timestamp, nullable=True)
     date_updated = db.Column(db.Integer, default=timestamp, onupdate=timestamp, nullable=True)
@@ -170,7 +171,7 @@ class Instance(db.Model):
             model=model,
             training=training,
             # task_id is minted fresh by start() on every (re)start.
-            api_key=api_key or generate_secret(current_app.config['INFERENCE_API_KEY_NBYTES']),
+            api_key=api_key or generate_api_key(model.id, environment.name),
             # Instances always carry a complete config, so partial or absent
             # input is normalized over the environment's defaults here.
             config=Instance.clean(config or {}, environment.name),
@@ -267,6 +268,7 @@ class Instance(db.Model):
             'training_id': self.training_id,
             'task_id': self.task_id,
             'api_key': self.api_key,
+            'api_key_expiry': format_timestamp(expiry) if (expiry := api_key_expiry(self.api_key)) else None,
             'config': self.options(),
             'endpoint': '%s:%s/api/infer/%s' % (
                 settings['triton']['host'],

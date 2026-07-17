@@ -1,8 +1,8 @@
-from flask import request, g, abort, current_app
+from flask import request, g, abort
 
 from ...auth import token_auth
 from ...database import Instance
-from ...utils.common import generate_secret
+from ...utils.common import generate_api_key
 
 from ... import db
 from . import api
@@ -58,7 +58,7 @@ def update_instance(modelId, instanceId):
     data = request.get_json(silent=True) or {}
     if 'api_key' in data:
         # Keys are server-generated; submitting the field requests a rotation.
-        instance.api_key = generate_secret(current_app.config['INFERENCE_API_KEY_NBYTES'])
+        instance.api_key = generate_api_key(instance.model_id, instance.environment.name)
     if 'config' in data:
         if instance.environment.name == 'development':
             # Development deployments always run the default configuration.

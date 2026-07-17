@@ -103,20 +103,31 @@ def verify_optional_token(token):
 def api_key_required(f):
     """Require the deployment's API key as a bearer token.
 
-    Every published instance carries its own key, mirrored into the
-    environment's route registry so the inference server can verify it
-    without a database.
+    Keys are JWTs minted at publish/rotation with a per-environment
+    expiry, and are also mirrored into the environment's route registry.
+    Both checks matter: the signature/expiry come from the token itself
+    (no database needed), while the route comparison makes rotation and
+    unpublish an immediate kill switch rather than waiting out the TTL.
     """
     @wraps(f)
     def wrapper(*args, **kwargs):
         token = extract_bearer_token_from_headers(request.headers)
         model_id = kwargs.get('model_id')
+        error = 'A valid API key is required.'
         if token and model_id:
-            registry = registry_for(current_app.config['ENVIRONMENT'])
-            route = registry.route(model_id)
-            if route and route.api_key \
-                and compare_digest(token, route.api_key):
-                return f(*args, **kwargs)
-        return {'error': 'A valid API key is required.'}, 401, \
+            try:
+                claims = decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
+            except ExpiredSignatureError:
+                claims = None
+                error = 'The API key has expired. Reset the key to mint a new one.'
+            except InvalidTokenError:
+                claims = None
+            if claims and claims.get('model_id') == model_id:
+                registry = registry_for(current_app.config['ENVIRONMENT'])
+                route = registry.route(model_id)
+                if route and route.api_key \
+                    and compare_digest(token, route.api_key):
+                    return f(*args, **kwargs)
+        return {'error': error}, 401, \
             {'WWW-Authenticate': 'Bearer realm="Authentication Required"'}
     return wrapper

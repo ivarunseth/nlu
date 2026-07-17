@@ -17,7 +17,7 @@ from .. import db
 from ..utils import dataset
 from ..utils import io as dataset_io
 from ..utils.dataset import validate_import_spans, next_label_color
-from ..utils.common import timestamp, format_timestamp, allowed_file
+from ..utils.common import timestamp, format_timestamp, allowed_file, api_key_expiry
 
 from .intent import Intent
 from .entity import Entity
@@ -501,6 +501,12 @@ class Model(db.Model):
                             instance.stop(instance_task)
                         instance.forget(instance_task)
                     api_key = instance.api_key
+                    # A key only survives the redeploy while it is still a
+                    # live JWT; expired or legacy opaque keys are replaced
+                    # by a freshly minted one in Instance.create().
+                    expiry = api_key_expiry(api_key)
+                    if not expiry or expiry <= timestamp():
+                        api_key = None
                     carried = instance.config
                     db.session.delete(instance)
                     db.session.flush()
