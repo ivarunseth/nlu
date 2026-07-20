@@ -1,12 +1,22 @@
-from flask import request, g, abort
+from flask import request, g, abort, current_app
 
 from ...auth import token_auth
 from ...database import Model
 from ...utils.dataset import dataset_format, NLU_FORMATS
 from ...utils import io as dataset_io
+from ...utils.query import apply_sort, apply_date_range, list_argument
 
 from ... import db
 from . import api
+
+
+# Public sort field -> column, for the models collection.
+MODEL_SORT_COLUMNS = {
+    'name': Model.name,
+    'kind': Model.kind,
+    'created_at': Model.created_at,
+    'updated_at': Model.updated_at,
+}
 
 
 def _read_dataset(model, upload):
@@ -40,13 +50,19 @@ def get_models():
     query = request.args.get('query', None)
     if query is not None:
         models = models.filter(Model.name.ilike(f'%{query}%'))
+    kinds = list_argument('kind', allowed=current_app.config['ALLOWED_MODELS'])
+    if kinds:
+        models = models.filter(Model.kind.in_(kinds))
+    models = apply_date_range(models, Model.created_at, prefix='created')
+    models = apply_sort(models, MODEL_SORT_COLUMNS,
+                        default=('created_at', 'desc'),
+                        secondary=Model.id.asc())
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 10, type=int)
-    models = models.order_by(
-        Model.created_at.desc()).paginate(
-            page=page, 
-            per_page=per_page, 
-            error_out=False)
+    models = models.paginate(
+        page=page,
+        per_page=per_page,
+        error_out=False)
     return {
         'models': [model.to_dict() for model in models.items],
         'total': models.total,

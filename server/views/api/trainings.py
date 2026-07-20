@@ -1,3 +1,5 @@
+import datetime
+
 from flask import request, g, current_app, abort, send_file
 from celery import states
 from sqlalchemy import cast, String
@@ -5,9 +7,94 @@ from sqlalchemy import cast, String
 from ...auth import token_auth
 from ...database import Training
 from ...tasks import training as training_tasks
+from ...utils.query import (apply_sort, apply_date_range, sort_arguments,
+                            list_argument, sort_position)
 
 from ... import db, store
 from . import api
+
+
+# Sort fields backed by real columns — these page in SQL.
+TRAINING_SQL_COLUMNS = {
+    'version': Training.version,
+    'created_at': Training.created_at,
+    'updated_at': Training.updated_at,
+}
+
+# Sort fields derived from the Celery result (status, metrics, completion).
+# Ordering by these means materializing every run's dict, so they take the
+# Python path below.
+TRAINING_DERIVED_SORTS = {'status', 'date_done', 'runtime', 'accuracy', 'train_accuracy'}
+
+# Terminal statuses selectable in the status filter. PENDING/RECEIVED/STARTED
+# are collapsed to "active" so the filter matches the UI's three lifecycle
+# groups rather than raw Celery states.
+TRAINING_ACTIVE_STATES = {'PENDING', 'RECEIVED', 'STARTED'}
+TRAINING_STATUS_FILTERS = {'active', 'SUCCESS', 'FAILURE', 'ABORTED', 'REVOKED'}
+
+
+def _derived_accuracy(result):
+    if not isinstance(result, dict):
+        return None
+    if result.get('accuracy') is not None:
+        return result['accuracy']
+    evaluation = result.get('evaluation') or {}
+    test = evaluation.get('test') or {}
+    return test.get('accuracy')
+
+
+def _derived_train_accuracy(result):
+    if not isinstance(result, dict):
+        return None
+    evaluation = result.get('evaluation') or {}
+    train = evaluation.get('train') or {}
+    return train.get('accuracy')
+
+
+def _matches_status(status, wanted):
+    if not wanted:
+        return True
+    for want in wanted:
+        if want == 'active' and status in TRAINING_ACTIVE_STATES:
+            return True
+        if want == status:
+            return True
+    return False
+
+
+def _derived_sort_key(item, field, order):
+    """A ``sort_position`` key for one training dict on a derived field."""
+    if field == 'status':
+        value = item.get('status')
+    elif field == 'date_done':
+        value = to_epoch_from_display(item.get('date_done'))
+    elif field == 'runtime':
+        value = _runtime_seconds(item)
+    elif field == 'accuracy':
+        value = _derived_accuracy(item.get('result'))
+    else:  # train_accuracy
+        value = _derived_train_accuracy(item.get('result'))
+    return sort_position(value, order)
+
+
+def _runtime_seconds(item):
+    start = to_epoch_from_display(item.get('created_at'))
+    end = to_epoch_from_display(item.get('date_done'))
+    if start is None or end is None:
+        return None
+    seconds = end - start
+    return seconds if seconds >= 0 else None
+
+
+def to_epoch_from_display(value):
+    """Parse the ``dd/mm/YYYY - HH:MM:SS`` strings ``to_dict`` emits back to epoch."""
+    if not value:
+        return None
+    try:
+        moment = datetime.datetime.strptime(value, '%d/%m/%Y - %H:%M:%S')
+    except (ValueError, TypeError):
+        return None
+    return int(moment.timestamp())
 
 
 @api.get('/models/<modelId>/trainings')
@@ -19,20 +106,56 @@ def get_trainings(modelId):
     trainings = model.trainings
     query = request.args.get('query', '', type=str)
     if query:
-        trainings = model.trainings.filter(cast(Training.version, String).like(f'%{query}%'))
+        trainings = trainings.filter(cast(Training.version, String).like(f'%{query}%'))
+    trainings = apply_date_range(trainings, Training.created_at, prefix='created')
+
+    statuses = list_argument('status', allowed=TRAINING_STATUS_FILTERS)
+    sort_field, order = sort_arguments(('created_at', 'desc'))
+    extended = request.args.get('extended', '0') == '1'
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 10, type=int)
-    trainings = trainings.order_by(
-        Training.created_at.desc()).paginate(
-            page=page, 
-            per_page=per_page, 
-            error_out=False)
+
+    # Fast path: a column sort with no status filter pages entirely in SQL,
+    # so only the current page's runs touch the Celery backend.
+    if sort_field in TRAINING_SQL_COLUMNS and not statuses:
+        paged = apply_sort(trainings, TRAINING_SQL_COLUMNS,
+                           default=('created_at', 'desc'),
+                           secondary=Training.id.desc()).paginate(
+            page=page, per_page=per_page, error_out=False)
+        return {
+            'trainings': [t.to_dict(extended=extended) for t in paged.items],
+            'total': paged.total,
+            'page': paged.page,
+            'per_page': paged.per_page,
+        }, 200
+
+    if sort_field not in TRAINING_SQL_COLUMNS and sort_field not in TRAINING_DERIVED_SORTS:
+        abort(400, 'Cannot sort by %s' % sort_field)
+
+    # Slow path: status filtering and metric/status sorts need each run's
+    # Celery-derived fields, so materialize the (date-narrowed) set, then
+    # filter, sort, and page in Python. Column sorts still resolve here when
+    # combined with a status filter, using the dict's own values.
+    items = [t.to_dict(extended=extended) for t in trainings.all()]
+    items = [item for item in items if _matches_status(item.get('status'), statuses)]
+
+    # sort_position keeps missing values last and encodes direction, so a
+    # single ascending sort serves both orders for every field.
+    if sort_field == 'version':
+        items.sort(key=lambda item: sort_position(item.get('version'), order))
+    elif sort_field in ('created_at', 'updated_at'):
+        items.sort(key=lambda item: sort_position(
+            to_epoch_from_display(item.get(sort_field)), order))
+    else:
+        items.sort(key=lambda item: _derived_sort_key(item, sort_field, order))
+
+    total = len(items)
+    start = (page - 1) * per_page
     return {
-        'trainings': [training.to_dict(extended=request.args.get('extended', '0') == '1') \
-                      for training in trainings.items],
-        'total': trainings.total,
-        'page': trainings.page,
-        'per_page': trainings.per_page
+        'trainings': items[start:start + per_page],
+        'total': total,
+        'page': page,
+        'per_page': per_page,
     }, 200
 
 

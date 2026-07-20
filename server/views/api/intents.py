@@ -1,11 +1,30 @@
 from flask import request, g, abort
 
+from sqlalchemy import func, select
+
 from ...auth import token_auth
-from ...database import Intent
+from ...database import Intent, Utterance
 from ...utils import io as dataset_io
+from ...utils.query import apply_sort, apply_date_range
 
 from ... import db
 from . import api
+
+
+# The utterance tally `to_dict` reports, as a correlated subquery so the
+# list can be ordered by it in SQL instead of per-row in Python.
+UTTERANCES_COUNT = (
+    select(func.count(Utterance.id))
+    .where(Utterance.intent_id == Intent.id)
+    .scalar_subquery()
+)
+
+INTENT_SORT_COLUMNS = {
+    'name': Intent.name,
+    'utterances_count': UTTERANCES_COUNT,
+    'created_at': Intent.created_at,
+    'updated_at': Intent.updated_at,
+}
 
 
 @api.get('/models/<modelId>/intents')
@@ -18,12 +37,13 @@ def get_intents(modelId):
     query = request.args.get('query', None)
     if query is not None:
         intents = intents.filter(Intent.name.ilike(f'%{query}%'))
+    intents = apply_date_range(intents, Intent.created_at, prefix='created')
+    intents = apply_sort(intents, INTENT_SORT_COLUMNS,
+                         default=('name', 'asc'),
+                         secondary=Intent.id.desc())
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 10, type=int)
-    intents = intents.order_by(
-        Intent.name.asc(),
-        Intent.id.desc()
-    ).paginate(
+    intents = intents.paginate(
         page=page,
         per_page=per_page,
         error_out=False
