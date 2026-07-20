@@ -542,6 +542,26 @@ class Model(db.Model):
                 if not partial_update:
                     abort(400)
 
+    @property
+    def status(self):
+        """
+        The furthest environment this model has been promoted to, or ``None``
+        when nothing is deployed. Ranking follows the deployment pipeline's
+        order as declared in ``ALLOWED_ENVIRONMENTS`` (development → testing →
+        production), so a model live in several environments reports the
+        highest one it has reached.
+        """
+        order = list(current_app.config['ALLOWED_ENVIRONMENTS'])
+        rank = {name: index for index, name in enumerate(order)}
+        deployed = [
+            instance.environment.name
+            for instance in self.instances.all()
+            if instance.environment is not None and instance.environment.name in rank
+        ]
+        if not deployed:
+            return None
+        return max(deployed, key=lambda name: rank[name])
+
     def to_dict(self):
         """Export model to a dictionary."""
         return {
@@ -550,6 +570,7 @@ class Model(db.Model):
             'name': self.name,
             'description': self.description,
             'kind': self.kind,
+            'status': self.status,
             'created_at': format_timestamp(self.created_at),
             'updated_at': format_timestamp(self.updated_at),
             '_links': {
