@@ -207,7 +207,7 @@ def _queues(*names):
     return tuple(Queue(name, Exchange('default', type='direct'), routing_key=name, durable=True) for name in names)
 
 
-def create_worker(name, include, queues, **kwargs):
+def create_worker(name, include, queues, task_class=None, **kwargs):
     worker = Celery(name)
     worker.config_from_object(WorkerConfig)
     worker.conf.update(
@@ -217,14 +217,27 @@ def create_worker(name, include, queues, **kwargs):
         task_default_routing_key=queues[0],
         **kwargs,
     )
-    worker.Task = WorkerTask
+    if task_class:
+        worker.Task = task_class
     return worker
+
+
+api = create_worker(
+    'api',
+    include=['server.tasks.request'],
+    queues=('default',),
+    task_class=None,
+    task_serializer='pickle',
+    result_serializer='pickle',
+    accept_content=['pickle'],
+)
 
 
 sage = create_worker(
     'sage',
     include=['server.tasks.training'],
     queues=('training',),
+    task_class=WorkerTask,
 )
 
 
@@ -236,6 +249,7 @@ triton = create_worker(
         'testing', 
         'production',
     ),
+    task_class=WorkerTask,
 )
 
 
