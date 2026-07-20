@@ -1,6 +1,6 @@
 import { lazy, Suspense, useContext, useEffect, useState } from 'react';
 import { Container, Row, Col, Nav } from 'react-bootstrap';
-import { Translate, ClockHistory, ClipboardCheck, RocketTakeoff, Activity } from 'react-bootstrap-icons';
+import { Translate, ClockHistory, ClipboardCheck, RocketTakeoff, Activity, Gear } from 'react-bootstrap-icons';
 import { Routes, Route, Link, useLocation, useParams } from 'react-router-dom';
 import { SocketProvider } from '../../contexts/SocketContext';
 import { ModelContext, ModelProvider } from '../../contexts/ModelContext';
@@ -13,6 +13,7 @@ const History = lazy(() => import('./routes/history/History'));
 const Test = lazy(() => import('./routes/test/Test'));
 const Publish = lazy(() => import('./routes/publish/Publish'));
 const Analyse = lazy(() => import('./routes/analyse/Analyse'));
+const Settings = lazy(() => import('./routes/settings/Settings'));
 const TrainingVersion = lazy(() => import('./routes/history/History').then((module) => ({
     default: module.TrainingVersion
 })));
@@ -201,6 +202,15 @@ const ModelContent = () => {
                                 <Activity />&nbsp;Analyse
                             </Nav.Link>
                         </Nav.Item>
+                        <Nav.Item>
+                            <Nav.Link
+                                eventKey='settings'
+                                as={Link}
+                                to={`${modelBasePath}/settings`}
+                            >
+                                <Gear />&nbsp;Settings
+                            </Nav.Link>
+                        </Nav.Item>
                     </Nav>
                 </Col>
             </Row>
@@ -212,6 +222,7 @@ const ModelContent = () => {
                     <Route path="test" element={<Test />} />
                     <Route path="publish" element={<Publish />} />
                     <Route path="analyse" element={<Analyse />} />
+                    <Route path="settings" element={<Settings />} />
                     <Route path="build/:labelId/utterances" element={<Utterances />} />
                 </Routes>
             </Suspense>
