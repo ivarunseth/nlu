@@ -33,7 +33,8 @@ import {
     FiletypeCsv,
     FiletypePng,
     Collection,
-    Stopwatch
+    Stopwatch,
+    Option
 } from "react-bootstrap-icons";
 import {
     LineChart,
@@ -60,6 +61,9 @@ import chartPng from "../../../../shared/utils/chartPng";
 import { getReport, getTrainingAccuracy, getTrainingTrainAccuracy, getLatestHistoryMetric, getTrainingRuntime, formatDuration, getConfusionMatrix, reportRows } from "../../../../shared/utils/training";
 import { Link, useParams } from "react-router-dom";
 import useDebounce from "../../../../shared/hooks/useDebounce";
+import useTableControls from "../../../../shared/hooks/useTableControls";
+import SortHeader from "../../../../shared/components/SortHeader";
+import { TableFilters, FilterChips } from "../../../../shared/components/TableFilters";
 import axios from "axios";
 
 const SubstringDiffLine = ({ text, otherText, type }) => {
@@ -222,91 +226,209 @@ const PRETRAINED_MODELS = [
 ];
 
 const ARCHITECTURES_BY_MODEL = {
-    text_classification: ['deep_neural_network', 'transformer'],
+    text_classification: ['deep_neural_network', 'recurrent_neural_network', 'transformer'],
     named_entity_recognition: ['recurrent_neural_network', 'transformer'],
     natural_language_understanding: ['deep_neural_network', 'transformer']
 };
 
-const ARCHITECTURE_DEFAULTS = {
+const ARCHITECTURE_LABELS = {
+    deep_neural_network: 'Deep neural network',
+    recurrent_neural_network: 'Recurrent neural network (LSTM)',
+    transformer: 'Transformer'
+};
+
+const ACTIVATION_OPTIONS = [['relu', 'ReLU'], ['tanh', 'Tanh'], ['gelu', 'GELU'], ['elu', 'ELU']];
+
+const MONITOR_OPTIONS = [
+    ['accuracy', 'accuracy'],
+    ['loss', 'loss'],
+    ['val_accuracy', 'validation accuracy'],
+    ['val_loss', 'validation loss']
+];
+
+// NLU compiles per-head metrics (intents_accuracy / slots_accuracy), so plain
+// accuracy is not a valid early-stopping monitor there.
+const NLU_MONITOR_OPTIONS = [['loss', 'loss'], ['val_loss', 'validation loss']];
+
+const SAVE_FORMAT_OPTIONS = [
+    ['tf', 'TensorFlow checkpoint (tf)'],
+    ['saved_model', 'TensorFlow SavedModel (saved_model)'],
+    ['h5', 'Keras HDF5 (h5)'],
+    ['weights', 'Weights only (weights)'],
+    ['tflite', 'TensorFlow Lite (tflite)'],
+    ['onnx', 'ONNX (onnx)']
+];
+
+const MAX_HIDDEN_LAYERS = 6;
+const HIDDEN_LAYER_UNITS = { min: 16, max: 1024, step: 16 };
+
+// Every form field is declared here and rendered generically:
+// { control: 'slider' | 'select' | 'switch' | 'layers', tab, default,
+//   min/max/step (sliders), scale: 'log' (sliders), options (selects),
+//   label, help, showIf?(params) }
+const COMMON_PARAMETERS = {
+    test_split: { control: 'slider', tab: 'data', default: 0.2, min: 0.05, max: 0.5, step: 0.05, label: 'Test split', help: 'Fraction of the dataset held out to evaluate the trained model.' },
+    validation_split: { control: 'slider', tab: 'data', default: 0.1, min: 0, max: 0.5, step: 0.05, label: 'Validation split', help: 'Fraction of the training data used to validate the model after each epoch.' },
+    epochs: { control: 'slider', tab: 'schedule', default: 100, min: 1, max: 1000, step: 1, label: 'Epochs', help: 'Maximum number of passes over the training data.' },
+    batch_size: { control: 'slider', tab: 'schedule', default: 32, min: 4, max: 128, step: 4, label: 'Batch size', help: 'Number of examples processed per optimisation step.' },
+    learning_rate: { control: 'slider', tab: 'schedule', scale: 'log', default: 0.001, min: 0.000001, max: 0.01, label: 'Learning rate', help: 'Step size the optimiser uses to update the weights.' },
+    weight_decay_rate: { control: 'slider', tab: 'schedule', default: 0, min: 0, max: 0.1, step: 0.001, label: 'Weight decay', help: 'L2 penalty applied by the optimiser to keep weights small. Zero disables it.' },
+    num_warmup_steps: { control: 'slider', tab: 'schedule', default: 0, min: 0, max: 5000, step: 10, label: 'Warmup steps', help: 'Steps over which the learning rate ramps up from zero before decaying.' },
+    early_stopping: { control: 'switch', tab: 'callbacks', default: true, label: 'Early stopping', help: 'Stop training early once the monitored metric stops improving, keeping the best weights.' },
+    monitor: { control: 'select', tab: 'callbacks', default: 'val_loss', options: MONITOR_OPTIONS, label: 'Monitor', help: 'Metric watched by early stopping.', showIf: (params) => params.early_stopping },
+    patience: { control: 'slider', tab: 'callbacks', default: 10, min: 1, max: 50, step: 1, label: 'Patience', help: 'Epochs without improvement before training is stopped.', showIf: (params) => params.early_stopping },
+    save_format: { control: 'select', tab: 'export', default: 'tf', options: SAVE_FORMAT_OPTIONS, label: 'Save format', help: 'Format the trained model is exported in for download and serving.' }
+};
+
+const PRUNING_PARAMETERS = {
+    pruning: { control: 'switch', tab: 'callbacks', default: false, label: 'Weight pruning', help: 'Gradually zero out low-magnitude weights of dense layers during training to produce a smaller, faster model.' },
+    initial_sparsity: { control: 'slider', tab: 'callbacks', default: 0, min: 0, max: 0.9, step: 0.05, label: 'Initial sparsity', help: 'Fraction of weights zeroed when pruning begins.', showIf: (params) => params.pruning },
+    final_sparsity: { control: 'slider', tab: 'callbacks', default: 0.5, min: 0.1, max: 0.95, step: 0.05, label: 'Final sparsity', help: 'Fraction of weights zeroed by the end of pruning.', showIf: (params) => params.pruning },
+    pruning_begin_step: { control: 'slider', tab: 'callbacks', default: 0, min: 0, max: 10000, step: 100, label: 'Pruning begin step', help: 'Training step at which pruning starts.', showIf: (params) => params.pruning },
+    pruning_end_step: { control: 'slider', tab: 'callbacks', default: 1000, min: 100, max: 50000, step: 100, label: 'Pruning end step', help: 'Training step at which pruning stops.', showIf: (params) => params.pruning },
+    pruning_frequency: { control: 'slider', tab: 'callbacks', default: 100, min: 1, max: 1000, step: 1, label: 'Pruning frequency', help: 'Number of steps between sparsity updates.', showIf: (params) => params.pruning }
+};
+
+const hiddenLayersField = (defaultLayers) => ({
+    control: 'layers',
+    tab: 'model',
+    default: defaultLayers,
+    label: 'Hidden layers',
+    help: 'Extra dense layers applied just before the output head — configure units and activation per layer.'
+});
+
+const ARCHITECTURE_PARAMETERS = {
     deep_neural_network: {
-        architecture: { default: 'deep_neural_network' },
-        test_split: { default: 0.2, min: 0, max: 0.5, step: 0.05 },
-        validation_split: { default: 0.1, min: 0, max: 0.5, step: 0.05 },
-        epochs: { default: 200, min: 1, max: 1000, step: 1 },
-        batch_size: { default: 32, min: 4, max: 128, step: 4 },
-        max_tokens: { default: 10000, min: 1000, max: 50000, step: 1000 },
-        sequence_length: { default: 96, min: 16, max: 512, step: 8 },
-        embedding_dims: { default: 64, min: 16, max: 512, step: 8 },
-        dropout: { default: 0.2, min: 0, max: 1, step: 0.05 },
-        learning_rate: { default: 0.001, min: 0.000001, max: 0.01, step: 0.000001 },
-        weight_decay_rate: { default: 0, min: 0, max: 0.1, step: 0.001 },
-        num_warmup_steps: { default: 0, min: 0, max: 5000, step: 10 },
-        early_stopping: { default: true },
-        monitor: { default: 'val_loss' },
-        patience: { default: 10, min: 1, max: 50, step: 1 },
-        pruning: { default: false },
-        initial_sparsity: { default: 0, min: 0, max: 0.9, step: 0.05 },
-        final_sparsity: { default: 0.5, min: 0.1, max: 0.95, step: 0.05 },
-        pruning_begin_step: { default: 0, min: 0, max: 10000, step: 100 },
-        pruning_end_step: { default: 1000, min: 100, max: 50000, step: 100 },
-        pruning_frequency: { default: 100, min: 1, max: 1000, step: 1 },
-        save_format: { default: 'tf' }
+        max_tokens: { control: 'slider', tab: 'model', default: 10000, min: 1000, max: 50000, step: 1000, label: 'Max tokens', help: 'Maximum vocabulary size of the tokenizer. Less frequent tokens are dropped.' },
+        sequence_length: { control: 'slider', tab: 'model', default: 100, min: 16, max: 512, step: 4, label: 'Sequence length', help: 'Maximum number of tokens per example. Longer inputs are truncated, shorter ones padded.' },
+        embedding_dims: { control: 'slider', tab: 'model', default: 64, min: 16, max: 512, step: 16, label: 'Embedding dimensions', help: 'Size of the learned word embedding vectors.' },
+        dropout: { control: 'slider', tab: 'model', default: 0.2, min: 0, max: 0.9, step: 0.05, label: 'Dropout rate', help: 'Fraction of units randomly dropped during training to reduce overfitting.' },
+        hidden_layers: hiddenLayersField([])
     },
     recurrent_neural_network: {
-        architecture: { default: 'recurrent_neural_network' },
-        test_split: { default: 0.2, min: 0, max: 0.5, step: 0.05 },
-        validation_split: { default: 0.1, min: 0, max: 0.5, step: 0.05 },
-        epochs: { default: 100, min: 1, max: 1000, step: 1 },
-        batch_size: { default: 32, min: 4, max: 128, step: 4 },
-        max_tokens: { default: 10000, min: 1000, max: 50000, step: 1000 },
-        sequence_length: { default: 128, min: 16, max: 512, step: 8 },
-        embedding_dims: { default: 64, min: 16, max: 512, step: 8 },
-        lstm_dims: { default: 96, min: 16, max: 512, step: 8 },
-        dropout: { default: 0.2, min: 0, max: 1, step: 0.05 },
-        learning_rate: { default: 0.001, min: 0.000001, max: 0.01, step: 0.000001 },
-        weight_decay_rate: { default: 0, min: 0, max: 0.1, step: 0.001 },
-        num_warmup_steps: { default: 0, min: 0, max: 5000, step: 10 },
-        early_stopping: { default: true },
-        monitor: { default: 'val_loss' },
-        patience: { default: 10, min: 1, max: 50, step: 1 },
-        save_format: { default: 'tf' }
+        max_tokens: { control: 'slider', tab: 'model', default: 10000, min: 1000, max: 50000, step: 1000, label: 'Max tokens', help: 'Maximum vocabulary size of the tokenizer. Less frequent tokens are dropped.' },
+        sequence_length: { control: 'slider', tab: 'model', default: 100, min: 16, max: 512, step: 4, label: 'Sequence length', help: 'Maximum number of tokens per example. Longer inputs are truncated, shorter ones padded.' },
+        embedding_dims: { control: 'slider', tab: 'model', default: 64, min: 16, max: 512, step: 16, label: 'Embedding dimensions', help: 'Size of the learned word embedding vectors.' },
+        dropout: { control: 'slider', tab: 'model', default: 0.2, min: 0, max: 0.9, step: 0.05, label: 'Dropout rate', help: 'Fraction of units randomly dropped during training to reduce overfitting.' },
+        hidden_layers: hiddenLayersField([])
     },
     transformer: {
-        architecture: { default: 'transformer' },
-        pretrained_model: { default: PRETRAINED_MODELS[0] },
-        test_split: { default: 0.2, min: 0, max: 0.5, step: 0.05 },
-        validation_split: { default: 0.1, min: 0, max: 0.5, step: 0.05 },
-        epochs: { default: 5, min: 1, max: 100, step: 1 },
-        batch_size: { default: 16, min: 4, max: 128, step: 4 },
-        sequence_length: { default: 128, min: 16, max: 512, step: 8 },
-        trainable: { default: false },
-        units: { default: 768, min: 64, max: 1024, step: 64 },
-        dropout: { default: 0.15, min: 0, max: 1, step: 0.05 },
-        l2: { default: 0.01, min: 0, max: 0.1, step: 0.001 },
-        learning_rate: { default: 0.00002, min: 0.000001, max: 0.001, step: 0.000001 },
-        weight_decay_rate: { default: 0.01, min: 0, max: 0.1, step: 0.001 },
-        num_warmup_steps: { default: 0, min: 0, max: 5000, step: 10 },
-        early_stopping: { default: true },
-        monitor: { default: 'val_loss' },
-        patience: { default: 3, min: 1, max: 50, step: 1 },
-        pruning: { default: false },
-        initial_sparsity: { default: 0, min: 0, max: 0.9, step: 0.05 },
-        final_sparsity: { default: 0.5, min: 0.1, max: 0.95, step: 0.05 },
-        pruning_begin_step: { default: 0, min: 0, max: 10000, step: 100 },
-        pruning_end_step: { default: 1000, min: 100, max: 50000, step: 100 },
-        pruning_frequency: { default: 100, min: 1, max: 1000, step: 1 },
-        save_format: { default: 'tf' }
+        pretrained_model: { control: 'select', tab: 'model', default: PRETRAINED_MODELS[0], options: PRETRAINED_MODELS.map((name) => [name, name]), label: 'Pretrained model', help: 'Pretrained encoder the transformer is initialised from.' },
+        trainable: { control: 'switch', tab: 'model', default: false, label: 'Trainable encoder', help: 'Fine-tune the pretrained encoder weights during training. Slower per epoch, but usually more accurate.' },
+        sequence_length: { control: 'slider', tab: 'model', default: 128, min: 16, max: 512, step: 16, label: 'Sequence length', help: 'Maximum number of tokens per example. Longer inputs are truncated, shorter ones padded.' },
+        dropout: { control: 'slider', tab: 'model', default: 0.15, min: 0, max: 0.9, step: 0.05, label: 'Dropout rate', help: 'Fraction of units randomly dropped during training to reduce overfitting.' },
+        l2: { control: 'slider', tab: 'model', default: 0.01, min: 0, max: 0.1, step: 0.001, label: 'L2 regularisation', help: 'L2 penalty on the output head weights.' },
+        hidden_layers: hiddenLayersField([{ units: 768, activation: 'relu' }]),
+        epochs: { ...COMMON_PARAMETERS.epochs, default: 5, max: 100 },
+        batch_size: { ...COMMON_PARAMETERS.batch_size, default: 16 },
+        learning_rate: { ...COMMON_PARAMETERS.learning_rate, default: 0.00002, max: 0.001 },
+        weight_decay_rate: { ...COMMON_PARAMETERS.weight_decay_rate, default: 0.01 },
+        patience: { ...COMMON_PARAMETERS.patience, default: 3 }
     }
+};
+
+// Per-model-type patches over the architecture metadata. A field listed here
+// replaces the base entry wholesale; new fields append.
+const TYPE_OVERRIDES = {
+    text_classification: {
+        deep_neural_network: {
+            epochs: { ...COMMON_PARAMETERS.epochs, default: 200 },
+            ...PRUNING_PARAMETERS
+        },
+        recurrent_neural_network: {
+            recurrent_layer: { control: 'select', tab: 'model', default: 'lstm', options: [['lstm', 'LSTM'], ['gru', 'GRU']], label: 'Recurrent layer', help: 'Type of recurrent cell.' },
+            bidirectional: { control: 'switch', tab: 'model', default: true, label: 'Bidirectional', help: 'Process the sequence in both directions.' },
+            units: { control: 'slider', tab: 'model', default: 64, min: 16, max: 512, step: 16, label: 'Recurrent units', help: 'Number of units in the recurrent layer.' },
+            recurrent_dropout: { control: 'slider', tab: 'model', default: 0.2, min: 0, max: 0.9, step: 0.05, label: 'Recurrent dropout', help: 'Dropout applied to the recurrent state transitions.' },
+            hidden_layers: hiddenLayersField([{ units: 64, activation: 'relu' }]),
+            ...PRUNING_PARAMETERS
+        },
+        transformer: {
+            ...PRUNING_PARAMETERS
+        }
+    },
+    named_entity_recognition: {
+        recurrent_neural_network: {
+            sequence_length: { control: 'slider', tab: 'model', default: 128, min: 16, max: 512, step: 4, label: 'Sequence length', help: 'Maximum number of tokens per example. Longer inputs are truncated, shorter ones padded.' },
+            lstm_dims: { control: 'slider', tab: 'model', default: 100, min: 16, max: 512, step: 4, label: 'LSTM dimensions', help: 'Number of units in the bidirectional LSTM layer.' }
+        },
+        transformer: {
+            hidden_layers: hiddenLayersField([{ units: 768, activation: 'tanh' }])
+        }
+    },
+    natural_language_understanding: {
+        deep_neural_network: {
+            units: { control: 'slider', tab: 'model', default: 64, min: 16, max: 512, step: 16, label: 'LSTM units', help: 'Number of units in the bidirectional LSTM layer.' },
+            intent_loss_weight: { control: 'slider', tab: 'schedule', default: 1, min: 0, max: 5, step: 0.1, label: 'Intent loss weight', help: 'Relative weight of the intent head in the combined loss.' },
+            slot_loss_weight: { control: 'slider', tab: 'schedule', default: 1, min: 0, max: 5, step: 0.1, label: 'Slot loss weight', help: 'Relative weight of the slot head in the combined loss.' },
+            monitor: { ...COMMON_PARAMETERS.monitor, options: NLU_MONITOR_OPTIONS },
+            ...PRUNING_PARAMETERS
+        },
+        transformer: {
+            intent_loss_weight: { control: 'slider', tab: 'schedule', default: 1, min: 0, max: 5, step: 0.1, label: 'Intent loss weight', help: 'Relative weight of the intent head in the combined loss.' },
+            slot_loss_weight: { control: 'slider', tab: 'schedule', default: 1, min: 0, max: 5, step: 0.1, label: 'Slot loss weight', help: 'Relative weight of the slot head in the combined loss.' },
+            monitor: { ...COMMON_PARAMETERS.monitor, options: NLU_MONITOR_OPTIONS }
+        }
+    }
+};
+
+// Resolved field metadata for one (model type, architecture) pair. Later
+// spreads replace matching keys but keep their original insertion position,
+// so tab ordering stays stable.
+const resolveParameters = (modelType, architecture) => {
+    const type = ARCHITECTURES_BY_MODEL[modelType] ? modelType : 'text_classification';
+    return {
+        ...COMMON_PARAMETERS,
+        ...(ARCHITECTURE_PARAMETERS[architecture] || {}),
+        ...(TYPE_OVERRIDES[type]?.[architecture] || {})
+    };
+};
+
+const cloneDefault = (value) => (
+    Array.isArray(value) ? value.map((item) => ({ ...item })) : value
+);
+
+const resolveDefaults = (modelType, architecture) => {
+    const params = { architecture };
+    Object.entries(resolveParameters(modelType, architecture)).forEach(([key, metadata]) => {
+        params[key] = cloneDefault(metadata.default);
+    });
+    return params;
 };
 
 const getDefaultParameters = (modelType = 'text_classification') => {
     const architecture = ARCHITECTURES_BY_MODEL[modelType]?.[0] || 'deep_neural_network';
-    const defaults = ARCHITECTURE_DEFAULTS[architecture];
-    const params = {};
-    Object.keys(defaults).forEach(key => {
-        params[key] = defaults[key].default;
-    });
-    return params;
+    return resolveDefaults(modelType, architecture);
+};
+
+const clampNumber = (value, { min, max }) => {
+    let clamped = value;
+    if (min !== undefined) clamped = Math.max(min, clamped);
+    if (max !== undefined) clamped = Math.min(max, clamped);
+    return clamped;
+};
+
+// Coerces a value carried over from a previous training run into something
+// the declared control can represent (sliders clamp, selects fall back to
+// the default, layer lists are sanitised entry by entry).
+const clampParameterValue = (metadata, value) => {
+    if (metadata.control === 'layers') {
+        if (!Array.isArray(value)) return cloneDefault(metadata.default);
+        return value.slice(0, MAX_HIDDEN_LAYERS).map((layer) => ({
+            units: clampNumber(Number(layer?.units) || HIDDEN_LAYER_UNITS.min, HIDDEN_LAYER_UNITS),
+            activation: ACTIVATION_OPTIONS.some(([option]) => option === layer?.activation)
+                ? layer.activation
+                : 'relu'
+        }));
+    }
+    if (metadata.control === 'slider') {
+        return typeof value === 'number' ? clampNumber(value, metadata) : metadata.default;
+    }
+    if (metadata.control === 'select') {
+        return metadata.options.some(([option]) => option === value) ? value : metadata.default;
+    }
+    if (metadata.control === 'switch') return Boolean(value);
+    return value;
 };
 
 const getTrainingStartParameters = (modelType = 'text_classification', training = null) => {
@@ -319,112 +441,58 @@ const getTrainingStartParameters = (modelType = 'text_classification', training 
     const architecture = availableArchitectures.includes(previousParameters.architecture)
         ? previousParameters.architecture
         : availableArchitectures[0];
-    const defaults = {};
-    Object.entries(ARCHITECTURE_DEFAULTS[architecture]).forEach(([key, metadata]) => {
-        defaults[key] = metadata.default;
+    const registry = resolveParameters(modelType, architecture);
+    const params = resolveDefaults(modelType, architecture);
+
+    // Runs that predate hidden_layers stored the hidden dense as
+    // units/activation; migrate them where units isn't a first-class field
+    // (i.e. everywhere except the recurrent/LSTM sizes).
+    if (registry.hidden_layers && previousParameters.hidden_layers === undefined && !registry.units) {
+        const { units, activation } = previousParameters;
+        if (units !== undefined || activation !== undefined) {
+            const fallback = params.hidden_layers[0] || { units: 64, activation: 'relu' };
+            previousParameters.hidden_layers = [{
+                units: units ?? fallback.units,
+                activation: activation ?? fallback.activation
+            }];
+        }
+    }
+
+    Object.entries(registry).forEach(([key, metadata]) => {
+        if (previousParameters[key] === undefined) return;
+        params[key] = clampParameterValue(metadata, previousParameters[key]);
     });
-    return {
-        ...defaults,
-        ...previousParameters,
-        architecture
-    };
+    params.architecture = architecture;
+    return params;
 };
 
-// Plain-language descriptions shown under each training setting.
-const PARAMETER_DOCS = {
-    test_split: 'Fraction of the dataset held out to evaluate the trained model.',
-    validation_split: 'Fraction of the training data used to validate the model after each epoch.',
-    architecture: 'Network architecture the model is built with. Changing it resets the settings below to the architecture defaults.',
-    pretrained_model: 'Pretrained encoder the transformer is initialised from.',
-    trainable: 'Fine-tune the pretrained encoder weights during training. Slower per epoch, but usually more accurate.',
-    sequence_length: 'Maximum number of tokens per example. Longer inputs are truncated, shorter ones padded.',
-    max_tokens: 'Maximum vocabulary size of the tokenizer. Less frequent tokens are dropped.',
-    embedding_dims: 'Size of the learned word embedding vectors.',
-    lstm_dims: 'Number of units in the LSTM layer.',
-    units: 'Number of units in the dense layer on top of the encoder.',
-    dropout: 'Fraction of units randomly dropped during training to reduce overfitting.',
-    epochs: 'Maximum number of passes over the training data.',
-    batch_size: 'Number of examples processed per optimisation step.',
-    learning_rate: 'Step size the optimiser uses to update the weights.',
-    early_stopping: 'Stop training early once the monitored metric stops improving, keeping the best weights.',
-    monitor: 'Metric watched by early stopping.',
-    patience: 'Epochs without improvement before training is stopped.',
-    pruning: 'Gradually zero out low-magnitude weights during training to produce a smaller, faster model.',
-    initial_sparsity: 'Fraction of weights zeroed when pruning begins.',
-    final_sparsity: 'Fraction of weights zeroed by the end of pruning.',
-    pruning_begin_step: 'Training step at which pruning starts.',
-    pruning_end_step: 'Training step at which pruning stops.',
-    pruning_frequency: 'Number of steps between sparsity updates.',
-    weight_decay_rate: 'L2 penalty applied by the optimiser to keep weights small. Zero disables it.',
-    num_warmup_steps: 'Steps over which the learning rate ramps up from zero before decaying.',
-    save_format: 'Format the trained model is exported in for download and serving.'
+// Sliders cannot leave their declared ranges, so only cross-field rules are
+// validated. Keys map to the offending field for inline display.
+const validateParameters = (params) => {
+    const errors = {};
+    if (params.pruning) {
+        if (!(params.initial_sparsity < params.final_sparsity)) {
+            errors.final_sparsity = 'Final sparsity must be greater than initial sparsity.';
+        }
+        if (!(params.pruning_end_step > params.pruning_begin_step)) {
+            errors.pruning_end_step = 'Must be greater than the pruning begin step.';
+        }
+    }
+    return errors;
 };
 
-const ARCHITECTURE_LABELS = {
-    deep_neural_network: 'Deep neural network',
-    recurrent_neural_network: 'Recurrent neural network (LSTM)',
-    transformer: 'Transformer'
-};
+const LOG_SLIDER_RESOLUTION = 100;
+const toLogPosition = (metadata, value) => Math.round(
+    LOG_SLIDER_RESOLUTION * Math.log(value / metadata.min) / Math.log(metadata.max / metadata.min)
+);
+const fromLogPosition = (metadata, position) => Number(
+    (metadata.min * Math.pow(metadata.max / metadata.min, position / LOG_SLIDER_RESOLUTION)).toPrecision(2)
+);
 
-// Display names used in the start confirmation summary.
-const PARAMETER_LABELS = {
-    architecture: 'Architecture',
-    pretrained_model: 'Pretrained model',
-    test_split: 'Test split',
-    validation_split: 'Validation split',
-    epochs: 'Epochs',
-    batch_size: 'Batch size',
-    max_tokens: 'Max tokens',
-    sequence_length: 'Sequence length',
-    embedding_dims: 'Embedding dimensions',
-    lstm_dims: 'LSTM dimensions',
-    units: 'Dense units',
-    trainable: 'Trainable encoder',
-    dropout: 'Dropout rate',
-    l2: 'L2 regularisation',
-    learning_rate: 'Learning rate',
-    weight_decay_rate: 'Weight decay',
-    num_warmup_steps: 'Warmup steps',
-    early_stopping: 'Early stopping',
-    monitor: 'Monitor',
-    patience: 'Patience',
-    pruning: 'Weight pruning',
-    initial_sparsity: 'Initial sparsity',
-    final_sparsity: 'Final sparsity',
-    pruning_begin_step: 'Pruning begin step',
-    pruning_end_step: 'Pruning end step',
-    pruning_frequency: 'Pruning frequency',
-    save_format: 'Save format'
-};
-
-const SAVE_FORMAT_OPTIONS = [
-    ['tf', 'TensorFlow checkpoint (tf)'],
-    ['saved_model', 'TensorFlow SavedModel (saved_model)'],
-    ['h5', 'Keras HDF5 (h5)'],
-    ['weights', 'Weights only (weights)'],
-    ['tflite', 'TensorFlow Lite (tflite)'],
-    ['onnx', 'ONNX (onnx)']
-];
-
-// Tab that owns each editable numeric field, used to jump to the first
-// invalid input when CONTINUE is clicked from another tab.
-const PARAMETER_TABS = {
-    test_split: 'data',
-    validation_split: 'data',
-    sequence_length: 'model',
-    max_tokens: 'model',
-    embedding_dims: 'model',
-    lstm_dims: 'model',
-    units: 'model',
-    epochs: 'schedule',
-    batch_size: 'schedule',
-    learning_rate: 'schedule',
-    patience: 'callbacks',
-    pruning_begin_step: 'callbacks',
-    pruning_end_step: 'callbacks',
-    pruning_frequency: 'callbacks',
-    weight_decay_rate: 'callbacks',
-    num_warmup_steps: 'callbacks'
+const formatSliderValue = (metadata, value) => {
+    if (typeof value !== 'number') return String(value);
+    if (metadata.scale === 'log' || (value !== 0 && Math.abs(value) < 0.001)) return value.toExponential();
+    return String(value);
 };
 
 // A labelled training setting with its description, mirroring the deploy
@@ -444,6 +512,22 @@ const TRAINING_DELETABLE_STATUSES = ['SUCCESS', 'FAILURE', 'ABORTED', 'REVOKED']
 const isTrainingActive = (training) => TRAINING_ACTIVE_STATUSES.includes(training?.status);
 const isTrainingReady = (training) => TRAINING_DONE_STATUSES.includes(training?.status);
 const isTrainingDeletable = (training) => TRAINING_DELETABLE_STATUSES.includes(training?.status);
+
+// Status filter for the trainings table. The three in-flight Celery states
+// collapse to a single "active" option, matching how the UI groups them.
+const TRAINING_FILTERS = [
+    {
+        name: 'status',
+        label: 'Status',
+        options: [
+            { value: 'active', label: 'Active' },
+            { value: 'SUCCESS', label: 'Success' },
+            { value: 'FAILURE', label: 'Failure' },
+            { value: 'ABORTED', label: 'Aborted' },
+            { value: 'REVOKED', label: 'Revoked' }
+        ]
+    }
+];
 const mergeTraining = (training, data) => ({
     ...training,
     ...data,
@@ -1504,7 +1588,6 @@ const History = () => {
     const [showStartConfirmation, setShowStartConfirmation] = useState(false);
     const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
     const [trainingsToDelete, setTrainingsToDelete] = useState([]);
-    const [selectedIds, setSelectedIds] = useState(new Set());
     const [submitting, setSubmitting] = useState(false);
     const [startingTraining, setStartingTraining] = useState(false);
     const [stoppingTrainingIds, setStoppingTrainingIds] = useState(new Set());
@@ -1519,7 +1602,13 @@ const History = () => {
 
     const debouncedQuery = useDebounce(query, 500);
 
-    const selectedTrainings = trainings.filter((training) => selectedIds.has(training.id));
+    const controls = useTableControls({
+        defaultSort: { field: 'created_at', order: 'desc' },
+        filters: TRAINING_FILTERS,
+        onChange: () => setPage(1)
+    });
+    const controlsKey = JSON.stringify(controls.params);
+
     const historySummary = useMemo(() => {
         const succeededTrainings = trainings.filter((training) => training.status === 'SUCCESS');
         const accuracies = succeededTrainings
@@ -1534,25 +1623,6 @@ const History = () => {
             latestVersion: versions.length ? Math.max(...versions) : null
         };
     }, [trainings]);
-    const canStopSelected = selectedTrainings.length > 0 && selectedTrainings.every(isTrainingActive);
-    const canRetrySelected = selectedTrainings.length > 0 && selectedTrainings.every(isTrainingReady);
-    const canDeleteSelected = selectedTrainings.length > 0 && selectedTrainings.every(isTrainingDeletable);
-
-    const toggleRowSelection = (id) => {
-        setSelectedIds((prev) => {
-            const next = new Set(prev);
-            if (next.has(id)) next.delete(id); else next.add(id);
-            return next;
-        });
-    };
-
-    const toggleAllSelection = (visibleTrainings) => {
-        setSelectedIds((prev) => {
-            const allSelected = visibleTrainings.length > 0 && visibleTrainings.every((training) => prev.has(training.id));
-            return allSelected ? new Set() : new Set(visibleTrainings.map((training) => training.id));
-        });
-    };
-
     const rooms = useRef(new Set())
     const hasActiveTraining = activeTrainings.length > 0;
     const activeTrainingTaskIds = useMemo(
@@ -1614,73 +1684,20 @@ const History = () => {
     }, [model?.kind, currentTraining?.id, showParameters, showStartConfirmation]);
 
     const architectureOptions = ARCHITECTURES_BY_MODEL[model?.kind || 'text_classification'] || ['deep_neural_network'];
-    const monitorOptions = paramters.architecture === 'transformer' && model?.kind !== 'text_classification'
-        ? [
-            ['loss', 'loss'],
-            ['val_loss', 'validation loss']
-        ]
-        : [
-            ['accuracy', 'accuracy'],
-            ['loss', 'loss'],
-            ['val_accuracy', 'validation accuracy'],
-            ['val_loss', 'validation loss']
-        ];
+    const registry = resolveParameters(model?.kind, paramters.architecture);
 
     const handleArchitectureChange = (architecture) => {
-        const defaults = ARCHITECTURE_DEFAULTS[architecture];
-        const params = {};
-        Object.keys(defaults).forEach(key => {
-            params[key] = defaults[key].default;
-        });
         setParameters({
-            ...params,
+            ...resolveDefaults(model?.kind, architecture),
             save_format: paramters.save_format
         });
         setParameterErrors({});
     };
 
-    const validateParameter = (field, value, params = paramters) => {
-        const metadata = ARCHITECTURE_DEFAULTS[params.architecture]?.[field] || {};
-        if (value === '' || value === null || value === undefined || Number.isNaN(value)) {
-            return 'Enter a value.';
-        }
-        if (metadata.min !== undefined && value < metadata.min) return `Must be at least ${metadata.min}.`;
-        if (metadata.max !== undefined && value > metadata.max) return `Must be at most ${metadata.max}.`;
-        if (field === 'pruning_end_step' && typeof params.pruning_begin_step === 'number' && value <= params.pruning_begin_step) {
-            return 'Must be greater than the pruning begin step.';
-        }
-        return null;
-    };
-
-    // Numeric fields currently editable in the form; fields hidden by the
-    // architecture or a disabled switch keep their defaults and are skipped.
-    const getEditableNumberFields = () => {
-        const fields = [];
-        if (paramters.architecture === 'transformer') {
-            fields.push('sequence_length');
-            if (model?.kind !== 'named_entity_recognition') fields.push('units');
-        } else {
-            fields.push('sequence_length', 'max_tokens', 'embedding_dims');
-            if (paramters.architecture === 'recurrent_neural_network') fields.push('lstm_dims');
-        }
-        fields.push('epochs', 'batch_size', 'learning_rate');
-        if (paramters.early_stopping) fields.push('patience');
-        if (model?.kind === 'text_classification' && paramters.pruning) {
-            fields.push('pruning_begin_step', 'pruning_end_step', 'pruning_frequency');
-        }
-        fields.push('weight_decay_rate', 'num_warmup_steps');
-        return fields;
-    };
-
     const updateParameter = (field, value) => {
-        setParameters(prev => ({ ...prev, [field]: value }));
-        setParameterErrors(prev => {
-            const message = validateParameter(field, value, { ...paramters, [field]: value });
-            const next = { ...prev };
-            if (message) next[field] = message;
-            else delete next[field];
-            return next;
-        });
+        const next = { ...paramters, [field]: value };
+        setParameters(next);
+        setParameterErrors(validateParameters(next));
     };
 
     const handleOpenStartTraining = () => {
@@ -1698,20 +1715,14 @@ const History = () => {
     };
 
     // CONTINUE validates the settings and swaps the modal body for the start
-    // confirmation, keeping the edits. Invalid fields keep the form open and
-    // switch to the tab holding the first offending input.
+    // confirmation, keeping the edits. Cross-field errors keep the form open
+    // and switch to the callbacks tab that hosts them.
     const handleContinueTraining = (event) => {
         event.preventDefault();
-        const fields = getEditableNumberFields();
-        const errors = {};
-        fields.forEach(field => {
-            const message = validateParameter(field, paramters[field]);
-            if (message) errors[field] = message;
-        });
+        const errors = validateParameters(paramters);
         setParameterErrors(errors);
-        const firstInvalid = fields.find(field => errors[field]);
-        if (firstInvalid) {
-            setTrainingTab(PARAMETER_TABS[firstInvalid] || 'data');
+        if (Object.keys(errors).length > 0) {
+            setTrainingTab('callbacks');
             return;
         }
         setShowStartConfirmation(true);
@@ -1723,74 +1734,140 @@ const History = () => {
         setShowStartConfirmation(false);
     };
 
-    // Precise values are typed; bounded fractions use a slider instead.
-    const renderNumberControl = (field, label, options = {}) => {
-        const metadata = ARCHITECTURE_DEFAULTS[paramters.architecture]?.[field] || {};
-        const {
-            min = metadata.min,
-            max = metadata.max,
-            step = metadata.step,
-            parse = (metadata.step && metadata.step >= 1) ? parseInt : parseFloat,
-            disabled = false
-        } = options;
-
-        return (
-            <TrainingField id={`training-${field}`} label={label} help={PARAMETER_DOCS[field]}>
-                <Form.Control
-                    disabled={disabled}
-                    type="number"
-                    size="sm"
-                    min={min}
-                    max={max}
-                    step={step}
-                    value={paramters[field]}
-                    isInvalid={Boolean(parameterErrors[field])}
-                    onChange={(e) => updateParameter(field, e.target.value === '' ? '' : parse(e.target.value))}
-                />
-                <Form.Control.Feedback type="invalid">{parameterErrors[field]}</Form.Control.Feedback>
-            </TrainingField>
-        );
-    };
-
-    const renderSliderControl = (field, label, options = {}) => {
-        const metadata = ARCHITECTURE_DEFAULTS[paramters.architecture]?.[field] || {};
-        const { disabled = false } = options;
-
+    const renderSliderControl = (field, metadata) => {
+        const value = typeof paramters[field] === 'number' ? paramters[field] : metadata.default;
+        const isLog = metadata.scale === 'log';
         return (
             <Form.Group className="mb-3" controlId={`training-${field}`}>
                 <div className="d-flex justify-content-between align-items-center mb-1">
-                    <Form.Label className="small fw-bold mb-0">{label}</Form.Label>
-                    <span className="small text-muted font-monospace">{paramters[field]}</span>
+                    <Form.Label className="small fw-bold mb-0">{metadata.label}</Form.Label>
+                    <span className="small text-muted font-monospace">{formatSliderValue(metadata, value)}</span>
                 </div>
                 <Form.Range
-                    disabled={disabled}
-                    min={metadata.min}
-                    max={metadata.max}
-                    step={metadata.step}
-                    value={paramters[field]}
-                    onChange={(e) => updateParameter(field, parseFloat(e.target.value))}
+                    min={isLog ? 0 : metadata.min}
+                    max={isLog ? LOG_SLIDER_RESOLUTION : metadata.max}
+                    step={isLog ? 1 : metadata.step}
+                    value={isLog ? toLogPosition(metadata, value) : value}
+                    onChange={(e) => updateParameter(
+                        field,
+                        isLog ? fromLogPosition(metadata, parseInt(e.target.value)) : parseFloat(e.target.value)
+                    )}
                 />
-                <Form.Text className="text-muted d-block" style={{ fontSize: '0.7rem' }}>
-                    {PARAMETER_DOCS[field]}
-                </Form.Text>
+                {parameterErrors[field] && (
+                    <div className="small text-danger">{parameterErrors[field]}</div>
+                )}
+                <Form.Text className="text-muted d-block" style={{ fontSize: '0.7rem' }}>{metadata.help}</Form.Text>
             </Form.Group>
         );
     };
 
-    const renderSwitchControl = (field, label) => (
-        <>
+    const renderSwitchControl = (field, metadata) => (
+        <div className="mb-3">
             <Form.Check
                 type="switch"
                 id={`training-${field}`}
                 className="small"
-                label={label}
+                label={metadata.label}
                 checked={Boolean(paramters[field])}
                 onChange={(e) => updateParameter(field, e.target.checked)}
             />
-            <Form.Text className="text-muted d-block mb-3" style={{ fontSize: '0.7rem' }}>
-                {PARAMETER_DOCS[field]}
-            </Form.Text>
-        </>
+            <Form.Text className="text-muted d-block" style={{ fontSize: '0.7rem' }}>{metadata.help}</Form.Text>
+        </div>
+    );
+
+    const renderSelectControl = (field, metadata) => (
+        <TrainingField id={`training-${field}`} label={metadata.label} help={metadata.help}>
+            <Form.Select
+                size="sm"
+                value={paramters[field]}
+                onChange={(e) => updateParameter(field, e.target.value)}
+            >
+                {metadata.options.map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                ))}
+            </Form.Select>
+        </TrainingField>
+    );
+
+    const renderHiddenLayersControl = (field, metadata) => {
+        const layers = Array.isArray(paramters[field]) ? paramters[field] : [];
+        const updateLayer = (index, patch) => updateParameter(
+            field,
+            layers.map((layer, i) => (i === index ? { ...layer, ...patch } : layer))
+        );
+        return (
+            <Form.Group className="mb-3" controlId={`training-${field}`}>
+                <div className="d-flex justify-content-between align-items-center mb-1">
+                    <Form.Label className="small fw-bold mb-0">{metadata.label}</Form.Label>
+                    <Button
+                        variant="light"
+                        size="sm"
+                        className="border py-0 px-2 small"
+                        disabled={layers.length >= MAX_HIDDEN_LAYERS}
+                        onClick={() => updateParameter(field, [...layers, { units: 64, activation: 'relu' }])}
+                    >
+                        <PlusLg />&nbsp;layer
+                    </Button>
+                </div>
+                {layers.length === 0 && (
+                    <div className="small text-muted fst-italic mb-1">
+                        No hidden layers — the network connects straight to the output head.
+                    </div>
+                )}
+                {layers.map((layer, index) => (
+                    <div key={index} className="d-flex align-items-center gap-2 mb-2">
+                        <span className="small text-muted font-monospace" style={{ width: '1.25rem' }}>{index + 1}</span>
+                        <Form.Range
+                            className="flex-grow-1"
+                            min={HIDDEN_LAYER_UNITS.min}
+                            max={HIDDEN_LAYER_UNITS.max}
+                            step={HIDDEN_LAYER_UNITS.step}
+                            value={layer.units}
+                            onChange={(e) => updateLayer(index, { units: parseInt(e.target.value) })}
+                        />
+                        <span className="small text-muted font-monospace text-end" style={{ width: '3rem' }}>{layer.units}</span>
+                        <Form.Select
+                            size="sm"
+                            style={{ width: '6.5rem' }}
+                            value={layer.activation}
+                            onChange={(e) => updateLayer(index, { activation: e.target.value })}
+                        >
+                            {ACTIVATION_OPTIONS.map(([value, label]) => (
+                                <option key={value} value={value}>{label}</option>
+                            ))}
+                        </Form.Select>
+                        <Button
+                            variant="link"
+                            className="p-0 text-danger"
+                            aria-label={`Remove layer ${index + 1}`}
+                            onClick={() => updateParameter(field, layers.filter((_, i) => i !== index))}
+                        >
+                            <Trash />
+                        </Button>
+                    </div>
+                ))}
+                <Form.Text className="text-muted d-block" style={{ fontSize: '0.7rem' }}>{metadata.help}</Form.Text>
+            </Form.Group>
+        );
+    };
+
+    const renderTabFields = (tab) => (
+        <Row>
+            {Object.entries(registry)
+                .filter(([, metadata]) => metadata.tab === tab)
+                .map(([field, metadata]) => {
+                    if (metadata.showIf && !metadata.showIf(paramters)) return null;
+                    const fullWidth = ['switch', 'layers'].includes(metadata.control) || field === 'pretrained_model';
+                    return (
+                        <Col sm={fullWidth ? 12 : 6} key={field}>
+                            {metadata.control === 'slider' && renderSliderControl(field, metadata)}
+                            {metadata.control === 'switch' && renderSwitchControl(field, metadata)}
+                            {metadata.control === 'select' && renderSelectControl(field, metadata)}
+                            {metadata.control === 'layers' && renderHiddenLayersControl(field, metadata)}
+                        </Col>
+                    );
+                })}
+        </Row>
     );
 
     const handleTrain = async () => {
@@ -1823,13 +1900,18 @@ const History = () => {
     // Every parameter sent to the server, recapped in the start confirmation.
     const formatSummaryValue = (field, value) => {
         if (field === 'architecture') return ARCHITECTURE_LABELS[value] || value;
+        if (field === 'hidden_layers') {
+            return Array.isArray(value) && value.length > 0
+                ? value.map((layer) => `${layer.units}·${layer.activation}`).join(' → ')
+                : 'none';
+        }
         if (typeof value === 'boolean') return value ? 'on' : 'off';
         return String(value);
     };
 
     const trainingSummary = Object.entries(paramters).map(([field, value]) => [
         field,
-        PARAMETER_LABELS[field] || field.replace(/_/g, ' '),
+        registry[field]?.label || field.replace(/_/g, ' '),
         formatSummaryValue(field, value)
     ]);
 
@@ -1944,11 +2026,6 @@ const History = () => {
                     setTotal(0);
                 }
             }
-            setSelectedIds(prev => {
-                const next = new Set(prev);
-                trainingIds.forEach((id) => next.delete(id));
-                return next;
-            });
         } catch (error) {
             setAlert({ variant: 'danger', message: error.response.data.error });
         } finally {
@@ -1967,15 +2044,11 @@ const History = () => {
     }, [debouncedQuery])
 
     useEffect(() => {
-        setSelectedIds(new Set());
-    }, [page, debouncedQuery]);
-
-    useEffect(() => {
         if (user && modelId) {
             const getTrainings = async () => {
                 try {
                     setLoading(true)
-                    let params = { extended: '1', page: page, per_page: perPage };
+                    let params = { extended: '1', page: page, per_page: perPage, ...controls.params };
                     if (debouncedQuery) params.query = debouncedQuery;
                     const headers = { "Authorization": `Bearer ${user.token}` };
                     const [response, activeResponse] = await Promise.all([
@@ -2004,7 +2077,7 @@ const History = () => {
             };
             getTrainings();
         }
-    }, [user, modelId, page, perPage, debouncedQuery]);
+    }, [user, modelId, page, perPage, debouncedQuery, controlsKey]);
 
     useEffect(() => {
         if (!user || !socket || activeTrainingTaskIds.length === 0) return;
@@ -2080,38 +2153,7 @@ const History = () => {
                                 </Button>
                             )}
                         </ButtonGroup>
-                        <ButtonGroup>
-                            <Button
-                                variant="light"
-                                className="border"
-                                title="Stop selected"
-                                aria-label="Stop selected"
-                                disabled={!canStopSelected || selectedTrainings.some((t) => stoppingTrainingIds.has(t.id))}
-                                onClick={() => setTrainingAction({ type: 'stop', trainings: selectedTrainings })}
-                            >
-                                <StopCircleFill />
-                            </Button>
-                            <Button
-                                variant="light"
-                                className="border"
-                                title="Retry selected"
-                                aria-label="Retry selected"
-                                disabled={!canRetrySelected || selectedTrainings.some((t) => restartingTrainingIds.has(t.id))}
-                                onClick={() => setTrainingAction({ type: 'retry', trainings: selectedTrainings })}
-                            >
-                                <ArrowClockwise />
-                            </Button>
-                            <Button
-                                variant="light"
-                                className="border text-danger"
-                                title="Delete selected"
-                                aria-label="Delete selected"
-                                disabled={!canDeleteSelected}
-                                onClick={() => handleOpenDeleteConfirmation(selectedTrainings)}
-                            >
-                                <Trash />
-                            </Button>
-                        </ButtonGroup>
+                        <TableFilters controls={controls} dateRange />
                     </ButtonToolbar>
                 </Col>
                 <Col>
@@ -2125,6 +2167,7 @@ const History = () => {
                     </Form>
                 </Col>
             </Row>
+            <FilterChips controls={controls} className="mt-3" />
             <Row className="mt-4">
                 <Col>
                     <Card className="border-light overflow-hidden">
@@ -2146,21 +2189,14 @@ const History = () => {
                             >
                                 <thead>
                                     <tr>
-                                        <th style={{ width: '40px' }}>
-                                            <Form.Check
-                                                type="checkbox"
-                                                checked={trainings.length > 0 && trainings.every((training) => selectedIds.has(training.id))}
-                                                onChange={() => toggleAllSelection(trainings)}
-                                                disabled={loading || trainings.length === 0}
-                                            />
-                                        </th>
-                                        <th><Hash className="text-muted" />&nbsp;Version</th>
-                                        <th><Activity className="text-muted" />&nbsp;Status</th>
-                                        <th><Clock className="text-muted" />&nbsp;Started</th>
-                                        <th><Calendar3 className="text-muted" />&nbsp;Completed</th>
-                                        <th><Stopwatch className="text-muted" />&nbsp;Runtime</th>
-                                        <th><Percent className="text-muted" />&nbsp;Train accuracy</th>
-                                        <th><Percent className="text-muted" />&nbsp;Test accuracy</th>
+                                        <SortHeader field="version" icon={<Hash />} sort={controls.sort} order={controls.order} onSort={controls.toggleSort}>Version</SortHeader>
+                                        <SortHeader field="status" icon={<Activity />} sort={controls.sort} order={controls.order} onSort={controls.toggleSort}>Status</SortHeader>
+                                        <SortHeader field="created_at" icon={<Clock />} sort={controls.sort} order={controls.order} onSort={controls.toggleSort}>Started</SortHeader>
+                                        <SortHeader field="date_done" icon={<Calendar3 />} sort={controls.sort} order={controls.order} onSort={controls.toggleSort}>Completed</SortHeader>
+                                        <SortHeader field="runtime" icon={<Stopwatch />} sort={controls.sort} order={controls.order} onSort={controls.toggleSort}>Runtime</SortHeader>
+                                        <SortHeader field="train_accuracy" icon={<Percent />} sort={controls.sort} order={controls.order} onSort={controls.toggleSort}>Train accuracy</SortHeader>
+                                        <SortHeader field="accuracy" icon={<Percent />} sort={controls.sort} order={controls.order} onSort={controls.toggleSort}>Test accuracy</SortHeader>
+                                        <th><Option className="text-muted" />&nbsp;Options</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -2179,13 +2215,6 @@ const History = () => {
                                         trainings.map((training) => (
                                             <tr key={training.id}>
                                                 <td>
-                                                    <Form.Check
-                                                        type="checkbox"
-                                                        checked={selectedIds.has(training.id)}
-                                                        onChange={() => toggleRowSelection(training.id)}
-                                                    />
-                                                </td>
-                                                <td>
                                                     <Link to={`/models/${modelId}/history/${training.id}`} className="text-decoration-none font-monospace">
                                                         {training.version}
                                                     </Link>
@@ -2201,6 +2230,41 @@ const History = () => {
                                                     return trainAcc !== null && trainAcc !== undefined ? (trainAcc * 100).toFixed(2) : '';
                                                 })()}</td>
                                                 <td className="font-monospace">{training.status === 'SUCCESS' && getTrainingAccuracy(training) !== null && (getTrainingAccuracy(training) * 100).toFixed(2)}</td>
+                                                <td>
+                                                    <Button
+                                                        variant="light"
+                                                        size="sm"
+                                                        className="border me-1"
+                                                        title={`Stop v${training.version}`}
+                                                        aria-label={`Stop v${training.version}`}
+                                                        disabled={!isTrainingActive(training) || stoppingTrainingIds.has(training.id)}
+                                                        onClick={() => setTrainingAction({ type: 'stop', trainings: [training] })}
+                                                    >
+                                                        <StopCircleFill />
+                                                    </Button>
+                                                    <Button
+                                                        variant="light"
+                                                        size="sm"
+                                                        className="border me-1"
+                                                        title={`Retry v${training.version}`}
+                                                        aria-label={`Retry v${training.version}`}
+                                                        disabled={!isTrainingReady(training) || restartingTrainingIds.has(training.id)}
+                                                        onClick={() => setTrainingAction({ type: 'retry', trainings: [training] })}
+                                                    >
+                                                        <ArrowClockwise />
+                                                    </Button>
+                                                    <Button
+                                                        variant="light"
+                                                        size="sm"
+                                                        className="border text-danger"
+                                                        title={`Delete v${training.version}`}
+                                                        aria-label={`Delete v${training.version}`}
+                                                        disabled={!isTrainingDeletable(training)}
+                                                        onClick={() => handleOpenDeleteConfirmation([training])}
+                                                    >
+                                                        <Trash />
+                                                    </Button>
+                                                </td>
                                             </tr>
                                         )) : query !== '' ? (
                                             <tr>
@@ -2310,13 +2374,14 @@ const History = () => {
                                     justify
                                 >
                                     <Tab eventKey="data" title="Data">
-                                        <Row>
-                                            <Col sm={6}>{renderSliderControl('test_split', 'Test split')}</Col>
-                                            <Col sm={6}>{renderSliderControl('validation_split', 'Validation split')}</Col>
-                                        </Row>
+                                        {renderTabFields('data')}
                                     </Tab>
                                     <Tab eventKey="model" title="Model">
-                                        <TrainingField id="training-architecture" label="Architecture" help={PARAMETER_DOCS.architecture}>
+                                        <TrainingField
+                                            id="training-architecture"
+                                            label="Architecture"
+                                            help="Network architecture the model is built with. Changing it resets the settings below to the architecture defaults."
+                                        >
                                             <Form.Select
                                                 size="sm"
                                                 value={paramters.architecture}
@@ -2329,101 +2394,16 @@ const History = () => {
                                                 ))}
                                             </Form.Select>
                                         </TrainingField>
-                                        {paramters.architecture === 'transformer' && (
-                                            <>
-                                                <TrainingField id="training-pretrained-model" label="Pretrained model" help={PARAMETER_DOCS.pretrained_model}>
-                                                    <Form.Select
-                                                        size="sm"
-                                                        value={paramters.pretrained_model}
-                                                        onChange={(e) => updateParameter('pretrained_model', e.target.value)}
-                                                    >
-                                                        {PRETRAINED_MODELS.map((pretrainedModel) => (
-                                                            <option key={pretrainedModel} value={pretrainedModel}>{pretrainedModel}</option>
-                                                        ))}
-                                                    </Form.Select>
-                                                </TrainingField>
-                                                {renderSwitchControl('trainable', 'Trainable encoder')}
-                                            </>
-                                        )}
-                                        <Row>
-                                            <Col sm={6}>
-                                                {renderNumberControl('sequence_length', 'Sequence length')}
-                                            </Col>
-                                            {['deep_neural_network', 'recurrent_neural_network'].includes(paramters.architecture) && (
-                                                <>
-                                                    <Col sm={6}>{renderNumberControl('max_tokens', 'Max tokens')}</Col>
-                                                    <Col sm={6}>{renderNumberControl('embedding_dims', 'Embedding dimensions')}</Col>
-                                                </>
-                                            )}
-                                            {paramters.architecture === 'recurrent_neural_network' && (
-                                                <Col sm={6}>{renderNumberControl('lstm_dims', 'LSTM dimensions')}</Col>
-                                            )}
-                                            {paramters.architecture === 'transformer' && model?.kind !== 'named_entity_recognition' && (
-                                                <Col sm={6}>{renderNumberControl('units', 'Dense units')}</Col>
-                                            )}
-                                            {(paramters.architecture !== 'transformer' || model?.kind !== 'named_entity_recognition') && (
-                                                <Col sm={6}>{renderSliderControl('dropout', 'Dropout rate')}</Col>
-                                            )}
-                                        </Row>
+                                        {renderTabFields('model')}
                                     </Tab>
                                     <Tab eventKey="schedule" title="Schedule">
-                                        <Row>
-                                            <Col sm={6}>{renderNumberControl('epochs', 'Epochs')}</Col>
-                                            <Col sm={6}>{renderNumberControl('batch_size', 'Batch size')}</Col>
-                                            <Col sm={6}>{renderNumberControl('learning_rate', 'Learning rate')}</Col>
-                                        </Row>
+                                        {renderTabFields('schedule')}
                                     </Tab>
                                     <Tab eventKey="callbacks" title="Callbacks">
-                                        {renderSwitchControl('early_stopping', 'Early stopping')}
-                                        {paramters.early_stopping && (
-                                            <Row>
-                                                <Col sm={6}>
-                                                    <TrainingField id="training-monitor" label="Monitor" help={PARAMETER_DOCS.monitor}>
-                                                        <Form.Select
-                                                            size="sm"
-                                                            value={paramters.monitor}
-                                                            onChange={(e) => updateParameter('monitor', e.target.value)}
-                                                        >
-                                                            {monitorOptions.map(([value, label]) => (
-                                                                <option key={value} value={value}>{label}</option>
-                                                            ))}
-                                                        </Form.Select>
-                                                    </TrainingField>
-                                                </Col>
-                                                <Col sm={6}>{renderNumberControl('patience', 'Patience')}</Col>
-                                            </Row>
-                                        )}
-                                        {model?.kind === 'text_classification' && (
-                                            <>
-                                                {renderSwitchControl('pruning', 'Weight pruning')}
-                                                {paramters.pruning && (
-                                                    <Row>
-                                                        <Col sm={6}>{renderSliderControl('initial_sparsity', 'Initial sparsity')}</Col>
-                                                        <Col sm={6}>{renderSliderControl('final_sparsity', 'Final sparsity')}</Col>
-                                                        <Col sm={6}>{renderNumberControl('pruning_begin_step', 'Begin step')}</Col>
-                                                        <Col sm={6}>{renderNumberControl('pruning_end_step', 'End step')}</Col>
-                                                        <Col sm={6}>{renderNumberControl('pruning_frequency', 'Update frequency')}</Col>
-                                                    </Row>
-                                                )}
-                                            </>
-                                        )}
-                                        <Row>
-                                            <Col sm={6}>{renderNumberControl('weight_decay_rate', 'Weight decay')}</Col>
-                                            <Col sm={6}>{renderNumberControl('num_warmup_steps', 'Warmup steps')}</Col>
-                                        </Row>
+                                        {renderTabFields('callbacks')}
                                     </Tab>
                                     <Tab eventKey="export" title="Export">
-                                        <TrainingField id="training-save-format" label="Save format" help={PARAMETER_DOCS.save_format}>
-                                            <Form.Select
-                                                size="sm"
-                                                value={paramters.save_format}
-                                                onChange={(e) => updateParameter('save_format', e.target.value)}
-                                            >
-                                                {SAVE_FORMAT_OPTIONS.map(([value, label]) => (
-                                                    <option key={value} value={value}>{label}</option>
-                                                ))}
-                                            </Form.Select>
-                                        </TrainingField>
+                                        {renderTabFields('export')}
                                     </Tab>
                                 </Tabs>
                             </div>
