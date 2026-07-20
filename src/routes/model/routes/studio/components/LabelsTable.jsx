@@ -1,7 +1,8 @@
-import { Badge, Card, Form, Spinner, Table } from "react-bootstrap";
-import { Calendar3, BlockquoteLeft, Clock, InfoCircle, Search, Tag, Bookmarks } from "react-bootstrap-icons";
+import { Badge, Button, Card, Spinner, Table } from "react-bootstrap";
+import { Calendar3, BlockquoteLeft, Clock, Download, InfoCircle, Option, Pen, Search, Tag, Trash, Bookmarks } from "react-bootstrap-icons";
 import { Link } from "react-router-dom";
 import { CardHeading, EmptyMessage } from "../../../../../shared/components/SectionCard";
+import SortHeader from "../../../../../shared/components/SortHeader";
 
 const LabelsTable = ({
     modelId,
@@ -10,14 +11,14 @@ const LabelsTable = ({
     labels,
     total,
     query,
-    selectedIds,
-    onToggleRow,
-    onToggleAll,
+    controls,
+    onDownload,
+    onEdit,
+    onDelete,
     // Where a row's name links to; language understanding overrides this so
     // an intent drills into its workspace instead of the utterances page.
     labelLink
 }) => {
-    const allSelected = labels.length > 0 && labels.every((label) => selectedIds.has(label.id));
     const linkTo = labelLink || ((label) => `/models/${modelId}/build/${label.id}/utterances`);
 
     return (
@@ -40,18 +41,11 @@ const LabelsTable = ({
                 >
                     <thead>
                         <tr>
-                            <th style={{ width: "40px" }}>
-                                <Form.Check
-                                    type="checkbox"
-                                    checked={allSelected}
-                                    onChange={() => onToggleAll(labels)}
-                                    disabled={loading || labels.length === 0}
-                                />
-                            </th>
-                            <th><Tag className="text-muted" />&nbsp;Name</th>
-                            <th><BlockquoteLeft className="text-muted" />&nbsp;Utterances</th>
-                            <th><Calendar3 className="text-muted" />&nbsp;Created</th>
-                            <th><Clock className="text-muted" />&nbsp;Updated</th>
+                            <SortHeader field="name" icon={<Tag />} sort={controls.sort} order={controls.order} onSort={controls.toggleSort}>Name</SortHeader>
+                            <SortHeader field="utterances_count" icon={<BlockquoteLeft />} sort={controls.sort} order={controls.order} onSort={controls.toggleSort}>Utterances</SortHeader>
+                            <SortHeader field="created_at" icon={<Calendar3 />} sort={controls.sort} order={controls.order} onSort={controls.toggleSort}>Created</SortHeader>
+                            <SortHeader field="updated_at" icon={<Clock />} sort={controls.sort} order={controls.order} onSort={controls.toggleSort}>Updated</SortHeader>
+                            <th><Option className="text-muted" />&nbsp;Options</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -63,13 +57,6 @@ const LabelsTable = ({
                             </tr>
                         ) : total > 0 ? labels.map((label) => (
                             <tr key={label.id}>
-                                <td>
-                                    <Form.Check
-                                        type="checkbox"
-                                        checked={selectedIds.has(label.id)}
-                                        onChange={() => onToggleRow(label.id)}
-                                    />
-                                </td>
                                 <td>
                                     <Link
                                         to={linkTo(label)}
@@ -85,6 +72,38 @@ const LabelsTable = ({
                                 </td>
                                 <td className="small text-muted">{label.created_at}</td>
                                 <td className="small text-muted">{label.updated_at}</td>
+                                <td>
+                                    <Button
+                                        variant="light"
+                                        size="sm"
+                                        className="border me-1"
+                                        title={`Download ${label.name}`}
+                                        aria-label={`Download ${label.name}`}
+                                        onClick={() => onDownload(label)}
+                                    >
+                                        <Download />
+                                    </Button>
+                                    <Button
+                                        variant="light"
+                                        size="sm"
+                                        className="border me-1"
+                                        title={`Edit ${label.name}`}
+                                        aria-label={`Edit ${label.name}`}
+                                        onClick={() => onEdit(label)}
+                                    >
+                                        <Pen />
+                                    </Button>
+                                    <Button
+                                        variant="light"
+                                        size="sm"
+                                        className="border text-danger"
+                                        title={`Delete ${label.name}`}
+                                        aria-label={`Delete ${label.name}`}
+                                        onClick={() => onDelete(label)}
+                                    >
+                                        <Trash />
+                                    </Button>
+                                </td>
                             </tr>
                         )) : query !== "" ? (
                             <tr>

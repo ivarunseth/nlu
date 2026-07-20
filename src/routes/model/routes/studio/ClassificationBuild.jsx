@@ -1,12 +1,14 @@
 import axios from "axios";
 import { useContext, useEffect, useState } from "react";
 import { Alert, Button, ButtonGroup, ButtonToolbar, Col, Form, Row } from "react-bootstrap";
-import { Download, Pen, PlusLg, Trash } from "react-bootstrap-icons";
+import { PlusLg } from "react-bootstrap-icons";
 import { useParams } from "react-router-dom";
 import { UserContext } from "../../../../contexts/UserContext";
 import AppPagination from "../../../../shared/components/AppPagination";
 import DeleteConfirmationModal from "../../../../shared/components/DeleteConfirmationModal";
+import { TableFilters, FilterChips } from "../../../../shared/components/TableFilters";
 import useDebounce from "../../../../shared/hooks/useDebounce";
+import useTableControls from "../../../../shared/hooks/useTableControls";
 import downloadBlob from "../../../../shared/utils/downloadBlob";
 import LabelFormModal from "./components/LabelFormModal";
 import LabelsTable from "./components/LabelsTable";
@@ -33,31 +35,19 @@ const ClassificationBuild = ({ noun = "label", labelLink, onMutate }) => {
     const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
     const [currentLabel, setCurrentLabel] = useState(null);
     const [labelsToDelete, setLabelsToDelete] = useState([]);
-    const [selectedIds, setSelectedIds] = useState(new Set());
     const [validated, setValidated] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [loading, setLoading] = useState(false);
     const [page, setPage] = useState(1);
     const [total, setTotal] = useState(0);
 
-    const selectedLabels = labels.filter((label) => selectedIds.has(label.id));
-
-    const toggleRowSelection = (id) => {
-        setSelectedIds((prev) => {
-            const next = new Set(prev);
-            if (next.has(id)) next.delete(id); else next.add(id);
-            return next;
-        });
-    };
-
-    const toggleAllSelection = (visibleLabels) => {
-        setSelectedIds((prev) => {
-            const allSelected = visibleLabels.length > 0 && visibleLabels.every((label) => prev.has(label.id));
-            return allSelected ? new Set() : new Set(visibleLabels.map((label) => label.id));
-        });
-    };
+    const controls = useTableControls({
+        defaultSort: { field: "name", order: "asc" },
+        onChange: () => setPage(1)
+    });
 
     const debouncedQuery = useDebounce(query, 500);
+    const controlsKey = JSON.stringify(controls.params);
 
     const resetForm = () => {
         setValidated(false);
@@ -196,11 +186,6 @@ const ClassificationBuild = ({ noun = "label", labelLink, onMutate }) => {
                 setLabels([]);
                 setTotal(0);
             }
-            setSelectedIds((prev) => {
-                const next = new Set(prev);
-                idsToDelete.forEach((id) => next.delete(id));
-                return next;
-            });
             onMutate?.();
         } catch (error) {
             setAlert({ variant: "danger", message: error.response.data.message });
@@ -210,19 +195,9 @@ const ClassificationBuild = ({ noun = "label", labelLink, onMutate }) => {
         }
     };
 
-    const handleBulkDownload = async () => {
-        for (const label of selectedLabels) {
-            await handleDownload(label);
-        }
-    };
-
     useEffect(() => {
         setPage(1);
     }, [debouncedQuery]);
-
-    useEffect(() => {
-        setSelectedIds(new Set());
-    }, [page, debouncedQuery]);
 
     useEffect(() => {
         if (user && modelId) {
@@ -230,7 +205,7 @@ const ClassificationBuild = ({ noun = "label", labelLink, onMutate }) => {
                 try {
                     setLoading(true);
                     const headers = { Authorization: `Bearer ${user.token}` };
-                    const params = { page, per_page: PER_PAGE };
+                    const params = { page, per_page: PER_PAGE, ...controls.params };
                     if (debouncedQuery !== "") params.query = debouncedQuery;
                     const response = await axios.get(`/api/models/${modelId}/intents`, { params, headers });
                     setLabels(response.data.intents);
@@ -243,7 +218,7 @@ const ClassificationBuild = ({ noun = "label", labelLink, onMutate }) => {
             };
             getLabels();
         }
-    }, [user, modelId, page, debouncedQuery]);
+    }, [user, modelId, page, debouncedQuery, controlsKey]);
 
     return (
         <>
@@ -264,38 +239,7 @@ const ClassificationBuild = ({ noun = "label", labelLink, onMutate }) => {
                                 <PlusLg />&nbsp;create {noun}
                             </Button>
                         </ButtonGroup>
-                        <ButtonGroup>
-                            <Button
-                                variant="light"
-                                className="border"
-                                title="Download selected"
-                                aria-label="Download selected"
-                                disabled={selectedLabels.length === 0}
-                                onClick={handleBulkDownload}
-                            >
-                                <Download />
-                            </Button>
-                            <Button
-                                variant="light"
-                                className="border"
-                                title="Edit selected"
-                                aria-label="Edit selected"
-                                disabled={selectedLabels.length !== 1}
-                                onClick={() => handleOpenEditForm(selectedLabels[0])}
-                            >
-                                <Pen />
-                            </Button>
-                            <Button
-                                variant="light"
-                                className="border text-danger"
-                                title="Delete selected"
-                                aria-label="Delete selected"
-                                disabled={selectedLabels.length === 0}
-                                onClick={() => handleOpenDeleteConfirmation(selectedLabels)}
-                            >
-                                <Trash />
-                            </Button>
-                        </ButtonGroup>
+                        <TableFilters controls={controls} dateRange />
                     </ButtonToolbar>
                 </Col>
                 <Col>
@@ -309,6 +253,7 @@ const ClassificationBuild = ({ noun = "label", labelLink, onMutate }) => {
                     </Form>
                 </Col>
             </Row>
+            <FilterChips controls={controls} className="mt-3" />
             <Row className="mt-4">
                 <Col>
                     <LabelsTable
@@ -318,9 +263,10 @@ const ClassificationBuild = ({ noun = "label", labelLink, onMutate }) => {
                         labels={labels}
                         total={total}
                         query={debouncedQuery}
-                        selectedIds={selectedIds}
-                        onToggleRow={toggleRowSelection}
-                        onToggleAll={toggleAllSelection}
+                        controls={controls}
+                        onDownload={handleDownload}
+                        onEdit={handleOpenEditForm}
+                        onDelete={(label) => handleOpenDeleteConfirmation([label])}
                         labelLink={labelLink}
                     />
                     <div className="mt-3">

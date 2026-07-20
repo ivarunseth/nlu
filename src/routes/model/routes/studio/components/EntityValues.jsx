@@ -1,7 +1,7 @@
 import axios from "axios";
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Alert, Badge, Button, Card, Form, Modal, Spinner, Table } from "react-bootstrap";
-import { BookmarkStar, InfoCircle, Pen, PlusLg, Quote, Tags, Trash } from "react-bootstrap-icons";
+import { BookmarkStar, InfoCircle, Option, Pen, PlusLg, Quote, Tags, Trash } from "react-bootstrap-icons";
 import { useParams } from "react-router-dom";
 import { UserContext } from "../../../../../contexts/UserContext";
 import AppPagination from "../../../../../shared/components/AppPagination";
@@ -187,7 +187,7 @@ const EntityValues = ({ entityId }) => {
                                 <th className="ps-3">Value</th>
                                 <th>Synonyms</th>
                                 <th className="text-center">Spans</th>
-                                <th className="text-center">Actions</th>
+                                <th className="text-center"><Option className="text-muted" />&nbsp;Options</th>
                             </tr>
                         </thead>
                         <tbody>

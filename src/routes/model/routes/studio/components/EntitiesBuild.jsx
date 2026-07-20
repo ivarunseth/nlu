@@ -1,20 +1,35 @@
 import axios from "axios";
 import { useContext, useEffect, useState } from "react";
 import { Alert, Badge, Button, Card, Col, Form, Row, Spinner, Table } from "react-bootstrap";
-import { BookmarkStar, Diagram2, InfoCircle, Pen, PlusLg, Search, Tag, Tags, Trash } from "react-bootstrap-icons";
+import { BookmarkStar, Diagram2, InfoCircle, Option, Pen, PlusLg, Search, Tag, Tags, Trash } from "react-bootstrap-icons";
 import { useParams } from "react-router-dom";
 import { Link } from "react-router-dom";
 import { UserContext } from "../../../../../contexts/UserContext";
 import AppPagination from "../../../../../shared/components/AppPagination";
 import DeleteConfirmationModal from "../../../../../shared/components/DeleteConfirmationModal";
 import { CardHeading, EmptyMessage } from "../../../../../shared/components/SectionCard";
+import SortHeader from "../../../../../shared/components/SortHeader";
+import { TableFilters, FilterChips } from "../../../../../shared/components/TableFilters";
 import { COLORS, nextEntityColor } from "../../../../../shared/components/entityColors";
 import useDebounce from "../../../../../shared/hooks/useDebounce";
+import useTableControls from "../../../../../shared/hooks/useTableControls";
 import { EntityDot } from "./EntitiesPanel";
 import EntityFormModal from "./EntityFormModal";
 
 const PER_PAGE = 7;
 const MAX_VISIBLE_PAGES = 5;
+
+// Entities carry an open/closed value-space type, offered here as a filter.
+const ENTITY_FILTERS = [
+    {
+        name: "kind",
+        label: "List type",
+        options: [
+            { value: "open", label: "Open" },
+            { value: "closed", label: "Closed" }
+        ]
+    }
+];
 
 // The Entities tab of a language understanding model (EN-1): the global
 // registry of reusable span types. Each row reports how many slots
@@ -44,7 +59,14 @@ const EntitiesBuild = ({ entityLink, onMutate }) => {
     const [validated, setValidated] = useState(false);
     const [submitting, setSubmitting] = useState(false);
 
+    const controls = useTableControls({
+        defaultSort: { field: "name", order: "asc" },
+        filters: ENTITY_FILTERS,
+        onChange: () => setPage(1)
+    });
+
     const debouncedQuery = useDebounce(query, 500);
+    const controlsKey = JSON.stringify(controls.params);
     const headers = { Authorization: `Bearer ${user?.token}` };
 
     const showError = (error, fallback = "Something went wrong.") => {
@@ -136,7 +158,7 @@ const EntitiesBuild = ({ entityLink, onMutate }) => {
             const getEntities = async () => {
                 try {
                     setLoading(true);
-                    const params = { page, per_page: PER_PAGE };
+                    const params = { page, per_page: PER_PAGE, ...controls.params };
                     if (debouncedQuery !== "") params.query = debouncedQuery;
                     const response = await axios.get(`/api/models/${modelId}/entities`, { params, headers });
                     setEntities(response.data.entities);
@@ -150,7 +172,7 @@ const EntitiesBuild = ({ entityLink, onMutate }) => {
             getEntities();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [user, modelId, page, debouncedQuery, refresh]);
+    }, [user, modelId, page, debouncedQuery, refresh, controlsKey]);
 
     return (
         <>
@@ -165,6 +187,9 @@ const EntitiesBuild = ({ entityLink, onMutate }) => {
                         <PlusLg />&nbsp;create entity
                     </Button>
                 </Col>
+                <Col xs="auto">
+                    <TableFilters controls={controls} dateRange />
+                </Col>
                 <Col>
                     <Form>
                         <Form.Control
@@ -176,6 +201,7 @@ const EntitiesBuild = ({ entityLink, onMutate }) => {
                     </Form>
                 </Col>
             </Row>
+            <FilterChips controls={controls} className="mt-3" />
             <Card className="border-light overflow-hidden mt-4">
                 <CardHeading
                     icon={<Tags />}
@@ -190,12 +216,12 @@ const EntitiesBuild = ({ entityLink, onMutate }) => {
                     <Table responsive hover className="mb-0 align-middle text-center" style={{ minHeight: "33vh" }}>
                         <thead>
                             <tr>
-                                <th className="text-start ps-3"><Tag className="text-muted" />&nbsp;Name</th>
+                                <SortHeader field="name" icon={<Tag />} sort={controls.sort} order={controls.order} onSort={controls.toggleSort} className="text-start ps-3">Name</SortHeader>
                                 <th className="text-start">Description</th>
                                 <th><Diagram2 className="text-muted" />&nbsp;Slots</th>
                                 <th><BookmarkStar className="text-muted" />&nbsp;Spans</th>
-                                <th>Values</th>
-                                <th>Actions</th>
+                                <SortHeader field="values_count" sort={controls.sort} order={controls.order} onSort={controls.toggleSort}>Values</SortHeader>
+                                <th><Option className="text-muted" />&nbsp;Options</th>
                             </tr>
                         </thead>
                         <tbody>
