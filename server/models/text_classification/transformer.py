@@ -1,7 +1,8 @@
 import os
 import numpy as np
 import tensorflow as tf
-from transformers import AutoConfig, AutoTokenizer, TFAutoModel as AutoModel, create_optimizer
+from transformers import AutoConfig, AutoTokenizer, TFAutoModel as AutoModel
+from ..optimization import create_optimizer
 from .base import BaseTextClassification
 
 PRETRAINED_MODELS = [
@@ -79,7 +80,9 @@ class BERTTextClassification(BaseTextClassification):
         outputs = outputs.last_hidden_state if hasattr(outputs, 'last_hidden_state') else outputs[0]        
         outputs = tf.keras.layers.GlobalAveragePooling1D()(outputs)
         outputs = tf.keras.layers.Dropout(dropout)(outputs)
-        outputs = tf.keras.layers.Dense(units, activation=activation)(outputs)
+        outputs = self._apply_hidden_layers(
+            outputs, default=[{'units': units, 'activation': activation}]
+        )
         outputs = tf.keras.layers.Dense(
             num_classes,
             activation='softmax',

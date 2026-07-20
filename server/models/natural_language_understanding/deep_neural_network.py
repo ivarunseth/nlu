@@ -2,7 +2,7 @@ import os
 import pickle
 import numpy as np
 import tensorflow as tf
-from transformers import create_optimizer
+from ..optimization import create_optimizer
 from .base import BaseNaturalLanguageUnderstanding
 from . import NonPaddingLoss, NonPaddingAccuracy
 
@@ -15,7 +15,7 @@ class DNNNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
     def __init__(self):
         super().__init__()
         self.processor = None # Will hold TextVectorization layer
-        self.architecture = '   '
+        self.architecture = 'deep_neural_network'
         self.parameters.update({
             'max_tokens': 10000,
             'sequence_length': 100,
@@ -27,6 +27,7 @@ class DNNNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
             'num_warmup_steps': 0,
             'intent_loss_weight': 1.0,
             'slot_loss_weight': 1.0,
+            'hidden_layers': [],
         })
 
     def preprocess_x(self, X):
@@ -76,7 +77,7 @@ class DNNNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
             for text in X
         ]
 
-    def build(self, num_labels, num_tags, **kwargs):
+    def build(self, num_labels, num_tags, slot_class_weights=None, **kwargs):
     
         self.parameters.update(kwargs)
     
@@ -118,7 +119,9 @@ class DNNNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
         )(x)
     
         x = tf.keras.layers.Dropout(dropout)(x)
-    
+
+        x = self._apply_hidden_layers(x)
+
         intents = tf.keras.layers.GlobalAveragePooling1D()(x)
     
         intents = tf.keras.layers.Dense(
@@ -147,7 +150,7 @@ class DNNNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
     
         loss = {
             "intents": tf.keras.losses.SparseCategoricalCrossentropy(),
-            "slots": NonPaddingLoss(),
+            "slots": NonPaddingLoss(class_weights=slot_class_weights),
         }
     
         metrics = {
@@ -168,6 +171,10 @@ class DNNNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
                     "slot_loss_weight", 1.0
                 ),
             },
+            # The intent sample_weight passed to fit() is meant to weight the
+            # loss only; accuracy stays raw. Declaring no weighted metrics
+            # also silences Keras' evaluate() warning on the validation pass.
+            weighted_metrics=[],
             metrics=metrics,
         )
     

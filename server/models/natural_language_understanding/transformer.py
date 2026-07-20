@@ -1,6 +1,7 @@
 import numpy as np
 import tensorflow as tf
-from transformers import AutoConfig, AutoTokenizer, TFAutoModel as AutoModel, create_optimizer
+from transformers import AutoConfig, AutoTokenizer, TFAutoModel as AutoModel
+from ..optimization import create_optimizer
 from .base import BaseNaturalLanguageUnderstanding
 from . import NonPaddingLoss, NonPaddingAccuracy
 
@@ -27,6 +28,9 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
             'trainable': False,
             'units': 768,
             'dropout': 0.15,
+            'l2': 0.01,
+            'intent_loss_weight': 1.0,
+            'slot_loss_weight': 1.0,
             'learning_rate': 2e-5,
             'num_train_steps': 1000,
             'weight_decay_rate': 0.01,
@@ -108,7 +112,7 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
             
         return {k: np.array(v) for k, v in tokenized_inputs.items()}, np.array(aligned_slots)
 
-    def build(self, num_labels, num_tags, **kwargs):
+    def build(self, num_labels, num_tags, slot_class_weights=None, **kwargs):
         """
         Builds a joint BERT model with Intent and Slot heads.
         """
@@ -131,23 +135,30 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
 
         sequences = tf.keras.layers.Dropout(self.parameters.get('dropout', 0.15))(sequences)
 
-        sequences = tf.keras.layers.Dense(
-            self.parameters.get('units', 768), 
-            activation=self.parameters.get('activation', 'relu')
-        )(sequences)
+        sequences = self._apply_hidden_layers(
+            sequences,
+            default=[{
+                'units': self.parameters.get('units', 768),
+                'activation': self.parameters.get('activation', 'relu')
+            }]
+        )
 
         sequences = tf.keras.layers.Dropout(self.parameters.get('dropout', 0.15))(sequences)
         
+        regularizer = tf.keras.regularizers.l2(self.parameters.get('l2', 0.01))
+
         # Intent head
         intents = tf.keras.layers.GlobalAveragePooling1D()(sequences)
 
         intents = tf.keras.layers.Dense(
-            num_labels, activation='softmax', name='intents'
+            num_labels, activation='softmax',
+            kernel_regularizer=regularizer, name='intents'
         )(intents)
-        
+
         # Slot head
         slots = tf.keras.layers.Dense(
-            num_tags, activation='softmax', name='slots'
+            num_tags, activation='softmax',
+            kernel_regularizer=regularizer, name='slots'
         )(sequences)
 
         model = tf.keras.models.Model(inputs=inputs, outputs=[intents, slots])
@@ -161,7 +172,7 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
 
         loss = {
             'intents': tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False),
-            'slots': NonPaddingLoss()
+            'slots': NonPaddingLoss(class_weights=slot_class_weights)
         }
 
         # Sparse integer targets against softmax heads: the intent head needs
@@ -173,7 +184,19 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
             'slots': NonPaddingAccuracy()
         }
         
-        model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
+        model.compile(
+            optimizer=optimizer,
+            loss=loss,
+            loss_weights={
+                'intents': self.parameters.get('intent_loss_weight', 1.0),
+                'slots': self.parameters.get('slot_loss_weight', 1.0)
+            },
+            # The intent sample_weight passed to fit() is meant to weight the
+            # loss only; accuracy stays raw. Declaring no weighted metrics
+            # also silences Keras' evaluate() warning on the validation pass.
+            weighted_metrics=[],
+            metrics=metrics
+        )
 
         return model
 

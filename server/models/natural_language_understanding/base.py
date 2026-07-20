@@ -100,6 +100,16 @@ class BaseNaturalLanguageUnderstanding(BaseModel):
         self.y_train = list(self.y_train) + list(zip(gen_intents, gen_tags))
         X, y = self.X_train, self.y_train
 
+        if kwargs.get('pruning', False):
+            initial_sparsity = kwargs.get('initial_sparsity', 0)
+            final_sparsity = kwargs.get('final_sparsity', 0.5)
+            begin_step = kwargs.get('pruning_begin_step', 0)
+            end_step = kwargs.get('pruning_end_step', 1000)
+            if not 0 <= initial_sparsity < final_sparsity < 1:
+                raise ValueError('Pruning sparsity must satisfy 0 <= initial < final < 1.')
+            if begin_step < 0 or end_step <= begin_step:
+                raise ValueError('Pruning end step must be greater than its begin step.')
+
         self.parameters.update({
             'validation_split': validation_split,
             'epochs': epochs,
@@ -109,10 +119,20 @@ class BaseNaturalLanguageUnderstanding(BaseModel):
         y_intents, y_slots = self.preprocess_y(y)
         X_processed, y_slots_aligned = self.tokenize_and_align(X, y_slots)
 
+        intent_class_weights = self._compute_class_weights(y_intents)
+        intent_sample_weight = self._compute_sample_weights(y_intents, intent_class_weights)
+
+        flat_slot_labels = np.concatenate([np.asarray(seq) for seq in y_slots])
+        slot_class_weights = self._compute_class_weights(flat_slot_labels)
+
         num_labels = len(self.labels)
         num_tags = len(self.tags)
+        slot_class_weight_vector = [slot_class_weights.get(index, 1.0) for index in range(num_tags)]
 
-        self.model = self.build(num_labels=num_labels, num_tags=num_tags, **kwargs)
+        self.model = self.build(
+            num_labels=num_labels, num_tags=num_tags,
+            slot_class_weights=slot_class_weight_vector, **kwargs
+        )
 
         summary = self._get_summary()
         if summary:
@@ -126,11 +146,15 @@ class BaseNaturalLanguageUnderstanding(BaseModel):
                 patience=kwargs.get('patience', 3),
                 restore_best_weights=True
             ))
+        if kwargs.get('pruning', False):
+            import tensorflow_model_optimization as tfmot
+            callbacks.append(tfmot.sparsity.keras.UpdatePruningStep())
 
         self._fit_data = (X_processed, [y_intents, y_slots_aligned], validation_split)
 
         self.history = self.model.fit(
             X_processed, [y_intents, y_slots_aligned],
+            sample_weight={'intents': intent_sample_weight},
             validation_split=validation_split,
             epochs=epochs,
             batch_size=batch_size,
@@ -139,6 +163,11 @@ class BaseNaturalLanguageUnderstanding(BaseModel):
         )
 
         self.parameters['epochs'] = len(self.history.history.get('loss', []))
+
+        if kwargs.get('pruning', False):
+            import tensorflow_model_optimization as tfmot
+            self.model = tfmot.sparsity.keras.strip_pruning(self.model)
+
         return self._history_to_dict(self.history)
 
     def tokenize_and_align(self, X, y_slots):

@@ -1,3 +1,5 @@
+from ..masking import NonPaddingLoss, NonPaddingAccuracy
+
 from .base import BaseNamedEntityRecognition
 from .recurrent_neural_network import RNNNamedEntityRecognition
 from .transformer import BERTNamedEntityRecognition

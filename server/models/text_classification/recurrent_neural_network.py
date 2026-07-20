@@ -4,7 +4,7 @@ import string
 import pickle
 import numpy as np
 import tensorflow as tf
-from transformers import create_optimizer
+from ..optimization import create_optimizer
 from .base import BaseTextClassification
 
 
@@ -94,7 +94,12 @@ class RNNTextClassification(BaseTextClassification):
         if bidirectional:
             outputs = tf.keras.layers.Bidirectional(recurrent_layer)(outputs)
 
-        outputs = tf.keras.layers.Dense(units, activation=activation)(outputs)
+        # units keeps sizing the recurrent layer above; the hidden dense that
+        # historically reused it generalises into the hidden_layers stack,
+        # falling back to the legacy single dense for old configurations.
+        outputs = self._apply_hidden_layers(
+            outputs, default=[{'units': units, 'activation': activation}]
+        )
 
         outputs = tf.keras.layers.Dense(
             num_classes, 

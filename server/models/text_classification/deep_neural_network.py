@@ -4,7 +4,7 @@ import string
 import pickle
 import numpy as np
 import tensorflow as tf
-from transformers import create_optimizer
+from ..optimization import create_optimizer
 from .base import BaseTextClassification
 
 
@@ -24,7 +24,8 @@ class DNNTextClassification(BaseTextClassification):
             'dropout': 0.2,
             'learning_rate': 1e-3,
             'weight_decay_rate': 0,
-            'num_warmup_steps': 0
+            'num_warmup_steps': 0,
+            'hidden_layers': []
         })
 
     def preprocess_x(self, X, progress=False):
@@ -68,7 +69,8 @@ class DNNTextClassification(BaseTextClassification):
         outputs = tf.keras.layers.Dropout(dropout)(outputs)
         outputs = tf.keras.layers.GlobalAveragePooling1D()(outputs)
         outputs = tf.keras.layers.Dropout(dropout)(outputs)
-        
+        outputs = self._apply_hidden_layers(outputs)
+
         labels = tf.keras.layers.Dense(num_classes, activation='softmax', name="labels")(outputs)
 
         model = tf.keras.models.Model(inputs=inputs, outputs=labels)

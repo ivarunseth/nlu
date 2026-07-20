@@ -1,10 +1,10 @@
 import os
 import re
+import math
 
 import numpy as np
 
 from sklearn.metrics import confusion_matrix, accuracy_score, classification_report
-from sklearn.utils.class_weight import compute_class_weight
 
 from ..base import BaseModel
 from ..augmentation import augment
@@ -210,23 +210,15 @@ class BaseNamedEntityRecognition(BaseModel):
         y_encoded = self.preprocess_y(y)
         X_processed, y_aligned = self.tokenize_and_align(X, y_encoded)
 
-
         flat_labels = np.concatenate([np.asarray(seq) for seq in y_encoded])
+        class_weights = self._compute_class_weights(flat_labels)
 
-        classes = np.unique(flat_labels)
+        train_samples = max(1, int(len(y_encoded) * (1 - validation_split)))
+        kwargs['num_train_steps'] = max(1, math.ceil(train_samples / batch_size) * epochs)
 
-        weights = compute_class_weight(
-            class_weight="balanced",
-            classes=classes,
-            y=flat_labels,
-        )
-
-        class_weight = dict(zip(classes, weights))
-
-        sample_weight = np.vectorize(class_weight.get)(y_aligned).astype(np.float32)
-        
         num_classes = len(self.labels)
-        self.model = self.build(num_classes=num_classes, **kwargs)
+        class_weight_vector = [class_weights.get(index, 1.0) for index in range(num_classes)]
+        self.model = self.build(num_classes=num_classes, class_weights=class_weight_vector, **kwargs)
         
         summary = self._get_summary()
         if summary:
@@ -244,7 +236,6 @@ class BaseNamedEntityRecognition(BaseModel):
         self._fit_data = (X_processed, y_aligned, validation_split)
         self.history = self.model.fit(
             X_processed, y_aligned,
-            sample_weight=sample_weight,
             validation_split=validation_split,
             epochs=epochs,
             batch_size=batch_size,

@@ -2,7 +2,6 @@ import os
 import numpy as np
 import math
 from sklearn.metrics import confusion_matrix, accuracy_score, classification_report
-from sklearn.utils.class_weight import compute_class_weight
 
 from ..base import BaseModel
 
@@ -69,15 +68,7 @@ class BaseTextClassification(BaseModel):
         })
         y_encoded = self.preprocess_y(y)
 
-        classes = np.unique(y_encoded)
-        
-        class_weights = compute_class_weight(
-            class_weight="balanced",
-            classes=classes,
-            y=y_encoded
-        )
-        
-        class_weight = dict(zip(classes, class_weights))
+        class_weight = self._compute_class_weights(y_encoded)
 
         X_processed = self.preprocess_x(X)
         train_samples = max(1, int(len(y_encoded) * (1 - validation_split)))

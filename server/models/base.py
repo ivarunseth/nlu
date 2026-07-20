@@ -5,7 +5,7 @@ import numpy as np
 import tensorflow as tf
 import onnxruntime as ort
 
-from sklearn.utils import compute_class_weight, compute_sample_weight
+from sklearn.utils import compute_class_weight
 
 class BaseModel:    
     """
@@ -79,6 +79,26 @@ class BaseModel:
 
     def _prune_model(self, model: tf.keras.models.Model):
         import tensorflow_model_optimization as tfmot
+        from tensorflow_model_optimization.python.core.sparsity.keras import pruning_wrapper
+
+        class MaskAgnosticPruneLowMagnitude(pruning_wrapper.PruneLowMagnitude):
+            """
+            ``Dense.call()`` takes no ``mask``, but the wrapper's ``**kwargs``
+            call signature makes Keras forward any propagated mask (e.g. from
+            an ``Embedding(mask_zero=True)``) into it, which it then blindly
+            delegates. Drop the mask before delegating; loss-level masking is
+            handled separately via the ``-100`` sentinel.
+            """
+            def __init__(self, layer, **kwargs):
+                super().__init__(layer, **kwargs)
+                # tfmot force-prefixes the wrapper's name; restore the wrapped
+                # layer's own name so dict-keyed losses/metrics (e.g. NLU's
+                # 'intents'/'slots' heads) still resolve model output names.
+                self._name = layer.name
+
+            def call(self, inputs, training=None, **kwargs):
+                kwargs.pop('mask', None)
+                return super().call(inputs, training=training, **kwargs)
 
         pruning_schedule = tfmot.sparsity.keras.PolynomialDecay(
             initial_sparsity=self.parameters.get("initial_sparsity", 0),
@@ -89,23 +109,19 @@ class BaseModel:
         )
 
         def apply_pruning(layer):
-            if isinstance(layer, (tf.keras.layers.Dense, tf.keras.layers.LSTM, tf.keras.layers.GRU)):
-                return tfmot.sparsity.keras.prune_low_magnitude(
+            # Only Dense layers are wrapped. tensorflow_model_optimization is
+            # backed by the parallel tf_keras package, and its PruneRegistry
+            # does not recognise this package's recurrent layers — wrapping
+            # LSTM/GRU directly raises "unsupported layer", and cloning a
+            # Bidirectional via from_config deserialises its inner RNN into
+            # tf_keras classes this package's Bidirectional then rejects. So
+            # recurrent weights stay dense; the Dense stack and heads (where
+            # most weights live for these models) are pruned.
+            if isinstance(layer, tf.keras.layers.Dense):
+                return MaskAgnosticPruneLowMagnitude(
                     layer,
                     pruning_schedule=pruning_schedule,
                 )
-
-            if isinstance(layer, tf.keras.layers.Bidirectional):
-                clone = tf.keras.layers.Bidirectional.from_config(layer.get_config())
-                clone.forward_layer = tfmot.sparsity.keras.prune_low_magnitude(
-                    clone.forward_layer,
-                    pruning_schedule=pruning_schedule
-                )
-                clone.backward_layer = tfmot.sparsity.keras.prune_low_magnitude(
-                    clone.backward_layer,
-                    pruning_schedule=pruning_schedule
-                )
-                return clone
 
             return layer
 
@@ -113,7 +129,56 @@ class BaseModel:
             model,
             clone_function=apply_pruning
         )
-    
+
+    def _hidden_layer(self, config, sequences):
+        """
+        Builds one layer of the hidden stack from a ``hidden_layers`` entry.
+
+        ``sequences`` says whether the layer receives a 3-D
+        (batch, time, features) tensor. Recurrent types are only valid there,
+        and always return sequences so the stack stays shape-preserving on
+        the time axis for the token-level heads and pooling that follow it.
+        """
+        layer_type = config.get('type', 'dense')
+        if layer_type == 'dense':
+            return tf.keras.layers.Dense(config['units'], activation=config['activation'])
+        if layer_type in ('lstm', 'gru'):
+            if not sequences:
+                raise ValueError(
+                    "Hidden layer type '%s' needs sequence input, but this "
+                    "model's hidden stack runs on pooled features — use 'dense'."
+                    % layer_type
+                )
+            recurrent = tf.keras.layers.LSTM if layer_type == 'lstm' else tf.keras.layers.GRU
+            return recurrent(config['units'], activation=config['activation'], return_sequences=True)
+        raise ValueError("Unknown hidden layer type: %r" % layer_type)
+
+    def _apply_hidden_layers(self, x, default=None):
+        """
+        Applies the configurable hidden stack from
+        ``parameters['hidden_layers']`` to ``x`` and returns the result.
+
+        ``hidden_layers`` is a list of
+        ``{'units': int, 'activation': str, 'type': str}`` dicts applied in
+        order; ``type`` is optional and defaults to ``'dense'``. ``Dense``
+        acts on the last axis, so it serves 2-D feature tensors and 3-D
+        sequence tensors alike; ``'lstm'``/``'gru'`` are valid only on 3-D
+        sequence tensors (see ``_hidden_layer``). When the parameter is
+        absent entirely, ``default`` is used instead — the hook for
+        architectures whose configurations predate ``hidden_layers`` and
+        persisted a single hidden dense as ``units``/``activation``. An empty
+        list is a valid no-op.
+        """
+        layers = self.parameters.get('hidden_layers')
+        if layers is None:
+            layers = default or []
+        # return_sequences=True keeps recurrent layers rank-preserving, so
+        # one rank check covers the whole stack.
+        sequences = len(x.shape) == 3
+        for layer in layers:
+            x = self._hidden_layer(layer, sequences)(x)
+        return x
+
     def _save_model_file(self, path, save_format):
         save_format = (save_format or 'saved_model').lower()
         if save_format == 'keras':
@@ -388,23 +453,16 @@ class BaseModel:
         return dict(zip(classes.tolist(), weights.tolist()))
 
     @staticmethod
-    def _compute_sample_weights(labels, class_weights, ignore_value=None):
+    def _compute_sample_weights(labels, class_weights):
         """
-        Builds sample weights from class weights.
-
-        Supports both
-
-            (batch,)
-            (batch, sequence_length)
+        Builds per-sample weights from class weights: each label is mapped to
+        its class weight. Works for any label shape.
 
         Parameters
         ----------
         labels : ndarray
 
         class_weights : dict
-
-        ignore_value : int or None
-            Labels equal to ignore_value receive weight 0.
 
         Returns
         -------
@@ -414,21 +472,7 @@ class BaseModel:
         labels = np.asarray(labels)
 
         sample_weights = np.ones(labels.shape, dtype=np.float32)
-
-        if ignore_value is None:
-
-            vectorized = np.vectorize(class_weights.get)
-
-            sample_weights[:] = vectorized(labels)
-
-        else:
-
-            mask = labels != ignore_value
-
-            vectorized = np.vectorize(class_weights.get)
-
-            sample_weights[mask] = vectorized(labels[mask])
-            sample_weights[~mask] = 0.0
+        sample_weights[:] = np.vectorize(class_weights.get)(labels)
 
         return sample_weights
     

@@ -1,7 +1,9 @@
 import numpy as np
 import tensorflow as tf
-from transformers import AutoConfig, AutoTokenizer, TFAutoModelForTokenClassification as AutoModel, create_optimizer
+from transformers import AutoConfig, AutoTokenizer, TFAutoModelForTokenClassification as AutoModel
+from ..optimization import create_optimizer
 from .base import BaseNamedEntityRecognition
+from . import NonPaddingLoss, NonPaddingAccuracy
 
 PRETRAINED_MODELS = [
     'distilbert/distilbert-base-uncased',
@@ -11,31 +13,6 @@ PRETRAINED_MODELS = [
     'ai4bharat/indic-bert',
     'google/muril-base-cased'
 ]
-
-
-class NonPaddingLoss(tf.keras.losses.Loss):
-    """
-    Sparse categorical cross-entropy that ignores padded / sub-word positions.
-
-    Aligned labels use ``-100`` for special tokens and every non-initial
-    sub-word (see :meth:`BERTNamedEntityRecognition.tokenize_and_align`). Those
-    positions are masked out so they contribute nothing to the loss, and the
-    remaining per-token losses are averaged over the real tokens only.
-    """
-
-    def __init__(self, name='non_padding_loss'):
-        super().__init__(name=name)
-
-    def call(self, y_true, y_pred):
-        loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(
-            from_logits=False, reduction=tf.keras.losses.Reduction.NONE
-        )
-        y_true = tf.cast(y_true, tf.int32)
-        mask = tf.cast(y_true >= 0, y_pred.dtype)
-        # relu() maps the ignored -100 labels to a valid class index; the mask
-        # then zeroes their contribution before the loss is reduced.
-        per_token = loss_fn(tf.nn.relu(y_true), y_pred) * mask
-        return tf.reduce_sum(per_token) / tf.maximum(tf.reduce_sum(mask), 1.0)
 
 
 class BERTNamedEntityRecognition(BaseNamedEntityRecognition):
@@ -161,7 +138,7 @@ class BERTNamedEntityRecognition(BaseNamedEntityRecognition):
             return steps
         return max(1, int(self.parameters.get('num_train_steps', 1000)))
 
-    def build(self, num_classes, **kwargs):
+    def build(self, num_classes, class_weights=None, **kwargs):
         """
         Builds the BERT token-classification model as a Keras functional model:
         a (optionally frozen) pretrained encoder followed by a
@@ -195,7 +172,10 @@ class BERTNamedEntityRecognition(BaseNamedEntityRecognition):
         outputs = encoder(inputs)
         sequence_output = outputs.last_hidden_state if hasattr(outputs, 'last_hidden_state') else outputs[0]
 
-        hidden = tf.keras.layers.Dense(self.parameters.get('units', 768), activation='tanh')(sequence_output)
+        hidden = self._apply_hidden_layers(
+            sequence_output,
+            default=[{'units': self.parameters.get('units', 768), 'activation': 'tanh'}]
+        )
         hidden = tf.keras.layers.Dropout(self.parameters.get('dropout', 0.15))(hidden)
         logits = tf.keras.layers.Dense(
             num_classes,
@@ -213,7 +193,7 @@ class BERTNamedEntityRecognition(BaseNamedEntityRecognition):
             num_warmup_steps=self.parameters.get('num_warmup_steps', 0)
         )
 
-        model.compile(optimizer=optimizer, loss=NonPaddingLoss())
+        model.compile(optimizer=optimizer, loss=NonPaddingLoss(class_weights=class_weights), metrics=[NonPaddingAccuracy()])
         return model
 
     def save(self, path, save_format='tf'):

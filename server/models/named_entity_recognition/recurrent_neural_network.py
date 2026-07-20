@@ -2,7 +2,9 @@ import os
 import pickle
 import numpy as np
 import tensorflow as tf
+from ..optimization import create_optimizer
 from .base import BaseNamedEntityRecognition
+from . import NonPaddingLoss, NonPaddingAccuracy
 
 class RNNNamedEntityRecognition(BaseNamedEntityRecognition):
     """
@@ -17,7 +19,11 @@ class RNNNamedEntityRecognition(BaseNamedEntityRecognition):
             'sequence_length': 128,
             'embedding_dims': 64,
             'lstm_dims': 100,
-            'dropout': 0.2
+            'dropout': 0.2,
+            'learning_rate': 1e-3,
+            'weight_decay_rate': 0,
+            'num_warmup_steps': 0,
+            'hidden_layers': []
         })
 
     def preprocess_x(self, X):
@@ -36,20 +42,24 @@ class RNNNamedEntityRecognition(BaseNamedEntityRecognition):
 
     def tokenize_and_align(self, X, y):
         """
-        Standard padding/truncation for RNN.
+        Standard padding/truncation for RNN. Padded positions use ``-100``,
+        matching the transformer architecture's convention, so
+        ``NonPaddingLoss``/``NonPaddingAccuracy`` and the sample-weight
+        computation in ``BaseNamedEntityRecognition.train`` exclude them —
+        ``0`` would collide with a real tag id.
         """
         X_processed = self.preprocess_x(X)
         seq_len = self.parameters.get('sequence_length', 128)
-        
+
         y_padded = []
         for labels in y:
             if len(labels) > seq_len:
                 y_padded.append(labels[:seq_len])
             else:
-                y_padded.append(labels + [0] * (seq_len - len(labels)))
+                y_padded.append(labels + [-100] * (seq_len - len(labels)))
         return X_processed, np.array(y_padded)
 
-    def build(self, num_classes, **kwargs):
+    def build(self, num_classes, class_weights=None, **kwargs):
         """
         Builds the Bi-LSTM model.
         """
@@ -60,16 +70,33 @@ class RNNNamedEntityRecognition(BaseNamedEntityRecognition):
         dropout = self.parameters.get('dropout', 0.2)
         sequence_length = self.parameters.get('sequence_length', 128)
 
+        # Sequential can't thread a tensor through _apply_hidden_layers, so
+        # the stack is materialised as a layer list via the shared
+        # per-layer builder; semantics match the helper (empty/absent list
+        # is a no-op, and the Bi-LSTM output is always a sequence).
+        hidden = [
+            self._hidden_layer(layer, sequences=True)
+            for layer in self.parameters.get('hidden_layers', [])
+        ]
+
         model = tf.keras.Sequential([
             tf.keras.layers.Input(shape=(sequence_length,), dtype=tf.int32),
             tf.keras.layers.Embedding(input_dim=vocab_size, output_dim=embedding_dims),
             tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(lstm_dims, return_sequences=True)),
             tf.keras.layers.Dropout(dropout),
+            *hidden,
             tf.keras.layers.Dense(num_classes, activation='softmax', name='dense_output')
         ])
 
-        model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+        optimizer, _ = create_optimizer(
+            init_lr=self.parameters.get('learning_rate', 1e-3),
+            num_train_steps=self.parameters.get('num_train_steps', 1000),
+            weight_decay_rate=self.parameters.get('weight_decay_rate', 0),
+            num_warmup_steps=self.parameters.get('num_warmup_steps', 0)
+        )
+
+        model.compile(optimizer=optimizer, loss=NonPaddingLoss(class_weights=class_weights), metrics=[NonPaddingAccuracy()])
         return model
 
     def save(self, path, save_format='tf'):
