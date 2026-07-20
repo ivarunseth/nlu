@@ -19,7 +19,7 @@ const ModelFormModal = ({
     onHeaderChange,
     onDescriptionChange
 }) => (
-    <Modal centered show={show} onHide={onHide}>
+    <Modal centered show={show} onHide={onHide} size="lg">
         <Modal.Header closeButton>
             <Modal.Title>{title}</Modal.Title>
         </Modal.Header>

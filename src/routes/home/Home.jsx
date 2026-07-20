@@ -1,17 +1,29 @@
 import axios from "axios";
 import { useContext, useEffect, useState } from "react";
 import { Alert, Button, ButtonGroup, ButtonToolbar, Col, Container, Form, Row } from "react-bootstrap";
-import { Download, Pen, PlusLg, Trash } from "react-bootstrap-icons";
+import { PlusLg } from "react-bootstrap-icons";
 import { UserContext } from "../../contexts/UserContext";
 import AppPagination from "../../shared/components/AppPagination";
-import DeleteConfirmationModal from "../../shared/components/DeleteConfirmationModal";
+import { TableFilters, FilterChips } from "../../shared/components/TableFilters";
 import useDebounce from "../../shared/hooks/useDebounce";
+import useTableControls from "../../shared/hooks/useTableControls";
 import downloadBlob from "../../shared/utils/downloadBlob";
 import ModelFormModal from "./components/ModelFormModal";
 import ModelsTable from "./components/ModelsTable";
 
 const PER_PAGE = 7;
 const MAX_VISIBLE_PAGES = 5;
+
+// The model kinds surfaced as a type filter, matching ALLOWED_MODELS.
+const MODEL_KIND_OPTIONS = [
+    { value: "text_classification", label: "Text classification" },
+    { value: "named_entity_recognition", label: "Named entity recognition" },
+    { value: "natural_language_understanding", label: "Natural language understanding" }
+];
+
+const MODEL_FILTERS = [
+    { name: "kind", label: "Type", options: MODEL_KIND_OPTIONS }
+];
 
 const Home = () => {
     const { user } = useContext(UserContext);
@@ -24,35 +36,22 @@ const Home = () => {
     const [header, setHeader] = useState(true);
     const [description, setDescription] = useState("");
     const [showCreateForm, setShowCreateForm] = useState(false);
-    const [showEditForm, setShowEditForm] = useState(false);
-    const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
-    const [currentModel, setCurrentModel] = useState(null);
-    const [modelsToDelete, setModelsToDelete] = useState([]);
-    const [selectedIds, setSelectedIds] = useState(new Set());
     const [validated, setValidated] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [loading, setLoading] = useState(false);
     const [page, setPage] = useState(1);
     const [total, setTotal] = useState(0);
 
-    const selectedModels = models.filter((model) => selectedIds.has(model.id));
-
-    const toggleRowSelection = (id) => {
-        setSelectedIds((prev) => {
-            const next = new Set(prev);
-            if (next.has(id)) next.delete(id); else next.add(id);
-            return next;
-        });
-    };
-
-    const toggleAllSelection = (visibleModels) => {
-        setSelectedIds((prev) => {
-            const allSelected = visibleModels.length > 0 && visibleModels.every((model) => prev.has(model.id));
-            return allSelected ? new Set() : new Set(visibleModels.map((model) => model.id));
-        });
-    };
+    const controls = useTableControls({
+        defaultSort: { field: "created_at", order: "desc" },
+        filters: MODEL_FILTERS,
+        onChange: () => setPage(1)
+    });
 
     const debouncedQuery = useDebounce(query, 500);
+    // Stable dependency for the fetch effect: params is a fresh object each
+    // render, so key the refetch on its serialized contents instead.
+    const controlsKey = JSON.stringify(controls.params);
 
     // Annotated datasets import row-by-row and report skipped rows in an
     // import_summary riding on the model payload; surface it so a partial
@@ -86,12 +85,6 @@ const Home = () => {
     const closeCreateForm = () => {
         resetForm();
         setShowCreateForm(false);
-    };
-
-    const closeEditForm = () => {
-        setCurrentModel(null);
-        resetForm();
-        setShowEditForm(false);
     };
 
     const handleCreate = async (e) => {
@@ -148,101 +141,9 @@ const Home = () => {
         }
     };
 
-    const handleOpenEditForm = (model) => {
-        setCurrentModel(model);
-        setName(model.name);
-        setDescription(model.description);
-        setShowEditForm(true);
-    };
-
-    const handleEdit = async (e) => {
-        e.preventDefault();
-        if (!e.currentTarget.checkValidity()) {
-            e.stopPropagation();
-        }
-        setValidated(true);
-
-        if (name === "") return;
-
-        try {
-            setSubmitting(true);
-            const data = new FormData();
-            data.append("name", name);
-            if (dataset) {
-                data.append("dataset", dataset);
-                data.append("header", header);
-            }
-            data.append("description", description);
-            const headers = { Authorization: `Bearer ${user.token}` };
-            const response = await axios.put(`/api/models/${currentModel.id}`, data, { headers });
-            const { import_summary: importSummary, ...editedModel } = response.data;
-            setModels((prevModels) => prevModels.map((m) => (m.id === currentModel.id ? editedModel : m)));
-            if (importSummary) setAlert(importAlert(importSummary));
-        } catch (error) {
-            setAlert({ variant: "danger", message: error.response.data.error });
-        } finally {
-            closeEditForm();
-        }
-    };
-
-    const handleOpenDeleteConfirmation = (modelsForDeletion) => {
-        setModelsToDelete(modelsForDeletion);
-        setShowDeleteConfirmation(true);
-    };
-
-    const handleCloseDeleteConfirmation = () => {
-        setModelsToDelete([]);
-        setShowDeleteConfirmation(false);
-    };
-
-    const handleDelete = async () => {
-        try {
-            setSubmitting(true);
-            const headers = { Authorization: `Bearer ${user.token}` };
-            const idsToDelete = modelsToDelete.map((model) => model.id);
-            await Promise.all(idsToDelete.map((id) => axios.delete(`/api/models/${id}`, { headers })));
-
-            const remainingOnPage = models.length - idsToDelete.length;
-            if (remainingOnPage > 0) {
-                setLoading(true);
-                const params = { page, per_page: PER_PAGE };
-                if (debouncedQuery !== "") params.query = debouncedQuery;
-                const response = await axios.get("/api/models", { params, headers });
-                setModels(response.data.models);
-                setTotal(response.data.total);
-            } else if (page > 1) {
-                setPage(page - 1);
-            } else {
-                setModels([]);
-                setTotal(0);
-            }
-            setSelectedIds((prev) => {
-                const next = new Set(prev);
-                idsToDelete.forEach((id) => next.delete(id));
-                return next;
-            });
-        } catch (error) {
-            setAlert({ variant: "danger", message: error.response.data.message });
-        } finally {
-            setLoading(false);
-            setSubmitting(false);
-            handleCloseDeleteConfirmation();
-        }
-    };
-
-    const handleBulkDownload = async () => {
-        for (const model of selectedModels) {
-            await handleDownload(model);
-        }
-    };
-
     useEffect(() => {
         setPage(1);
     }, [debouncedQuery]);
-
-    useEffect(() => {
-        setSelectedIds(new Set());
-    }, [page, debouncedQuery]);
 
     useEffect(() => {
         if (user) {
@@ -250,7 +151,7 @@ const Home = () => {
                 try {
                     setLoading(true);
                     const headers = { Authorization: `Bearer ${user.token}` };
-                    const params = { page, per_page: PER_PAGE };
+                    const params = { page, per_page: PER_PAGE, ...controls.params };
                     if (debouncedQuery !== "") params.query = debouncedQuery;
                     const response = await axios.get("/api/models", { params, headers });
                     setModels(response.data.models);
@@ -263,7 +164,7 @@ const Home = () => {
             };
             getModels();
         }
-    }, [user, page, debouncedQuery]);
+    }, [user, page, debouncedQuery, controlsKey]);
 
     return (
         <Container fluid>
@@ -285,38 +186,7 @@ const Home = () => {
                                 <PlusLg />&nbsp;create model
                             </Button>
                         </ButtonGroup>
-                        <ButtonGroup>
-                            <Button
-                                variant="light"
-                                className="border"
-                                title="Download selected"
-                                aria-label="Download selected"
-                                disabled={selectedModels.length === 0}
-                                onClick={handleBulkDownload}
-                            >
-                                <Download />
-                            </Button>
-                            <Button
-                                variant="light"
-                                className="border"
-                                title="Edit selected"
-                                aria-label="Edit selected"
-                                disabled={selectedModels.length !== 1}
-                                onClick={() => handleOpenEditForm(selectedModels[0])}
-                            >
-                                <Pen />
-                            </Button>
-                            <Button
-                                variant="light"
-                                className="border text-danger"
-                                title="Delete selected"
-                                aria-label="Delete selected"
-                                disabled={selectedModels.length === 0}
-                                onClick={() => handleOpenDeleteConfirmation(selectedModels)}
-                            >
-                                <Trash />
-                            </Button>
-                        </ButtonGroup>
+                        <TableFilters controls={controls} dateRange />
                     </ButtonToolbar>
                 </Col>
                 <Col>
@@ -330,6 +200,7 @@ const Home = () => {
                     </Form>
                 </Col>
             </Row>
+            <FilterChips controls={controls} className="mt-3" />
             <Row className="mt-4">
                 <Col>
                     <ModelsTable
@@ -337,9 +208,8 @@ const Home = () => {
                         models={models}
                         total={total}
                         query={debouncedQuery}
-                        selectedIds={selectedIds}
-                        onToggleRow={toggleRowSelection}
-                        onToggleAll={toggleAllSelection}
+                        controls={controls}
+                        onDownload={handleDownload}
                     />
                     <div className="mt-3">
                         <AppPagination
@@ -370,33 +240,6 @@ const Home = () => {
                 onDatasetChange={setDataset}
                 onHeaderChange={setHeader}
                 onDescriptionChange={setDescription}
-            />
-            <ModelFormModal
-                show={showEditForm}
-                title="Edit model"
-                validated={validated}
-                submitting={submitting}
-                name={name}
-                type={type}
-                dataset={dataset}
-                header={header}
-                description={description}
-                onHide={closeEditForm}
-                onSubmit={handleEdit}
-                onNameChange={setName}
-                onTypeChange={setType}
-                onDatasetChange={setDataset}
-                onHeaderChange={setHeader}
-                onDescriptionChange={setDescription}
-            />
-            <DeleteConfirmationModal
-                show={showDeleteConfirmation}
-                title="Delete model"
-                items={modelsToDelete.map((model) => model.name)}
-                itemType="model"
-                submitting={submitting}
-                onHide={handleCloseDeleteConfirmation}
-                onDelete={handleDelete}
             />
         </Container>
     );
