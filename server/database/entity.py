@@ -135,17 +135,24 @@ class Entity(db.Model):
             except KeyError:
                 if not partial_update and field == 'name':
                     abort(400)
-        if data.get('kind'):
-            if data['kind'] not in ('open', 'closed'):
-                abort(400, f"Invalid list type: {data['kind']}. Allowed: open, closed")
-            self.kind = data['kind']
+        # The studio form submits this as ``list_type``; accept that first and
+        # fall back to ``kind`` for API/import callers. Both feed the ``kind``
+        # column, whose public name is ``list_type``.
+        list_type = data.get('list_type') or data.get('kind')
+        if list_type:
+            if list_type not in ('open', 'closed'):
+                abort(400, f"Invalid list type: {list_type}. Allowed: open, closed")
+            self.kind = list_type
 
     def to_dict(self):
         data = {
             'id': self.id,
             'model_id': self.model_id,
             'name': self.name,
+            # ``list_type`` is the public name of the stored ``kind`` column;
+            # emit both so API and studio-form callers agree.
             'kind': self.kind or 'open',
+            'list_type': self.kind or 'open',
             'color': self.color,
             'description': self.description,
             'created_at': format_timestamp(self.created_at),
