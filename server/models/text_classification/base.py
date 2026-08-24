@@ -4,6 +4,7 @@ import math
 from sklearn.metrics import confusion_matrix, accuracy_score, classification_report
 
 from ..base import BaseModel
+from ..thresholds import gate_labels, label_curve, label_curves_by_name, with_labels
 
 
 class BaseTextClassification(BaseModel):
@@ -84,8 +85,14 @@ class BaseTextClassification(BaseModel):
         callbacks = kwargs.get('callbacks', [])
         if kwargs.get('early_stopping', True):
             import tensorflow as tf
+            from ..metrics import monitor_mode
+            monitor = kwargs.get('monitor', 'val_loss')
             callbacks.append(tf.keras.callbacks.EarlyStopping(
-                monitor=kwargs.get('monitor', 'val_loss'),
+                monitor=monitor,
+                # Keras only infers "higher is better" from names containing
+                # 'acc', so f1/precision/recall/mcc would be minimised — the run
+                # would stop exactly when the model started improving.
+                mode=monitor_mode(monitor),
                 patience=kwargs.get('patience', 3),
                 restore_best_weights=True
             ))
@@ -120,16 +127,22 @@ class BaseTextClassification(BaseModel):
         ``top`` (read from kwargs, default 1) limits how many labels each
         prediction returns. It may be a single int applied to every input, or a
         per-input list aligned with ``X`` (as sent by the batched serving loop).
+
+        ``label_threshold`` (default 0, meaning off) clears the top-ranked
+        label's ``name`` when it scores below the cutoff. Like ``top`` it may
+        be a scalar or a per-input list.
         """
         top = kwargs.pop('top', 1)
+        threshold = kwargs.pop('label_threshold', 0.0)
         preds = super().predict(X, **kwargs)
         if isinstance(preds, list):
             preds = preds[0]
 
         tops = top if isinstance(top, (list, tuple)) else [top] * len(preds)
+        thresholds = self._per_input(threshold, len(preds))
 
         results = []
-        for pred, k in zip(preds, tops):
+        for pred, k, cutoff in zip(preds, tops, thresholds):
             order = np.argsort(pred)[::-1]
             if k:
                 order = order[:int(k)]
@@ -138,7 +151,7 @@ class BaseTextClassification(BaseModel):
                 {'name': self.labels[str(int(idx))], 'score': float(pred[idx])}
                 for idx in order
             ]
-            results.append({'labels': labels})
+            results.append({'labels': gate_labels(labels, cutoff)})
         return results
 
     def evaluate(self, X, y):
@@ -148,13 +161,23 @@ class BaseTextClassification(BaseModel):
         """
         results = self.predict(X)
         y_pred = [r['labels'][0]['name'] for r in results]
-        
+        y_score = [r['labels'][0]['score'] for r in results]
+
         cm = confusion_matrix(y, y_pred)
         acc = accuracy_score(y, y_pred)
         report = classification_report(y, y_pred, zero_division=0, output_dict=True)
-        
+        correct = [predicted == truth for predicted, truth in zip(y_pred, y)]
+
         return {
             'accuracy': float(acc),
             'confusion_matrix': cm.tolist(),
-            'report': report
+            'report': report,
+            # No annotation key: this model type classifies whole utterances
+            # and has no annotated head to threshold.
+            'thresholds': {
+                'label': with_labels(
+                    label_curve(correct, y_score),
+                    label_curves_by_name(y_pred, correct, y_score),
+                ),
+            }
         }

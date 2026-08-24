@@ -4,7 +4,8 @@ import numpy as np
 import tensorflow as tf
 from ..optimization import create_optimizer
 from .base import BaseNamedEntityRecognition
-from . import NonPaddingLoss, NonPaddingAccuracy
+from . import NonPaddingLoss
+from ..crf import CRFLoss, CRFTransitions, transitions_variable
 
 class RNNNamedEntityRecognition(BaseNamedEntityRecognition):
     """
@@ -17,12 +18,13 @@ class RNNNamedEntityRecognition(BaseNamedEntityRecognition):
         self.parameters.update({
             'max_tokens': 10000,
             'sequence_length': 128,
-            'embedding_dims': 64,
-            'lstm_dims': 100,
-            'dropout': 0.2,
+            'embedding_dims': 128,
+            'lstm_dims': 128,
+            'dropout': 0.3,
             'learning_rate': 1e-3,
-            'weight_decay_rate': 0,
+            'weight_decay_rate': 1e-5,
             'num_warmup_steps': 0,
+            'crf': False,
             'hidden_layers': []
         })
 
@@ -65,9 +67,9 @@ class RNNNamedEntityRecognition(BaseNamedEntityRecognition):
         """
         self.parameters.update(kwargs)
         vocab_size = len(self.processor.get_vocabulary())
-        embedding_dims = self.parameters.get('embedding_dims', 64)
-        lstm_dims = self.parameters.get('lstm_dims', 100)
-        dropout = self.parameters.get('dropout', 0.2)
+        embedding_dims = self.parameters.get('embedding_dims', 128)
+        lstm_dims = self.parameters.get('lstm_dims', 128)
+        dropout = self.parameters.get('dropout', 0.3)
         sequence_length = self.parameters.get('sequence_length', 128)
 
         # Sequential can't thread a tensor through _apply_hidden_layers, so
@@ -79,6 +81,10 @@ class RNNNamedEntityRecognition(BaseNamedEntityRecognition):
             for layer in self.parameters.get('hidden_layers', [])
         ]
 
+        # Under the CRF the tag head emits raw emission scores, which
+        # `_to_probabilities` softmaxes at decode time.
+        crf = self.parameters.get('crf', False)
+
         model = tf.keras.Sequential([
             tf.keras.layers.Input(shape=(sequence_length,), dtype=tf.int32),
             tf.keras.layers.Embedding(input_dim=vocab_size, output_dim=embedding_dims),
@@ -86,17 +92,33 @@ class RNNNamedEntityRecognition(BaseNamedEntityRecognition):
             tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(lstm_dims, return_sequences=True)),
             tf.keras.layers.Dropout(dropout),
             *hidden,
-            tf.keras.layers.Dense(num_classes, activation='softmax', name='dense_output')
+            tf.keras.layers.Dense(
+                num_classes,
+                activation=None if crf else 'softmax',
+                name='dense_output'
+            ),
+            *([CRFTransitions(num_classes, name='crf_transitions')] if crf else [])
         ])
 
         optimizer, _ = create_optimizer(
             init_lr=self.parameters.get('learning_rate', 1e-3),
             num_train_steps=self.parameters.get('num_train_steps', 1000),
-            weight_decay_rate=self.parameters.get('weight_decay_rate', 0),
+            weight_decay_rate=self.parameters.get('weight_decay_rate', 1e-5),
             num_warmup_steps=self.parameters.get('num_warmup_steps', 0)
         )
 
-        model.compile(optimizer=optimizer, loss=NonPaddingLoss(class_weights=class_weights), metrics=[NonPaddingAccuracy()])
+        # Read the transition weight off the final model: pruning clones the
+        # graph, so a reference taken above would train an orphaned variable.
+        transitions = transitions_variable(model) if crf else None
+
+        model.compile(
+            optimizer=optimizer,
+            loss=(
+                CRFLoss(transitions) if transitions is not None
+                else NonPaddingLoss(class_weights=class_weights)
+            ),
+            metrics=self._metrics(num_classes, masked=True)
+        )
         return model
 
     def save(self, path, save_format='tf'):

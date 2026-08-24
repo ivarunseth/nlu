@@ -3,7 +3,8 @@ import tensorflow as tf
 from transformers import AutoConfig, AutoTokenizer, TFAutoModel as AutoModel
 from ..optimization import create_optimizer
 from .base import BaseNaturalLanguageUnderstanding
-from . import NonPaddingLoss, NonPaddingAccuracy
+from . import NonPaddingLoss
+from ..crf import CRFLoss, CRFTransitions, transitions_variable
 
 PRETRAINED_MODELS = [
     'distilbert/distilbert-base-uncased',
@@ -30,7 +31,8 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
             'dropout': 0.15,
             'l2': 0.01,
             'intent_loss_weight': 1.0,
-            'slot_loss_weight': 1.0,
+            'slot_loss_weight': 2.0,
+            'crf': False,
             'learning_rate': 2e-5,
             'num_train_steps': 1000,
             'weight_decay_rate': 0.01,
@@ -155,14 +157,22 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
             kernel_regularizer=regularizer, name='intents'
         )(intents)
 
-        # Slot head
+        # Slot head. Under the CRF it emits raw emission scores and the
+        # transition layer carries the head's name, so the dict-keyed loss and
+        # metrics still resolve the output.
+        crf = self.parameters.get('crf', False)
+
         slots = tf.keras.layers.Dense(
-            num_tags, activation='softmax',
-            kernel_regularizer=regularizer, name='slots'
+            num_tags, activation=None if crf else 'softmax',
+            kernel_regularizer=regularizer,
+            name='slot_emissions' if crf else 'slots'
         )(sequences)
 
+        if crf:
+            slots = CRFTransitions(num_tags, name='slots')(slots)
+
         model = tf.keras.models.Model(inputs=inputs, outputs=[intents, slots])
-        
+
         optimizer, _ = create_optimizer(
             init_lr=self.parameters.get('learning_rate', 2e-5),
             num_train_steps=self.parameters.get('num_train_steps', 1000),
@@ -170,18 +180,24 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
             num_warmup_steps=self.parameters.get('num_warmup_steps', 0)
         )
 
+        transitions = transitions_variable(model) if crf else None
+
         loss = {
             'intents': tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False),
-            'slots': NonPaddingLoss(class_weights=slot_class_weights)
+            'slots': (
+                CRFLoss(transitions) if transitions is not None
+                else NonPaddingLoss(class_weights=slot_class_weights)
+            )
         }
 
-        # Sparse integer targets against softmax heads: the intent head needs
-        # SparseCategoricalAccuracy (plain Accuracy compares shapes exactly and
-        # fails on (batch,1) vs (batch,num_labels)); the slot head uses the
-        # masked accuracy so -100 padded/sub-word positions are ignored.
+        # Sparse integer targets against softmax heads: the intent head gets the
+        # flat metrics (plain Accuracy compares shapes exactly and fails on
+        # (batch,1) vs (batch,num_labels)); the slot head gets the masked
+        # variants so -100 padded/sub-word positions are ignored. Keras prefixes
+        # each with its head name, so these log as intents_*/slots_*.
         metrics = {
-            'intents': tf.keras.metrics.SparseCategoricalAccuracy(name='accuracy'),
-            'slots': NonPaddingAccuracy()
+            'intents': self._metrics(num_labels),
+            'slots': self._metrics(num_tags, masked=True)
         }
         
         model.compile(
@@ -189,7 +205,7 @@ class BERTNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
             loss=loss,
             loss_weights={
                 'intents': self.parameters.get('intent_loss_weight', 1.0),
-                'slots': self.parameters.get('slot_loss_weight', 1.0)
+                'slots': self.parameters.get('slot_loss_weight', 2.0)
             },
             # The intent sample_weight passed to fit() is meant to weight the
             # loss only; accuracy stays raw. Declaring no weighted metrics

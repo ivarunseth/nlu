@@ -1,3 +1,4 @@
+import math
 import os
 
 import numpy as np
@@ -5,9 +6,11 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 
 from ..base import BaseModel
 from ..augmentation import augment
+from ..crf import CRFDecoder
+from ..thresholds import gate_annotations, gate_labels, label_curve, label_curves_by_name, with_labels
 from ...utils.dataset import tokenize, tags_to_spans, spans_to_tags
 
-class BaseNaturalLanguageUnderstanding(BaseModel):
+class BaseNaturalLanguageUnderstanding(CRFDecoder, BaseModel):
     """
     Base class for Natural Language Understanding (Intent + Slots).
     """
@@ -85,20 +88,39 @@ class BaseNaturalLanguageUnderstanding(BaseModel):
         self.X_train, self.y_train = X_train, y_train
         self.X_test, self.y_test = X_test, y_test
 
-        # Expand the TRAIN split only (the held-out test set stays authored),
-        # resolving each slot span's entity through the intent → slot → entity
-        # map so the catalogue keyed by entity drives substitution.
+        # Reserve the validation rows from the AUTHORED train split *before*
+        # augmenting. model.fit's validation_split holds out the last fraction of
+        # the array, so if generated rows landed in that tail the model would be
+        # validated on synthetic rows derived from its own training data — a leak
+        # that also pins the val metrics to that slice. Augment only the leading
+        # ``cut`` rows and keep every authored row after them untouched.
+        num_train = len(self.X_train)
+        cut = int(num_train * (1 - validation_split))
+        X_fit, y_fit = self.X_train[:cut], self.y_train[:cut]
+
+        # Expand the fit portion only (the held-out test and val rows stay
+        # authored), resolving each slot span's entity through the intent → slot
+        # → entity map so the catalogue keyed by entity drives substitution.
         # Deterministic (seeded) and idempotent.
-        intents_train = [intent for intent, _ in self.y_train]
-        tags_train = [tags for _, tags in self.y_train]
         gen_x, gen_tags, gen_intents = augment(
-            self.X_train, tags_train, intents_train,
+            X_fit,
+            [tags for _, tags in y_fit],
+            [intent for intent, _ in y_fit],
             lambda intent, slot: (self.slots or {}).get(intent, {}).get(slot),
             spec,
         )
-        self.X_train = list(self.X_train) + gen_x
-        self.y_train = list(self.y_train) + list(zip(gen_intents, gen_tags))
+        # Generated rows first, authored rows last: fit()'s validation_split tail
+        # is then always authored data the generators never saw, and split-point
+        # rounding can only ever move an authored row across the boundary — never
+        # a synthetic one into validation.
+        self.X_train = gen_x + list(self.X_train)
+        self.y_train = list(zip(gen_intents, gen_tags)) + list(self.y_train)
         X, y = self.X_train, self.y_train
+
+        # Size the split so fit() reserves exactly those held-out authored rows,
+        # regardless of how many rows augmentation generated above.
+        num_val = num_train - cut
+        fit_validation_split = num_val / len(X) if num_val else 0.0
 
         if kwargs.get('pruning', False):
             initial_sparsity = kwargs.get('initial_sparsity', 0)
@@ -129,6 +151,12 @@ class BaseNaturalLanguageUnderstanding(BaseModel):
         num_tags = len(self.tags)
         slot_class_weight_vector = [slot_class_weights.get(index, 1.0) for index in range(num_tags)]
 
+        # Match the LR-decay horizon to the real run: create_optimizer's
+        # PolynomialDecay glides to zero over num_train_steps, so it must equal
+        # the actual optimizer-step count or the LR dies mid-training (it
+        # defaults to 1000). Same computation as the other model types.
+        kwargs['num_train_steps'] = max(1, math.ceil((len(X) - num_val) / batch_size) * epochs)
+
         self.model = self.build(
             num_labels=num_labels, num_tags=num_tags,
             slot_class_weights=slot_class_weight_vector, **kwargs
@@ -141,8 +169,14 @@ class BaseNaturalLanguageUnderstanding(BaseModel):
         callbacks = kwargs.get('callbacks', [])
         if kwargs.get('early_stopping', True):
             import tensorflow as tf
+            from ..metrics import monitor_mode
+            monitor = kwargs.get('monitor', 'val_loss')
             callbacks.append(tf.keras.callbacks.EarlyStopping(
-                monitor=kwargs.get('monitor', 'val_loss'),
+                monitor=monitor,
+                # Keras only infers "higher is better" from names containing
+                # 'acc', so f1/precision/recall/mcc would be minimised — the run
+                # would stop exactly when the model started improving.
+                mode=monitor_mode(monitor),
                 patience=kwargs.get('patience', 3),
                 restore_best_weights=True
             ))
@@ -150,17 +184,22 @@ class BaseNaturalLanguageUnderstanding(BaseModel):
             import tensorflow_model_optimization as tfmot
             callbacks.append(tfmot.sparsity.keras.UpdatePruningStep())
 
-        self._fit_data = (X_processed, [y_intents, y_slots_aligned], validation_split)
+        self._fit_data = (X_processed, [y_intents, y_slots_aligned], fit_validation_split)
 
         self.history = self.model.fit(
             X_processed, [y_intents, y_slots_aligned],
             sample_weight={'intents': intent_sample_weight},
-            validation_split=validation_split,
+            validation_split=fit_validation_split,
             epochs=epochs,
             batch_size=batch_size,
             callbacks=callbacks,
             verbose=1
         )
+
+        # Keep the learned transitions on the instance: evaluate() runs before
+        # save(), so without this the post-training metrics would decode with
+        # uniform transitions and understate the CRF.
+        self.transitions = self._trained_transitions()
 
         self.parameters['epochs'] = len(self.history.history.get('loss', []))
 
@@ -228,50 +267,47 @@ class BaseNaturalLanguageUnderstanding(BaseModel):
 
     def _word_tags(self, slot_pred, positions):
         """
-        Word-level IOB tags and their scores for one input: each whitespace
-        token reads the prediction at its aligned sequence position; tokens
-        the model never saw (truncated) stay outside.
+        Word-level IOB tags and their scores for one input.
+
+        Decoding is the CRF Viterbi pass over the aligned word sequence, under
+        the IOB legality mask — or, for a model carrying no ``crf.npy`` (trained
+        without the CRF, which is the default, or before it existed), per-token
+        argmax with the structurally illegal tags repaired to ``O``.
         """
-        tags, scores = [], []
-        for position in positions:
-            if position is None or position >= len(slot_pred):
-                tags.append('O')
-                scores.append(0.0)
-                continue
-            probabilities = self._to_probabilities(slot_pred[position])
-            index = int(np.argmax(probabilities))
-            tags.append(self.tags[str(index)])
-            scores.append(float(probabilities[index]))
-        return tags, scores
+        return self._decode_tags(slot_pred, positions, self.tags)
+
+    def save(self, path, save_format='tf'):
+        """Saves the artifact plus the CRF transitions sidecar."""
+        super().save(path, save_format)
+        self._save_transitions(path)
+
+    @classmethod
+    def load(cls, path, **kwargs):
+        """Loads the artifact and, when present, its CRF transitions."""
+        instance = super().load(path, **kwargs)
+        instance._load_transitions(path)
+        return instance
 
     def _reconstruct_entities(self, text, tags, scores, slot_entities=None):
         """
         Merges word-level IOB tags back into ``{slot, entity, value, score,
-        start, end}`` spans, via the shared ``tags_to_spans`` so inference
-        reconstructs exactly the spans training was derived from. The span
-        score is the mean of its member tokens' softmax scores.
+        start, end}`` annotations, via the shared ``_scored_annotations`` so
+        inference reconstructs exactly the annotations training was derived
+        from and the threshold curve scores.
 
         ``slot_entities`` is the predicted intent's slot→entity submap from
         the persisted mapping; a predicted slot absent from it reports
         ``entity: None`` (surfaced, never dropped).
         """
-        entities = []
-        tokens = tokenize(text)
         slot_entities = slot_entities or {}
-        for start, end, name in tags_to_spans(text, tags):
-            member = [
-                score for (_, token_start, token_end), score in zip(tokens, scores)
-                if token_start < end and token_end > start
-            ]
-            entities.append({
-                'slot': name,
-                'entity': slot_entities.get(name),
-                'value': text[start:end],
-                'score': float(np.mean(member)) if member else 0.0,
-                'start': start,
-                'end': end,
-            })
-        return entities
+        return [{
+            'slot': name,
+            'entity': slot_entities.get(name),
+            'value': text[start:end],
+            'score': score,
+            'start': start,
+            'end': end,
+        } for start, end, name, score in self._scored_annotations(text, tags, scores)]
 
     def predict(self, X, **kwargs):
         """
@@ -281,85 +317,77 @@ class BaseNaturalLanguageUnderstanding(BaseModel):
         the intents ranked by score and cut to ``top`` (an int, or a per-input
         list as sent by the batched serving loop), and the slot predictions
         aligned back to whitespace words and merged into character-offset
-        spans over the input — each carrying its ``slot`` (the predicted
-        role) and that slot's ``entity``, resolved from the persisted
-        intent → slot → entity map through the top-ranked intent.
+        annotations over the input — each carrying its ``slot`` (the
+        predicted role) and that slot's ``entity``, resolved from the
+        persisted intent → slot → entity map through the top-ranked intent.
+
+        ``label_threshold`` clears the top intent's ``name`` below its cutoff
+        and ``annotation_threshold`` drops low-scoring slots; both default to
+        0, meaning off. Entities are resolved through the top intent before it
+        is gated, so a rejected intent does not strip entity names from slots
+        that passed their own cutoff.
         """
         top = kwargs.pop('top', 1)
+        label_threshold = kwargs.pop('label_threshold', 0.0)
+        annotation_threshold = kwargs.pop('annotation_threshold', 0.0)
         intent_preds, slot_preds = self._joint_predictions(X, **kwargs)
         tops = top if isinstance(top, (list, tuple)) else [top] * len(X)
+        label_thresholds = self._per_input(label_threshold, len(X))
+        annotation_thresholds = self._per_input(annotation_threshold, len(X))
 
         results = []
         for i, (text, positions, k) in enumerate(zip(X, self._word_positions(X), tops)):
             tags, scores = self._word_tags(slot_preds[i], positions)
             intents = self._rank_intents(intent_preds[i], k)
+            # Entities are resolved through the top intent *before* it is
+            # gated. The two heads are thresholded independently, so a slot
+            # that cleared its own cutoff should not lose its entity name
+            # because the intent head happened to be uncertain.
             slot_entities = (self.slots or {}).get(intents[0]['name']) if intents else None
+            entities, _ = gate_annotations(
+                self._reconstruct_entities(text, tags, scores, slot_entities),
+                tags,
+                annotation_thresholds[i],
+                tokenize(text),
+            )
             results.append({
-                'intents': intents,
-                'entities': self._reconstruct_entities(text, tags, scores, slot_entities)
+                'intents': gate_labels(intents, label_thresholds[i]),
+                'entities': entities,
             })
         return results
 
-    def _entity_metrics(self, X, y_true, y_pred):
+    def _slot_metrics(self, X, y_true, y_pred):
         """
-        Entity-level slot precision/recall/F1: a predicted span counts only
-        when its slot type and both boundaries match a true span exactly.
-        Includes a per-slot breakdown keyed by slot name.
+        Exact-match slot metrics, plus the roll-up by entity.
+
+        ``labels`` is keyed by slot — the name a language understanding
+        annotation trains under. ``entities`` re-tallies the same annotations
+        through the persisted intent → slot → entity map (slot names are unique
+        per model, so the flattened map is safe), answering "how well are
+        locations found, whatever role they fill".
         """
-        totals = {}
-        for text, true_tags, pred_tags in zip(X, y_true, y_pred):
-            true_spans = set(tags_to_spans(text, true_tags))
-            pred_spans = set(tags_to_spans(text, pred_tags))
-            names = {name for _, _, name in true_spans | pred_spans}
-            for name in names:
-                counts = totals.setdefault(name, {'true': 0, 'pred': 0, 'match': 0})
-                true_named = {span for span in true_spans if span[2] == name}
-                pred_named = {span for span in pred_spans if span[2] == name}
-                counts['true'] += len(true_named)
-                counts['pred'] += len(pred_named)
-                counts['match'] += len(true_named & pred_named)
+        tallies = self._annotation_tallies(X, y_true, y_pred)
+        metrics = self._metrics_from_tallies(tallies)
+        if not self.slots:
+            return metrics
 
-        def _prf(counts):
-            precision = counts['match'] / counts['pred'] if counts['pred'] else 0.0
-            recall = counts['match'] / counts['true'] if counts['true'] else 0.0
-            f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-            return {
-                'precision': round(precision, 4),
-                'recall': round(recall, 4),
-                'f1': round(f1, 4),
-                'support': counts['true']
-            }
-
-        overall = {'true': 0, 'pred': 0, 'match': 0}
-        for counts in totals.values():
-            for key in overall:
-                overall[key] += counts[key]
-        metrics = {
-            **_prf(overall),
-            'slots': {name: _prf(counts) for name, counts in sorted(totals.items())}
+        entity_of = {
+            slot: entity
+            for submap in self.slots.values()
+            for slot, entity in (submap or {}).items()
         }
-
-        # Optional roll-up by entity via the persisted slot→entity map
-        # (slot names are unique per model, so the flattened map is safe):
-        # "how well are locations found", regardless of which role they fill.
-        if self.slots:
-            entity_of = {
-                slot: entity
-                for submap in self.slots.values()
-                for slot, entity in (submap or {}).items()
+        by_entity = {}
+        for name, counts in tallies.items():
+            entity = entity_of.get(name)
+            if not entity:
+                continue
+            rollup = by_entity.setdefault(entity, {'true': 0, 'pred': 0, 'match': 0})
+            for key in rollup:
+                rollup[key] += counts[key]
+        if by_entity:
+            metrics['entities'] = {
+                name: self._prf(counts) for name, counts in sorted(by_entity.items())
             }
-            by_entity = {}
-            for name, counts in totals.items():
-                entity = entity_of.get(name)
-                if not entity:
-                    continue
-                rollup = by_entity.setdefault(entity, {'true': 0, 'pred': 0, 'match': 0})
-                for key in rollup:
-                    rollup[key] += counts[key]
-            if by_entity:
-                metrics['entities'] = {
-                    name: _prf(counts) for name, counts in sorted(by_entity.items())
-                }
         return metrics
 
     def evaluate(self, X, y, **kwargs):
@@ -368,10 +396,12 @@ class BaseNaturalLanguageUnderstanding(BaseModel):
 
         Intent metrics are also exposed at the top level (``accuracy``,
         ``report``, ``confusion_matrix``) so History, the version analytics
-        and the confusion view read a joint model exactly like a classifier;
-        ``slots`` carries the word-aligned token-level view plus the
-        entity-level scores (a span counts only when type and boundaries
-        match exactly).
+        and the confusion view read a joint model exactly like a classifier.
+
+        ``slots`` carries the exact-match scores — overall, per slot under
+        ``labels``, and rolled up per entity under ``entities`` — with the
+        word-aligned token view demoted to ``slots['tokens']``, which keeps its
+        report and confusion matrix for the tag-level diagnostic view.
         """
         y_intents_true = [str(intent) for intent, _ in y]
         y_slots_true = []
@@ -381,11 +411,17 @@ class BaseNaturalLanguageUnderstanding(BaseModel):
         intent_preds, slot_preds = self._joint_predictions(X)
         positions = self._word_positions(X)
 
-        y_intents_pred, y_slots_pred = [], []
+        # The scores are kept, not dropped: they are what the threshold curves
+        # sweep, and recomputing them would mean a second forward pass.
+        y_intents_pred, y_intents_score = [], []
+        y_slots_pred, y_slots_score = [], []
         for i in range(len(X)):
-            y_intents_pred.append(self._rank_intents(intent_preds[i], 1)[0]['name'])
-            tags, _ = self._word_tags(slot_preds[i], positions[i])
+            ranked = self._rank_intents(intent_preds[i], 1)[0]
+            y_intents_pred.append(ranked['name'])
+            y_intents_score.append(ranked['score'])
+            tags, scores = self._word_tags(slot_preds[i], positions[i])
             y_slots_pred.append(tags)
+            y_slots_score.append(scores)
 
         # Intent evaluation
         intent_acc = accuracy_score(y_intents_true, y_intents_pred)
@@ -402,6 +438,23 @@ class BaseNaturalLanguageUnderstanding(BaseModel):
 
         slot_acc = accuracy_score(y_slots_true_flat, y_slots_pred_flat)
         slot_report = classification_report(y_slots_true_flat, y_slots_pred_flat, zero_division=0, output_dict=True)
+        # Tag-level, so it lines up row-for-row with `slot_report` exactly the
+        # way the intent matrix lines up with `intent_report` — both index the
+        # sorted label set sklearn derives from the true/predicted values, which
+        # is what the History matrix view reads its axis labels from.
+        slot_matrix = confusion_matrix(y_slots_true_flat, y_slots_pred_flat)
+
+        # Both heads are scored on the same predictions the metrics above used,
+        # so the operating points and the reported numbers cannot drift apart.
+        intents_correct = [
+            predicted == truth
+            for predicted, truth in zip(y_intents_pred, y_intents_true)
+        ]
+        slot_gold = [tags_to_spans(text, tags) for text, tags in zip(X, y_slots_true)]
+        slot_predicted = [
+            self._scored_annotations(text, tags, scores)
+            for text, tags, scores in zip(X, y_slots_pred, y_slots_score)
+        ]
 
         return {
             'accuracy': float(intent_acc),
@@ -412,8 +465,18 @@ class BaseNaturalLanguageUnderstanding(BaseModel):
                 'report': intent_report
             },
             'slots': {
-                'accuracy': float(slot_acc),
-                'report': slot_report,
-                'entity': self._entity_metrics(X, y_slots_true, y_slots_pred)
+                **self._slot_metrics(X, y_slots_true, y_slots_pred),
+                'tokens': {
+                    'accuracy': float(slot_acc),
+                    'report': slot_report,
+                    'confusion_matrix': slot_matrix.tolist()
+                }
+            },
+            'thresholds': {
+                'label': with_labels(
+                    label_curve(intents_correct, y_intents_score),
+                    label_curves_by_name(y_intents_pred, intents_correct, y_intents_score),
+                ),
+                'annotation': self._annotation_threshold(slot_gold, slot_predicted),
             }
         }

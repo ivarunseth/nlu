@@ -102,7 +102,11 @@ class BERTTextClassification(BaseTextClassification):
             num_warmup_steps=self.parameters.get('num_warmup_steps', 0)
         )
 
-        model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+        model.compile(
+            optimizer=optimizer,
+            loss='sparse_categorical_crossentropy',
+            metrics=self._metrics(num_classes)
+        )
         return model
 
     def save(self, path, save_format='tf'):

@@ -3,7 +3,8 @@ import tensorflow as tf
 from transformers import AutoConfig, AutoTokenizer, TFAutoModelForTokenClassification as AutoModel
 from ..optimization import create_optimizer
 from .base import BaseNamedEntityRecognition
-from . import NonPaddingLoss, NonPaddingAccuracy
+from . import NonPaddingLoss
+from ..crf import CRFLoss, CRFTransitions, transitions_variable
 
 PRETRAINED_MODELS = [
     'distilbert/distilbert-base-uncased',
@@ -33,6 +34,7 @@ class BERTNamedEntityRecognition(BaseNamedEntityRecognition):
             'units': 768,
             'dropout': 0.15,
             'l2': 0.01,
+            'crf': False,
             'learning_rate': 2e-5,
             'num_train_steps': 1000,
             'weight_decay_rate': 0.01,
@@ -177,12 +179,19 @@ class BERTNamedEntityRecognition(BaseNamedEntityRecognition):
             default=[{'units': self.parameters.get('units', 768), 'activation': 'tanh'}]
         )
         hidden = tf.keras.layers.Dropout(self.parameters.get('dropout', 0.15))(hidden)
+        # Under the CRF the tag head emits raw emission scores, which
+        # `_to_probabilities` softmaxes at decode time.
+        crf = self.parameters.get('crf', False)
+
         logits = tf.keras.layers.Dense(
             num_classes,
-            activation='softmax',
+            activation=None if crf else 'softmax',
             kernel_regularizer=tf.keras.regularizers.l2(self.parameters.get('l2', 0.01)),
             name='output'
         )(hidden)
+
+        if crf:
+            logits = CRFTransitions(num_classes, name='crf_transitions')(logits)
 
         model = tf.keras.models.Model(inputs=inputs, outputs=logits)
 
@@ -193,7 +202,18 @@ class BERTNamedEntityRecognition(BaseNamedEntityRecognition):
             num_warmup_steps=self.parameters.get('num_warmup_steps', 0)
         )
 
-        model.compile(optimizer=optimizer, loss=NonPaddingLoss(class_weights=class_weights), metrics=[NonPaddingAccuracy()])
+        # Read the transition weight off the final model: pruning clones the
+        # graph, so a reference taken above would train an orphaned variable.
+        transitions = transitions_variable(model) if crf else None
+
+        model.compile(
+            optimizer=optimizer,
+            loss=(
+                CRFLoss(transitions) if transitions is not None
+                else NonPaddingLoss(class_weights=class_weights)
+            ),
+            metrics=self._metrics(num_classes, masked=True)
+        )
         return model
 
     def save(self, path, save_format='tf'):

@@ -20,10 +20,10 @@ class RNNTextClassification(BaseTextClassification):
         self.parameters.update({
             'max_tokens': 10000,
             'sequence_length': 100,
-            'embedding_dims': 64,
-            'dropout': 0.2,
+            'embedding_dims': 128,
+            'dropout': 0.3,
             'learning_rate': 1e-3,
-            'weight_decay_rate': 0,
+            'weight_decay_rate': 1e-5,
             'num_warmup_steps': 0
         })
 
@@ -60,12 +60,12 @@ class RNNTextClassification(BaseTextClassification):
 
         sequence_length = self.parameters.get('sequence_length', 100)
         vocab_size = len(self.processor.get_vocabulary())
-        embedding_dims = self.parameters.get('embedding_dims', 64)
+        embedding_dims = self.parameters.get('embedding_dims', 128)
         recurrent_layer = self.parameters.get('recurrent_layer', 'lstm')
         bidirectional = self.parameters.get('bidirectional', True)
-        units = self.parameters.get('units', 64)
+        units = self.parameters.get('units', 128)
         activation = self.parameters.get('activation', 'relu')
-        dropout = self.parameters.get('dropout', 0.2)
+        dropout = self.parameters.get('dropout', 0.3)
         recurrent_dropout = self.parameters.get('recurrent_dropout', 0.2)
 
         inputs = tf.keras.layers.Input(shape=(sequence_length,), dtype=tf.int32)
@@ -91,8 +91,14 @@ class RNNTextClassification(BaseTextClassification):
         else:
             raise ValueError('Invalid value for parameter `recurrent_layer`: %s' % recurrent_layer)
 
-        if bidirectional:
-            outputs = tf.keras.layers.Bidirectional(recurrent_layer)(outputs)
+        # Either way the recurrent layer runs and returns only its last state,
+        # so what follows is a pooled 2-D feature tensor — which is what the
+        # classification head and the (dense-only) hidden stack expect.
+        outputs = (
+            tf.keras.layers.Bidirectional(recurrent_layer)(outputs)
+            if bidirectional
+            else recurrent_layer(outputs)
+        )
 
         # units keeps sizing the recurrent layer above; the hidden dense that
         # historically reused it generalises into the hidden_layers stack,
@@ -115,14 +121,14 @@ class RNNTextClassification(BaseTextClassification):
         optimizer, _ = create_optimizer(
             init_lr=self.parameters.get('learning_rate', 1e-3),
             num_train_steps=self.parameters.get('num_train_steps', 1000),
-            weight_decay_rate=self.parameters.get('weight_decay_rate', 0),
+            weight_decay_rate=self.parameters.get('weight_decay_rate', 1e-5),
             num_warmup_steps=self.parameters.get('num_warmup_steps', 0)
         )
 
         model.compile(
-            optimizer=optimizer, 
-            loss='sparse_categorical_crossentropy', 
-            metrics=['accuracy']
+            optimizer=optimizer,
+            loss='sparse_categorical_crossentropy',
+            metrics=self._metrics(num_classes)
         )
 
         return model

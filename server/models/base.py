@@ -130,6 +130,19 @@ class BaseModel:
             clone_function=apply_pruning
         )
 
+    def _metrics(self, num_classes, masked=False):
+        """
+        Per-epoch metrics for one head, from ``parameters['metrics']``.
+
+        ``parameters`` is updated with the training kwargs before ``build()``
+        runs, so the selection is readable here the same way the loss weights
+        are. ``masked=True`` selects the sequence-labelling variants, which
+        ignore the ``-100`` padding / sub-word positions. Unknown or empty
+        selections fall back to accuracy — see ``normalize_metrics``.
+        """
+        from .metrics import build_metrics
+        return build_metrics(self.parameters.get('metrics'), num_classes, masked=masked)
+
     def _hidden_layer(self, config, sequences):
         """
         Builds one layer of the hidden stack from a ``hidden_layers`` entry.
@@ -475,7 +488,161 @@ class BaseModel:
         sample_weights[:] = np.vectorize(class_weights.get)(labels)
 
         return sample_weights
-    
+
+    @staticmethod
+    def _scored_annotations(text, tags, scores):
+        """
+        The annotations of one tagged input, as ``(start, end, name, score)``.
+
+        Built on the shared ``tags_to_spans`` so an annotation means exactly
+        the same thing at inference, in the metrics and on the threshold
+        curve — three places that must agree for a threshold fitted on one to
+        be meaningful in the others. The score is the mean over the tokens the
+        annotation covers.
+
+        ``tags`` and ``scores`` must be one per word. ``_decode_tags`` sizes
+        both to the word count so every caller satisfies this, but a caller
+        that did not would get annotations built from the full tag sequence and
+        scored from a short one — silently mis-scored rather than obviously
+        broken, which is the one failure this shared builder exists to rule
+        out. Cheaper to refuse than to debug.
+        """
+        from ..utils.dataset import tokenize, tags_to_spans
+
+        if len(tags) != len(scores):
+            raise ValueError(
+                'tags and scores must be one per word, got %d and %d'
+                % (len(tags), len(scores))
+            )
+
+        tokens = tokenize(text)
+        annotations = []
+        for start, end, name in tags_to_spans(text, tags):
+            member = [
+                score for (_, token_start, token_end), score in zip(tokens, scores)
+                if token_start < end and token_end > start
+            ]
+            annotations.append((start, end, name, float(np.mean(member)) if member else 0.0))
+        return annotations
+
+    @staticmethod
+    def _annotation_threshold(gold, predicted):
+        """
+        The precision-recall curve for one annotated head, with its per-name
+        summaries attached.
+
+        ``gold`` is one iterable of ``(start, end, name)`` per input and
+        ``predicted`` one iterable of ``(start, end, name, score)``. Both must
+        come from the shared annotation builder, so the curve's
+        ``threshold: 0`` point reproduces ``_annotation_metrics`` exactly —
+        that identity is what lets a threshold read off this curve mean the
+        same thing as the number in the Reports tab.
+        """
+        from .thresholds import annotation_curve, annotation_curves_by_name, with_labels
+
+        gold = [set(item) for item in gold]
+        predicted = [list(item) for item in predicted]
+        return with_labels(
+            annotation_curve(gold, predicted),
+            annotation_curves_by_name(gold, predicted),
+        )
+
+    @staticmethod
+    def _per_input(value, count):
+        """
+        Expands a serving option to one value per input.
+
+        The serving loop batches requests that arrived with different options,
+        so it passes a list aligned with the inputs; a direct caller passes a
+        scalar, the way ``top`` already does.
+
+        A short list is padded with 0.0 rather than truncated: a batch can mix
+        envelopes from two triton processes mid-restart, where the older one
+        omits the key entirely. Padding fails to "off", which serves the
+        missing requests ungated; truncating would drop their outputs and time
+        those requests out instead.
+        """
+        if isinstance(value, (list, tuple)):
+            return list(value) + [0.0] * max(0, count - len(value))
+        return [value] * count
+
+    @staticmethod
+    def _annotation_tallies(X, y_true, y_pred):
+        """
+        Per-name ``{true, pred, match}`` counts over whole annotations, where an
+        annotation matches only when its name *and* both boundaries agree.
+
+        The tallies rather than the scores are the primitive, so a caller that
+        needs to re-group them (language understanding rolling slots up by
+        entity) sums exact integers instead of trying to invert rounded rates.
+
+        ``y_true``/``y_pred`` are per-input lists of word-level IOB tags.
+        """
+        from ..utils.dataset import tags_to_spans
+
+        totals = {}
+        for text, true_tags, pred_tags in zip(X, y_true, y_pred):
+            true_annotations = set(tags_to_spans(text, true_tags))
+            pred_annotations = set(tags_to_spans(text, pred_tags))
+            for name in {name for _, _, name in true_annotations | pred_annotations}:
+                counts = totals.setdefault(name, {'true': 0, 'pred': 0, 'match': 0})
+                true_named = {a for a in true_annotations if a[2] == name}
+                pred_named = {a for a in pred_annotations if a[2] == name}
+                counts['true'] += len(true_named)
+                counts['pred'] += len(pred_named)
+                counts['match'] += len(true_named & pred_named)
+        return totals
+
+    @classmethod
+    def _annotation_metrics(cls, X, y_true, y_pred):
+        """
+        Exact-match precision/recall/F1 over whole annotations, shared by the
+        annotated model types — keyed by slot name for language understanding
+        and by entity name for named entity recognition, since that is what
+        each trains its tags under.
+
+        This is the number the product experiences: a slot is filled with
+        ``text[start:end]``, so an annotation off by one word yields the wrong
+        value outright, where token scoring would award partial credit for it.
+
+        Returns ``{precision, recall, f1, support, labels: {name: {...}}}``.
+        """
+        return cls._metrics_from_tallies(cls._annotation_tallies(X, y_true, y_pred))
+
+    @classmethod
+    def _metrics_from_tallies(cls, totals):
+        """Overall + per-name scores from ``{name: {true, pred, match}}``."""
+        overall = {'true': 0, 'pred': 0, 'match': 0}
+        for counts in totals.values():
+            for key in overall:
+                overall[key] += counts[key]
+        return {
+            **cls._prf(overall),
+            'labels': {name: cls._prf(counts) for name, counts in sorted(totals.items())}
+        }
+
+    @staticmethod
+    def _prf(counts):
+        """
+        Precision/recall/F1/support from ``{true, pred, match}`` tallies.
+
+        Rounded to 6 decimals, not 4: this is the same match/pred/true
+        arithmetic the threshold curve runs at threshold 0 (see
+        ``BaseModel._annotation_threshold``), and that curve rounds to 6
+        decimals. A coarser rounding here would make the Reports tab and the
+        Thresholds tab show different numbers for what is exactly the same
+        computation.
+        """
+        precision = counts['match'] / counts['pred'] if counts['pred'] else 0.0
+        recall = counts['match'] / counts['true'] if counts['true'] else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+        return {
+            'precision': round(precision, 6),
+            'recall': round(recall, 6),
+            'f1': round(f1, 6),
+            'support': counts['true']
+        }
+
     def train(self, data, **kwargs):
         """
         Should be implemented by subclasses.

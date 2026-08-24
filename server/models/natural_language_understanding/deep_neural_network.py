@@ -4,7 +4,8 @@ import numpy as np
 import tensorflow as tf
 from ..optimization import create_optimizer
 from .base import BaseNaturalLanguageUnderstanding
-from . import NonPaddingLoss, NonPaddingAccuracy
+from . import NonPaddingLoss
+from ..crf import CRFLoss, CRFTransitions, transitions_variable
 
 class DNNNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
     """
@@ -19,15 +20,16 @@ class DNNNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
         self.parameters.update({
             'max_tokens': 10000,
             'sequence_length': 100,
-            'embedding_dims': 64,
-            'units': 64,
-            'dropout': 0.2,
+            'embedding_dims': 128,
+            'units': 128,
+            'dropout': 0.3,
             'learning_rate': 1e-3,
-            'weight_decay_rate': 0,
+            'weight_decay_rate': 1e-5,
             'num_warmup_steps': 0,
             'intent_loss_weight': 1.0,
-            'slot_loss_weight': 1.0,
-            'hidden_layers': [],
+            'slot_loss_weight': 2.0,
+            'crf': False,
+            'hidden_layers': [{'type': 'dense', 'units': 64, 'activation': 'relu'}],
         })
 
     def preprocess_x(self, X):
@@ -130,34 +132,48 @@ class DNNNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
             name="intents"
         )(intents)
     
+        # Under the CRF the slot head emits raw emission scores; the transition
+        # layer carries the head's name so the dict-keyed loss and metrics still
+        # resolve the output. `_to_probabilities` softmaxes logits at decode
+        # time, so the reported scores keep their meaning either way.
+        crf = self.parameters.get("crf", False)
+
         slots = tf.keras.layers.Dense(
             num_tags,
-            activation="softmax",
-            name="slots"
+            activation=None if crf else "softmax",
+            name="slot_emissions" if crf else "slots"
         )(x)
-    
+
+        if crf:
+            slots = CRFTransitions(num_tags, name="slots")(slots)
+
         model = tf.keras.Model(inputs=inputs, outputs=[intents, slots])
-    
+
         if self.parameters.get("pruning", False):
             model = self._prune_model(model)
-    
+
         optimizer, _ = create_optimizer(
             init_lr=self.parameters["learning_rate"],
             num_train_steps=self.parameters.get("num_train_steps", 1000),
             weight_decay_rate=self.parameters["weight_decay_rate"],
             num_warmup_steps=self.parameters["num_warmup_steps"],
         )
-    
+
+        # Read the transition weight off the final model: pruning clones the
+        # graph, so a reference taken above would train an orphaned variable.
+        transitions = transitions_variable(model) if crf else None
+
         loss = {
             "intents": tf.keras.losses.SparseCategoricalCrossentropy(),
-            "slots": NonPaddingLoss(class_weights=slot_class_weights),
+            "slots": (
+                CRFLoss(transitions) if transitions is not None
+                else NonPaddingLoss(class_weights=slot_class_weights)
+            ),
         }
     
         metrics = {
-            "intents": tf.keras.metrics.SparseCategoricalAccuracy(
-                name="accuracy"
-            ),
-            "slots": NonPaddingAccuracy(),
+            "intents": self._metrics(num_labels),
+            "slots": self._metrics(num_tags, masked=True),
         }
     
         model.compile(
@@ -168,7 +184,7 @@ class DNNNaturalLanguageUnderstanding(BaseNaturalLanguageUnderstanding):
                     "intent_loss_weight", 1.0
                 ),
                 "slots": self.parameters.get(
-                    "slot_loss_weight", 1.0
+                    "slot_loss_weight", 2.0
                 ),
             },
             # The intent sample_weight passed to fit() is meant to weight the
