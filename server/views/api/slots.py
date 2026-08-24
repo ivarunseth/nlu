@@ -31,6 +31,10 @@ def get_slots(modelId):
     intent_id = request.args.get('intent', type=int)
     if intent_id is not None:
         slots = slots.filter(Slot.intent_id == intent_id)
+    # The entity view lists the slots that map to it, across every intent.
+    entity_id = request.args.get('entity', type=int)
+    if entity_id is not None:
+        slots = slots.filter(Slot.entity_id == entity_id)
     slots = slots.order_by(Slot.name.asc()).all()
     return {'slots': [slot.to_dict() for slot in slots], 'total': len(slots)}, 200
 

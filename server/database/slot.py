@@ -88,6 +88,13 @@ class Slot(db.Model):
             'intent_id': self.intent_id,
             'name': self.name,
             'color': self.color or (self.entity.color if self.entity else None),
+            # Both ends of the mapping travel with the slot, so a view showing
+            # "which slots reference this entity, and under which intent" needs
+            # no client-side join against the intent list.
+            'intent': {
+                'id': self.intent.id,
+                'name': self.intent.name
+            } if self.intent else None,
             'entity': {
                 'id': self.entity.id,
                 'name': self.entity.name,
