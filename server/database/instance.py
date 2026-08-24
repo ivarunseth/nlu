@@ -86,6 +86,10 @@ class Instance(db.Model):
             'lazy': environment == 'development',
             'cache': True,
             'top': 1,
+            # 0 means off: an existing deployment keeps returning everything
+            # the model predicts until the operator opts in to a cutoff.
+            'label_threshold': 0.0,
+            'annotation_threshold': 0.0,
             'timeout': current_app.config['INFERENCE_REQUEST_TIMEOUT'],
             'interval': current_app.config['INFERENCE_POLL_INTERVAL'],
             'batch_size': current_app.config['INFERENCE_BATCH_SIZE'],
@@ -103,7 +107,8 @@ class Instance(db.Model):
     def options(self):
         """The serving options carried into this deployment's route."""
         return {field: self._config[field] for field in (
-            'lazy', 'cache', 'top', 'timeout', 'interval', 'batch_size', 'sleep',
+            'lazy', 'cache', 'top', 'label_threshold', 'annotation_threshold',
+            'timeout', 'interval', 'batch_size', 'sleep',
             'idle_timeout', 'heartbeat_interval', 'heartbeat_ttl', 'output_ttl',
         )}
 
@@ -128,6 +133,11 @@ class Instance(db.Model):
             value = config[field]
             if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
                 abort(400, 'config.%s must be a positive number of seconds' % field)
+            config[field] = float(value)
+        for field in ('label_threshold', 'annotation_threshold'):
+            value = config[field]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0.0 <= value <= 1.0:
+                abort(400, 'config.%s must be a number between 0 and 1' % field)
             config[field] = float(value)
         if config['interval'] > config['timeout']:
             abort(400, 'config.interval cannot exceed config.timeout')

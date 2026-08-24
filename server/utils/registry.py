@@ -31,6 +31,8 @@ class Route:
     lazy: bool = False
     cache: bool = True
     top: int = 1
+    label_threshold: float = 0.0
+    annotation_threshold: float = 0.0
     timeout: Optional[float] = None
     interval: Optional[float] = None
     batch_size: Optional[int] = None
@@ -71,6 +73,8 @@ class Route:
             lazy=decoded.get('lazy', '0') == '1',
             cache=decoded.get('cache', '1') != '0',
             top=number('top', int, default=1),
+            label_threshold=number('label_threshold', float, default=0.0),
+            annotation_threshold=number('annotation_threshold', float, default=0.0),
             timeout=number('timeout', float),
             interval=number('interval', float),
             batch_size=number('batch_size', int),

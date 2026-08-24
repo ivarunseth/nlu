@@ -5,6 +5,7 @@ import {
     Cell,
     Line,
     LineChart,
+    ReferenceLine,
     ResponsiveContainer,
     Tooltip,
     XAxis,
@@ -55,7 +56,11 @@ export const LabelBars = ({ labels, imbalance, colored = false, name = 'utteranc
 );
 
 // Histogram over precomputed bins; rows carry a `range` x label and `n` count.
-export const Hist = ({ bins, color = BLUE, name = 'utterances' }) => (
+// `marker` draws a reference line at an enforced cutoff. The x axis is
+// categorical — one tick per bin — so the line can only sit on a bin, not at an
+// arbitrary score: pass the `range` of the bin the cutoff falls inside, and the
+// line marks that bin rather than claiming a precision the axis cannot show.
+export const Hist = ({ bins, color = BLUE, name = 'utterances', marker = null, markerLabel = 'enforced' }) => (
     <ResponsiveContainer>
         <BarChart data={bins} margin={MARGIN}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -63,6 +68,14 @@ export const Hist = ({ bins, color = BLUE, name = 'utterances' }) => (
             <YAxis allowDecimals={false} tick={TICK} />
             <Tooltip {...TIP} cursor={{ fill: 'var(--bs-secondary-bg)' }} />
             <Bar dataKey="n" name={name} fill={color} isAnimationActive={false} />
+            {marker && (
+                <ReferenceLine
+                    x={marker}
+                    stroke="var(--bs-danger)"
+                    strokeDasharray="4 3"
+                    label={{ value: markerLabel, position: 'top', fontSize: 10, fill: 'var(--bs-danger)' }}
+                />
+            )}
         </BarChart>
     </ResponsiveContainer>
 );

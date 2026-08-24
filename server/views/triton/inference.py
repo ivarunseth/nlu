@@ -1,4 +1,5 @@
 import time
+import math
 
 import json
 
@@ -30,6 +31,26 @@ def infer(model_id):
     data = request.get_json(silent=True) or {}
     top = max(request.args.get('top', route.top, type=int), 1)
 
+    def threshold(name, configured):
+        """
+        A cutoff from the query string, falling back to the deployment's.
+
+        Clamped rather than rejected: an out-of-range query arg should degrade
+        to the nearest sane cutoff, not fail a prediction request. NaN needs
+        its own branch because it is not out of range so much as meaningless —
+        ``float('nan')`` parses, so it never reaches the unparseable fallback;
+        min/max propagate it rather than clamping it; and every comparison
+        against it is False, so it would silently reject the whole response.
+        It falls back the way an unparseable value does.
+        """
+        value = request.args.get(name, configured, type=float)
+        if value is None or math.isnan(value):
+            value = configured
+        return min(max(value, 0.0), 1.0)
+
+    label_threshold = threshold('label_threshold', route.label_threshold)
+    annotation_threshold = threshold('annotation_threshold', route.annotation_threshold)
+
     if 'inputs' not in data:
         abort(400, 'An "inputs" list is required for batch inference')
 
@@ -53,7 +74,13 @@ def infer(model_id):
             continue
         
         if route.cache:
-            hash = sha256(f'{top}:{query}'.encode('utf-8')).hexdigest()
+            # The thresholds belong in the key: they change the response, so a
+            # result cached under one cutoff must never be served under
+            # another. A config change therefore lands on fresh keys and the
+            # stale entries simply expire on output_ttl — no purge needed.
+            hash = sha256(
+                f'{top}:{label_threshold}:{annotation_threshold}:{query}'.encode('utf-8')
+            ).hexdigest()
             key = registry._output(model_id, hash)
         else:
             key = registry._output(model_id, uuid4().hex)
@@ -81,7 +108,13 @@ def infer(model_id):
             )
 
         items = [
-            json.dumps({'id': key, 'data': value, "top": top}).encode('utf-8')
+            json.dumps({
+                'id': key,
+                'data': value,
+                'top': top,
+                'label_threshold': label_threshold,
+                'annotation_threshold': annotation_threshold,
+            }).encode('utf-8')
             for key, value in zip(list(pending), list(pending.values()))
         ]
         

@@ -16,6 +16,7 @@ import {
 import { useParams } from "react-router-dom";
 import axios from "axios";
 import { UserContext } from "../../../../../contexts/UserContext";
+import { formatThreshold } from "../../../../../shared/utils/training";
 import { CardHeading, EmptyMessage, EmptyState, SectionLabel } from "../../../../../shared/components/SectionCard";
 import { entityColor, readableTextColor } from "../../../../../shared/components/entityColors";
 import ChartCard from "./ChartCard";
@@ -176,10 +177,40 @@ const Traffic = ({ dataset, instances, ner, nlu }) => {
     const [hours, setHours] = useState(24);
     const [data, setData] = useState(null);
     const [auto, setAuto] = useState(true);
+    // The slider starts where the deployment actually cuts off, so the
+    // low-confidence readout reads against the live gate rather than an
+    // arbitrary hypothetical. Falls back to 0.5 when nothing is enforced,
+    // which is where it always used to start.
     const [thresh, setThresh] = useState(0.5);
+    const [threshPinned, setThreshPinned] = useState(false);
     const [tick, setTick] = useState(0);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+
+    const deployed = instances.find((instance) => instance.environment === env);
+    // Annotation scores gate named entity recognition; label confidence gates
+    // every other head, including the intent side of language understanding.
+    const deployedThreshold = ner
+        ? deployed?.config?.annotation_threshold
+        : deployed?.config?.label_threshold;
+
+    // Only the label head's scores survive their own gate: gate_labels clears
+    // the name but keeps the score, so a rejected label is still counted here.
+    // Annotations below the cutoff are dropped inside predict() and never
+    // reach telemetry, so this histogram holds only survivors — seeding the
+    // slider from that cutoff would report "0 below it" and read as "the gate
+    // is dropping nothing", the exact opposite of the truth.
+    const seedable = !ner && deployedThreshold ? deployedThreshold : null;
+
+    useEffect(() => {
+        // 0.0 means "off", same as no deployment at all — either way there is
+        // nothing to seed with, so the slider keeps its manual default.
+        if (!threshPinned && seedable) setThresh(seedable);
+    }, [threshPinned, seedable]);
+
+    // A drag wins from then on, but switching environment is a new question
+    // about a different deployment, so the seed applies again.
+    useEffect(() => setThreshPinned(false), [env]);
 
     useEffect(() => {
         if (!user || !modelId) return;
@@ -224,8 +255,16 @@ const Traffic = ({ dataset, instances, ner, nlu }) => {
         range: `${bin.lo.toFixed(1)}–${bin.hi.toFixed(1)}`
     }));
     const scored = bins.reduce((sum, bin) => sum + bin.n, 0);
+    // The bin the enforced cutoff falls inside, so the chart can mark it. Bins
+    // are 0.1 wide and a fitted cutoff carries six decimals, so this locates
+    // the gate rather than pinpointing it — the readout below carries the
+    // exact value.
+    const enforcedBin = deployedThreshold
+        ? bins.find((bin) => bin.lo <= deployedThreshold && deployedThreshold < bin.hi)?.range
+            ?? bins[bins.length - 1]?.range
+        : null;
     const below = bins.filter((bin) => bin.hi <= thresh).reduce((sum, bin) => sum + bin.n, 0);
-    const scoredUnit = ner ? "spans" : "predictions";
+    const scoredUnit = ner ? "annotations" : "predictions";
 
     // Live mix share vs its dataset counterpart: predicted labels against
     // utterances per label, predicted entities against annotated spans. For
@@ -372,26 +411,40 @@ const Traffic = ({ dataset, instances, ner, nlu }) => {
                             <Col lg={4}>
                                 <ChartCard
                                     icon={<Percent />}
-                                    title={ner ? "Span confidence" : nlu ? "Intent confidence" : "Confidence"}
+                                    title={ner ? "Annotation confidence" : nlu ? "Intent confidence" : "Confidence"}
                                     name="confidence"
                                     height={200}
                                     csv={() => [["from", "to", scoredUnit], ...bins.map((bin) => [bin.lo, bin.hi, bin.n])]}
                                     foot={
                                         <span className="d-flex align-items-center gap-2">
                                             <Form.Range
-                                                min={0} max={1} step={0.1} value={thresh}
-                                                onChange={(e) => setThresh(parseFloat(e.target.value))}
+                                                min={0} max={1} step={0.01} value={thresh}
+                                                onChange={(e) => {
+                                                    setThreshPinned(true);
+                                                    setThresh(parseFloat(e.target.value));
+                                                }}
                                                 style={{ width: "100px" }}
                                                 aria-label="Low-confidence threshold"
                                             />
                                             <span>
-                                                {below} of {scored} {scoredUnit} ({rate(below, scored)}) below {thresh.toFixed(1)}
+                                                {below} of {scored} {scoredUnit} ({rate(below, scored)}) below {thresh.toFixed(2)}
+                                                {!deployedThreshold
+                                                    ? " — no threshold enforced"
+                                                    : ner
+                                                        ? ` — enforcing ${formatThreshold(deployedThreshold)}, so annotations under it were already dropped and are not counted here`
+                                                        : ` — enforcing ${formatThreshold(deployedThreshold)}`}
                                             </span>
                                         </span>
                                     }
                                 >
                                     {scored ? (
-                                        <Hist bins={bins} color={TEAL} name={scoredUnit} />
+                                        <Hist
+                                            bins={bins}
+                                            color={TEAL}
+                                            name={scoredUnit}
+                                            marker={enforcedBin}
+                                            markerLabel={`enforcing ${formatThreshold(deployedThreshold)}`}
+                                        />
                                     ) : (
                                         <EmptyMessage icon={<Percent />}>No scored {scoredUnit}.</EmptyMessage>
                                     )}

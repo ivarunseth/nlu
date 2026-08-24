@@ -29,10 +29,11 @@ import {
 } from "react-bootstrap-icons";
 import { useParams, Link } from "react-router-dom";
 import { UserContext } from "../../../../contexts/UserContext";
+import { ModelContext } from "../../../../contexts/ModelContext";
 import { useSocket } from "../../../../contexts/SocketContext";
 import { useTheme } from "../../../../contexts/ThemeContext";
 import { CardHeading } from "../../../../shared/components/SectionCard";
-import { getTrainingAccuracy, parseApiDate } from "../../../../shared/utils/training";
+import { formatThreshold, getThresholds, getTrainingAccuracy, parseApiDate } from "../../../../shared/utils/training";
 import axios from "axios";
 
 // Deployment pipeline, ordered. Models are validated in testing before production.
@@ -137,7 +138,13 @@ const EnvironmentCard = ({
     // index-aligned {"outputs": [...]} list, one element per input. A single
     // prediction is just a one-element list.
     const curlSnippet = instance ? [
-        `curl -X POST '${inferUrl}?top=${instance.config?.top ?? 1}'`,
+        `curl -X POST '${inferUrl}?top=${instance.config?.top ?? 1}${
+            instance.config?.label_threshold
+                ? `&label_threshold=${instance.config.label_threshold}` : ""
+        }${
+            instance.config?.annotation_threshold
+                ? `&annotation_threshold=${instance.config.annotation_threshold}` : ""
+        }'`,
         `  -H 'Authorization: Bearer ${instance.api_key}'`,
         `  -H 'Content-Type: application/json'`,
         `  -d '{"inputs": ["Hello there", "General Kenobi"]}'`
@@ -333,6 +340,10 @@ const DEFAULT_CONFIG = {
     lazy: false,
     cache: true,
     top: 1,
+    // 0 means off: mirrors the server default so an unconfigured deployment
+    // keeps returning everything the model predicts.
+    label_threshold: 0.0,
+    annotation_threshold: 0.0,
     timeout: 30,
     interval: 0.01,
     batch_size: 32,
@@ -350,6 +361,8 @@ const toConfigForm = (config) => {
         lazy: Boolean(merged.lazy),
         cache: merged.cache !== false,
         top: String(merged.top),
+        label_threshold: String(merged.label_threshold),
+        annotation_threshold: String(merged.annotation_threshold),
         timeout: String(merged.timeout),
         interval: String(merged.interval),
         batch_size: String(merged.batch_size),
@@ -375,6 +388,13 @@ const CONFIG_NUMERIC_FIELDS = [
     ["heartbeat_interval", "Heartbeat interval", false]
 ];
 
+// Thresholds validate differently from every other numeric field: they are
+// bounded to 0-1 and 0 is a legal value, meaning "no cutoff".
+const CONFIG_THRESHOLD_FIELDS = [
+    ["label_threshold", "Label threshold"],
+    ["annotation_threshold", "Annotation threshold"]
+];
+
 // Tab that owns each numeric field, used to jump to the first invalid
 // input when the form is submitted from another tab.
 const CONFIG_FIELD_TABS = {
@@ -386,11 +406,19 @@ const CONFIG_FIELD_TABS = {
     top: "server",
     output_ttl: "server",
     timeout: "server",
-    interval: "server"
+    interval: "server",
+    label_threshold: "server",
+    annotation_threshold: "server"
 };
 
 // Per-field check used for the inline feedback; returns a message or null.
 const validateConfigField = (field, form) => {
+    if (CONFIG_THRESHOLD_FIELDS.some(([name]) => name === field)) {
+        const value = Number(form[field]);
+        return form[field] === "" || !Number.isFinite(value) || value < 0 || value > 1
+            ? "Must be a number between 0 and 1."
+            : null;
+    }
     const rule = CONFIG_NUMERIC_FIELDS.find(([name]) => name === field);
     if (!rule) return null;
     const [, , integer] = rule;
@@ -409,8 +437,10 @@ const validateConfigField = (field, form) => {
 
 // Numeric fields currently editable given the lazy/cache switches; disabled
 // fields keep their last values and are skipped by the inline validation.
-const getEditableConfigFields = (form) => CONFIG_NUMERIC_FIELDS
-    .map(([field]) => field)
+const getEditableConfigFields = (form) => [
+    ...CONFIG_NUMERIC_FIELDS.map(([field]) => field),
+    ...CONFIG_THRESHOLD_FIELDS.map(([field]) => field)
+]
     .filter((field) => (
         field === "idle_timeout" ? form.lazy
             : field === "output_ttl" ? form.cache
@@ -425,6 +455,13 @@ const parseConfigForm = (form) => {
         const value = Number(form[field]);
         if (integer ? !Number.isInteger(value) || value < 1 : !Number.isFinite(value) || value <= 0) {
             return { error: `${label} must be ${integer ? "a whole number of at least 1" : "a positive number of seconds"}.` };
+        }
+        numbers[field] = value;
+    }
+    for (const [field, label] of CONFIG_THRESHOLD_FIELDS) {
+        const value = Number(form[field]);
+        if (!Number.isFinite(value) || value < 0 || value > 1) {
+            return { error: `${label} must be a number between 0 and 1.` };
         }
         numbers[field] = value;
     }
@@ -449,7 +486,23 @@ const ConfigField = ({ id, label, help, step, value, onChange, disabled, error }
 
 // The deployment configuration form, shared by the configure modal and the
 // deploy / promote confirmations. `onChange(field, value)` updates one field.
-const ConfigFormFields = ({ form, onChange, errors = {}, activeTab, onTabChange }) => (
+// `training` is the version being deployed (or, when editing an already-
+// deployed instance, the version currently serving) — it backs the threshold
+// recommendations below.
+const ConfigFormFields = ({ form, onChange, errors = {}, activeTab, onTabChange, training, kind }) => {
+    // Offered, never applied: enforcing a cutoff should be a deliberate act,
+    // and this number is per-version, so it would otherwise shift underneath
+    // the operator on every republish.
+    // A cutoff is only meaningful for a head the model actually has: a
+    // classifier discards annotation_threshold and a named entity recognition
+    // model discards label_threshold. Both stay in the submitted config at
+    // their 0.0 default — this hides the control, not the field.
+    const hasLabelHead = kind !== "named_entity_recognition";
+    const hasAnnotationHead = kind !== "text_classification";
+    const labelRecommendation = getThresholds(training, "test", "intent")?.threshold ?? null;
+    const annotationRecommendation = getThresholds(training, "test", "slots")?.threshold ?? null;
+
+    return (
     <Tabs variant="pills" activeKey={activeTab} onSelect={onTabChange} className="small mb-3" justify>
         <Tab eventKey="model" title="Model">
             <Form.Check
@@ -588,10 +641,57 @@ const ConfigFormFields = ({ form, onChange, errors = {}, activeTab, onTabChange 
                         error={errors.interval}
                     />
                 </Col>
+                {hasLabelHead && <Col sm={6}>
+                    <ConfigField
+                        id="config-label-threshold"
+                        label="Label threshold"
+                        help={
+                            <>
+                                Below this score the top label is returned with no name. 0 turns it off.
+                                {labelRecommendation !== null && (
+                                    <> Recommended <Button
+                                        variant="link"
+                                        size="sm"
+                                        className="p-0 align-baseline"
+                                        onClick={() => onChange("label_threshold", String(labelRecommendation))}
+                                    >{formatThreshold(labelRecommendation)}</Button> from this version.</>
+                                )}
+                            </>
+                        }
+                        step="any"
+                        value={form.label_threshold}
+                        onChange={(event) => onChange("label_threshold", event.target.value)}
+                        error={errors.label_threshold}
+                    />
+                </Col>}
+                {hasAnnotationHead && <Col sm={6}>
+                    <ConfigField
+                        id="config-annotation-threshold"
+                        label="Annotation threshold"
+                        help={
+                            <>
+                                Annotations scoring below this are dropped. 0 turns it off.
+                                {annotationRecommendation !== null && (
+                                    <> Recommended <Button
+                                        variant="link"
+                                        size="sm"
+                                        className="p-0 align-baseline"
+                                        onClick={() => onChange("annotation_threshold", String(annotationRecommendation))}
+                                    >{formatThreshold(annotationRecommendation)}</Button> from this version.</>
+                                )}
+                            </>
+                        }
+                        step="any"
+                        value={form.annotation_threshold}
+                        onChange={(event) => onChange("annotation_threshold", event.target.value)}
+                        error={errors.annotation_threshold}
+                    />
+                </Col>}
             </Row>
         </Tab>
     </Tabs>
-);
+    );
+};
 
 // Read-only recap of the chosen deployment configuration, shown in the
 // deploy/promote confirmation step.
@@ -606,7 +706,9 @@ const CONFIG_SUMMARY_LABELS = [
     ["top", "Top predictions"],
     ["output_ttl", "Output TTL (s)"],
     ["timeout", "Timeout (s)"],
-    ["interval", "Interval (s)"]
+    ["interval", "Interval (s)"],
+    ["label_threshold", "Label threshold"],
+    ["annotation_threshold", "Annotation threshold"]
 ];
 
 const ConfigSummary = ({ config }) => (
@@ -631,6 +733,9 @@ const ConfigSummary = ({ config }) => (
 const Publish = () => {
     const { modelId } = useParams();
     const { user } = useContext(UserContext);
+    // Only to decide which threshold controls are meaningful for this model
+    // type; the config payload carries both fields either way.
+    const { model } = useContext(ModelContext);
     const socket = useSocket();
 
     const [trainings, setTrainings] = useState([]);
@@ -983,6 +1088,13 @@ const Publish = () => {
         && confirmAction.training.version < confirmProductionVersion;
     const confirmIsProductionDeploy = confirmAction?.type === "deploy" && confirmAction.environment === "production";
 
+    // The version whose curve backs the threshold recommendations shown in
+    // the config form: the version being deployed/promoted (configTarget.training),
+    // or — when editing an already-deployed instance's configuration — the
+    // version currently serving there (looked up from configTarget.instance).
+    const configTraining = configTarget?.training
+        ?? (configTarget?.instance ? trainingById[String(configTarget.instance.training_id)] : null);
+
     return (
         <div className="pb-5">
             <Row className="mt-4">
@@ -1160,14 +1272,16 @@ const Publish = () => {
                                         errors={configErrors}
                                         activeTab={configTab}
                                         onTabChange={setConfigTab}
+                                        training={configTraining}
+                                        kind={model?.kind}
                                     />
                                     <div className="d-flex justify-content-end gap-2">
                                         <Button variant="light" size="sm" className="border small" disabled={configSaving} onClick={closeDialogs}>
-                                            CANCEL
+                                            Cancel
                                         </Button>
                                         <Button variant="primary" size="sm" className="small d-inline-flex align-items-center gap-2" type="submit" disabled={configSaving}>
                                             {configSaving && <Spinner animation="border" size="sm" />}
-                                            {configTarget.instance ? "SAVE" : "CONTINUE"}
+                                            {configTarget.instance ? "Save" : "Continue"}
                                         </Button>
                                     </div>
                                 </Form>
@@ -1245,9 +1359,9 @@ const Publish = () => {
                     )}
                     <div className="d-flex justify-content-end gap-2">
                         {confirmAction?.type === "deploy" && configForm ? (
-                            <Button variant="light" size="sm" className="border small" onClick={backToConfig}>BACK</Button>
+                            <Button variant="light" size="sm" className="border small" onClick={backToConfig}>Back</Button>
                         ) : (
-                            <Button variant="light" size="sm" className="border small" onClick={closeDialogs}>CANCEL</Button>
+                            <Button variant="light" size="sm" className="border small" onClick={closeDialogs}>Cancel</Button>
                         )}
                         <Button
                             variant={confirmAction?.type === "stop"
@@ -1261,16 +1375,16 @@ const Publish = () => {
                             onClick={submitConfirm}
                         >
                             {confirmAction?.type === "stop"
-                                ? "STOP"
+                                ? "Stop"
                                 : confirmAction?.type === "reset-key"
-                                    ? "RESET KEY"
+                                    ? "Reset key"
                                     : confirmAction?.type === "restart"
-                                        ? "REDEPLOY"
+                                        ? "Redeploy"
                                         : confirmIsRollback
-                                            ? "ROLL BACK"
+                                            ? "Roll back"
                                             : confirmIsProductionDeploy
-                                                ? "PROMOTE"
-                                                : "DEPLOY"}
+                                                ? "Promote"
+                                                : "Deploy"}
                         </Button>
                     </div>
                         </>
