@@ -55,8 +55,13 @@ CSV_TEXT_COLUMNS = ('text', 'utterances', 'utterance')
 
 ALLOWED_COLORS = os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, 'public', 'colors.txt')
 
+# Stripped on the way in: these are handed straight to the client as an entity's
+# colour, and a trailing newline survives into CSS (which tolerates it) while
+# breaking any consumer that parses the hex — the contrast check that picks
+# readable text on top of it reads '#ea580c\n' as malformed and defaults to
+# white, which is unreadable on the palette's light colours.
 with open(ALLOWED_COLORS, encoding='utf-8') as f:
-    COLORS = [color for color in f.readlines()]
+    COLORS = [color.strip() for color in f if color.strip()]
 
 
 def next_label_color(used_colors):
@@ -65,7 +70,10 @@ def next_label_color(used_colors):
     entity gets a colour distinct from every existing one. Cycles the palette
     once every colour is in use.
     """
-    used = {(color or '').lower() for color in used_colors}
+    # Stripped on both sides: colours stored before the palette was cleaned up
+    # still carry a trailing newline, and would otherwise never match a palette
+    # entry — handing every new entity a colour that is already taken.
+    used = {(color or '').strip().lower() for color in used_colors}
     for color in COLORS:
         if color.lower() not in used:
             return color

@@ -50,12 +50,34 @@ export const nextEntityColor = (usedColors = []) => {
     return free || COLORS[used.size % COLORS.length];
 };
 
-// Black or white text, whichever reads better on a solid `hex` background, so
-// entity chips stay legible in both light and dark themes regardless of the
-// entity's colour (a bright yellow gets black text, a deep blue gets white).
+// WCAG relative luminance: sRGB channels are gamma-decoded before they are
+// weighted. Skipping that decode (as the simpler YIQ brightness formula does)
+// understates how light saturated mid-tones actually read, which is what put
+// white text on colours like #ca8a04 that cannot carry it.
+const relativeLuminance = (r, g, b) => {
+    const [red, green, blue] = [r, g, b]
+        .map((channel) => channel / 255)
+        .map((channel) => (
+            channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+        ));
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+};
+
+// Black or white text, whichever genuinely contrasts better against a solid
+// `hex` background, so tagged text stays legible on every palette colour. The
+// choice is measured rather than thresholded — for a binary choice the higher
+// contrast ratio is by definition the best available one, and across the
+// current palette it clears WCAG AA (4.5:1) on all 64 colours.
+//
+// It is also theme-independent, and deliberately so: the background here is the
+// entity's own colour, which does not change between light and dark, so the
+// text on it must not either.
 export const readableTextColor = (hex) => {
     if (!hex) return "#fff";
-    const raw = hex.replace("#", "");
+    // Trimmed because a stored colour may carry surrounding whitespace: CSS
+    // tolerates it, so the background still paints, and an untrimmed value
+    // would silently fail the length check below and fall through to white.
+    const raw = String(hex).trim().replace("#", "");
     const full =
         raw.length === 3 ? raw.split("").map((c) => c + c).join("") : raw;
     if (full.length !== 6) return "#fff";
@@ -63,8 +85,11 @@ export const readableTextColor = (hex) => {
     const r = parseInt(full.slice(0, 2), 16);
     const g = parseInt(full.slice(2, 4), 16);
     const b = parseInt(full.slice(4, 6), 16);
+    if ([r, g, b].some(Number.isNaN)) return "#fff";
 
-    // Perceptual luminance (sRGB weights); bright colours cross the threshold.
-    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    return luminance > 0.6 ? "#000" : "#fff";
+    // Contrast ratio per WCAG: (lighter + 0.05) / (darker + 0.05).
+    const luminance = relativeLuminance(r, g, b);
+    const withWhite = 1.05 / (luminance + 0.05);
+    const withBlack = (luminance + 0.05) / 0.05;
+    return withBlack > withWhite ? "#000" : "#fff";
 };
