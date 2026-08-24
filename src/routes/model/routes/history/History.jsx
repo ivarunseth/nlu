@@ -1,10 +1,9 @@
 import { useContext, useEffect, useState, useRef, useMemo } from "react";
-import { Alert, Button, ButtonGroup, ButtonToolbar, Col, Row, Form, Spinner, Table, Pagination, Modal, Tabs, Tab, Badge, Card, InputGroup } from "react-bootstrap";
+import { Alert, Button, ButtonGroup, ButtonToolbar, Col, Row, Dropdown, Form, Spinner, Table, Pagination, Modal, Tabs, Tab, Badge, Card, InputGroup } from "react-bootstrap";
 import {
     BarChart,
     Bug,
     Clipboard,
-    Download,
     PlusSlashMinus,
     Stack,
     Grid3x3Gap,
@@ -24,6 +23,7 @@ import {
     PlusLg,
     BarChartFill,
     Sliders2,
+    GraphUp,
     Grid3x3GapFill,
     BugFill,
     ListColumnsReverse,
@@ -32,6 +32,8 @@ import {
     ArrowCounterclockwise,
     FiletypeCsv,
     FiletypePng,
+    FiletypeJson,
+    FiletypeTxt,
     Collection,
     Stopwatch,
     Option
@@ -55,16 +57,46 @@ import {
 import { UserContext } from "../../../../contexts/UserContext";
 import { ModelContext } from "../../../../contexts/ModelContext";
 import { useSocket } from "../../../../contexts/SocketContext";
-import { CardHeading, EmptyMessage } from "../../../../shared/components/SectionCard";
+import { CardHeading, EmptyMessage, SectionLabel } from "../../../../shared/components/SectionCard";
 import downloadBlob from "../../../../shared/utils/downloadBlob";
 import chartPng from "../../../../shared/utils/chartPng";
-import { getReport, getTrainingAccuracy, getTrainingTrainAccuracy, getLatestHistoryMetric, getTrainingRuntime, formatDuration, getConfusionMatrix, reportRows } from "../../../../shared/utils/training";
+import {
+    getReport,
+    getTrainingAccuracy,
+    getTrainingTrainAccuracy,
+    getLiveAccuracy,
+    getTrainingEpochs,
+    getTrainingRuntime,
+    getTrainingElapsed,
+    formatDuration,
+    getConfusionMatrix,
+    hasSlotMetrics,
+    reportRows,
+    getAnnotationMetrics,
+    annotationRows
+} from "../../../../shared/utils/training";
+import {
+    reportCsv,
+    annotationCsv,
+    confusionMatrixCsv,
+    rawCsvBlob,
+    textBlob,
+    jsonBlob,
+    trainingFilename
+} from "../../../../shared/utils/trainingDownloads";
+import { METRIC_OPTIONS, METRIC_LABELS, METRIC_HELP, NLU_HEADS, normalizeMetricNames, monitorOptions, optionsFor } from "../../../../shared/utils/trainingMetrics";
 import { Link, useParams } from "react-router-dom";
 import useDebounce from "../../../../shared/hooks/useDebounce";
 import useTableControls from "../../../../shared/hooks/useTableControls";
 import SortHeader from "../../../../shared/components/SortHeader";
 import { TableFilters, FilterChips } from "../../../../shared/components/TableFilters";
 import axios from "axios";
+// Vite's explicit worker import. The `new Worker(new URL(...), ...)` form relies
+// on static analysis of that exact expression and silently yields a worker that
+// never loads when it does not match; this compiles to a constructor both in dev
+// and in the build.
+import DiffWorker from "./diff.worker.js?worker";
+import ThresholdsPanel from "./ThresholdsPanel";
 
 const SubstringDiffLine = ({ text, otherText, type }) => {
     if (!text) return <span>&nbsp;</span>;
@@ -91,65 +123,52 @@ const SubstringDiffLine = ({ text, otherText, type }) => {
 };
 
 const SimpleDiffViewer = ({ oldValue, newValue, oldVersion, newVersion }) => {
-    const diffLines = useMemo(() => {
-        const oldLines = oldValue.split('\n').filter(l => l.trim());
-        const newLines = newValue.split('\n').filter(l => l.trim());
+    // The comparison runs in a worker and this component just waits for the
+    // rows; null means one is in flight. The effect re-posts (and discards the
+    // stale worker) whenever the inputs change.
+    const [diffLines, setDiffLines] = useState(null);
+    const [page, setPage] = useState(1);
 
-        const n = oldLines.length;
-        const m = newLines.length;
-        const dp = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0));
+    useEffect(() => {
+        let cancelled = false;
+        setDiffLines(null);
+        setPage(1);
 
-        for (let i = 1; i <= n; i++) {
-            for (let j = 1; j <= m; j++) {
-                if (oldLines[i - 1] === newLines[j - 1]) {
-                    dp[i][j] = dp[i - 1][j - 1] + 1;
-                } else {
-                    dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-                }
-            }
+        // Every path that gives up on the worker lands here rather than leaving
+        // the tab spinning: a briefly janky diff beats one that never arrives.
+        const compute = () => import('./diffLines').then(({ computeDiffLines }) => {
+            if (!cancelled) setDiffLines(computeDiffLines(oldValue, newValue));
+        });
+
+        let worker;
+        try {
+            worker = new DiffWorker();
+        } catch {
+            compute();
+            return () => { cancelled = true; };
         }
 
-        const result = [];
-        let i = n, j = m;
-        while (i > 0 || j > 0) {
-            if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
-                i--; j--;
-            } else if (i > 0 && j > 0 && dp[i][j - 1] === dp[i - 1][j]) {
-                const u1 = oldLines[i - 1].split('\t')[0] || '';
-                const u2 = newLines[j - 1].split('\t')[0] || '';
+        worker.onmessage = ({ data }) => {
+            if (!cancelled) setDiffLines(data);
+        };
+        // A worker that fails to load or throws answers with an error event and
+        // then never posts a message, so this has to be handled — unhandled, it
+        // is exactly a spinner that never resolves.
+        worker.onerror = (event) => {
+            event.preventDefault?.();
+            worker.terminate();
+            compute();
+        };
+        worker.postMessage({ oldValue, newValue });
 
-                let common = 0;
-                while (common < u1.length && common < u2.length && u1[common] === u2[common]) common++;
-                let suffix = 0;
-                while (suffix < u1.length - common && suffix < u2.length - common &&
-                    u1[u1.length - 1 - suffix] === u2[u2.length - 1 - suffix]) suffix++;
-
-                const similarity = Math.max(u1.length, u2.length) > 0
-                    ? (common + suffix) / Math.max(u1.length, u2.length)
-                    : 0;
-
-                if (similarity > 0.5) {
-                    result.unshift({ type: 'change', old: oldLines[i - 1], new: newLines[j - 1] });
-                    i--; j--;
-                } else {
-                    result.unshift({ type: 'add', old: '', new: newLines[j - 1] });
-                    j--;
-                }
-            } else if (j > 0 && (i === 0 || dp[i][j - 1] > dp[i - 1][j])) {
-                result.unshift({ type: 'add', old: '', new: newLines[j - 1] });
-                j--;
-            } else {
-                result.unshift({ type: 'remove', old: oldLines[i - 1], new: '' });
-                i--;
-            }
-        }
-        return result;
+        // Terminate rather than await on input change/unmount: a superseded
+        // computation's result is useless and its CPU is better reclaimed.
+        return () => { cancelled = true; worker.terminate(); };
     }, [oldValue, newValue]);
 
-    const [page, setPage] = useState(1);
     const perPage = 50;
-    const totalPages = Math.ceil(diffLines.length / perPage);
-    const displayedLines = diffLines.slice(0, page * perPage);
+    const totalPages = Math.ceil((diffLines?.length || 0) / perPage);
+    const displayedLines = (diffLines || []).slice(0, page * perPage);
 
     const handleScroll = (e) => {
         const { scrollTop, scrollHeight, clientHeight } = e.target;
@@ -157,6 +176,18 @@ const SimpleDiffViewer = ({ oldValue, newValue, oldVersion, newVersion }) => {
             setPage(prev => prev + 1);
         }
     };
+
+    if (diffLines === null) {
+        return (
+            <div
+                className="d-flex flex-column justify-content-center align-items-center text-muted"
+                style={{ height: 'calc(100vh - 400px)', minHeight: '400px' }}
+            >
+                <Spinner animation="border" variant="secondary" />
+                <div className="small fw-bold mt-3">comparing versions...</div>
+            </div>
+        );
+    }
 
     if (diffLines.length === 0) {
         return (
@@ -239,17 +270,6 @@ const ARCHITECTURE_LABELS = {
 
 const ACTIVATION_OPTIONS = [['relu', 'ReLU'], ['tanh', 'Tanh'], ['gelu', 'GELU'], ['elu', 'ELU']];
 
-const MONITOR_OPTIONS = [
-    ['accuracy', 'accuracy'],
-    ['loss', 'loss'],
-    ['val_accuracy', 'validation accuracy'],
-    ['val_loss', 'validation loss']
-];
-
-// NLU compiles per-head metrics (intents_accuracy / slots_accuracy), so plain
-// accuracy is not a valid early-stopping monitor there.
-const NLU_MONITOR_OPTIONS = [['loss', 'loss'], ['val_loss', 'validation loss']];
-
 const SAVE_FORMAT_OPTIONS = [
     ['tf', 'TensorFlow checkpoint (tf)'],
     ['saved_model', 'TensorFlow SavedModel (saved_model)'],
@@ -262,6 +282,14 @@ const SAVE_FORMAT_OPTIONS = [
 const MAX_HIDDEN_LAYERS = 6;
 const HIDDEN_LAYER_UNITS = { min: 16, max: 1024, step: 16 };
 
+const LAYER_TYPE_OPTIONS = [['dense', 'Dense'], ['lstm', 'LSTM'], ['gru', 'GRU']];
+const DEFAULT_LAYER_TYPE = 'dense';
+// Recurrent hidden layers need a 3-D (batch, time, features) input, so they are
+// only offered where the hidden stack runs before pooling — `_hidden_layer` in
+// server/models/base.py rejects them on pooled features.
+const POOLED_LAYER_TYPES = [DEFAULT_LAYER_TYPE];
+const SEQUENCE_LAYER_TYPES = LAYER_TYPE_OPTIONS.map(([value]) => value);
+
 // Every form field is declared here and rendered generically:
 // { control: 'slider' | 'select' | 'switch' | 'layers', tab, default,
 //   min/max/step (sliders), scale: 'log' (sliders), options (selects),
@@ -272,12 +300,22 @@ const COMMON_PARAMETERS = {
     epochs: { control: 'slider', tab: 'schedule', default: 100, min: 1, max: 1000, step: 1, label: 'Epochs', help: 'Maximum number of passes over the training data.' },
     batch_size: { control: 'slider', tab: 'schedule', default: 32, min: 4, max: 128, step: 4, label: 'Batch size', help: 'Number of examples processed per optimisation step.' },
     learning_rate: { control: 'slider', tab: 'schedule', scale: 'log', default: 0.001, min: 0.000001, max: 0.01, label: 'Learning rate', help: 'Step size the optimiser uses to update the weights.' },
-    weight_decay_rate: { control: 'slider', tab: 'schedule', default: 0, min: 0, max: 0.1, step: 0.001, label: 'Weight decay', help: 'L2 penalty applied by the optimiser to keep weights small. Zero disables it.' },
+    weight_decay_rate: { control: 'slider', tab: 'schedule', scale: 'log', default: 0.00001, min: 0.000001, max: 0.1, label: 'Weight decay', help: 'L2 penalty applied by the optimiser to keep weights small.' },
     num_warmup_steps: { control: 'slider', tab: 'schedule', default: 0, min: 0, max: 5000, step: 10, label: 'Warmup steps', help: 'Steps over which the learning rate ramps up from zero before decaying.' },
+    // Declared before `monitor` so that carrying parameters over from a
+    // previous run resolves the selection before the monitor that depends on
+    // it, even though the two render on different tabs.
+    metrics: { control: 'checks', tab: 'metrics', default: ['accuracy'], options: METRIC_OPTIONS, label: 'Tracked metrics', help: 'Metrics computed after every epoch and plotted in the history chart. Each also gets a validation twin, and any of them can be watched by early stopping.' },
     early_stopping: { control: 'switch', tab: 'callbacks', default: true, label: 'Early stopping', help: 'Stop training early once the monitored metric stops improving, keeping the best weights.' },
-    monitor: { control: 'select', tab: 'callbacks', default: 'val_loss', options: MONITOR_OPTIONS, label: 'Monitor', help: 'Metric watched by early stopping.', showIf: (params) => params.early_stopping },
+    monitor: { control: 'select', tab: 'callbacks', default: 'val_loss', options: (params) => monitorOptions(params), label: 'Monitor', help: 'Metric watched by early stopping. Limited to the metrics this run tracks.', showIf: (params) => params.early_stopping },
     patience: { control: 'slider', tab: 'callbacks', default: 10, min: 1, max: 50, step: 1, label: 'Patience', help: 'Epochs without improvement before training is stopped.', showIf: (params) => params.early_stopping },
     save_format: { control: 'select', tab: 'export', default: 'tf', options: SAVE_FORMAT_OPTIONS, label: 'Save format', help: 'Format the trained model is exported in for download and serving.' }
+};
+
+// Offered only on the token-tagging architectures (NER tags, NLU slots), whose
+// heads emit one label per token and so can be decoded as a sequence.
+const CRF_PARAMETER = {
+    crf: { control: 'switch', tab: 'model', default: false, label: 'CRF decoder', help: 'Score whole tag sequences instead of each token independently, learning which tags may follow which. Usually raises precision on datasets with plenty of annotated spans, at roughly double the training cost. Off, each token is tagged on its own and tags that cannot continue a span are dropped to O.' }
 };
 
 const PRUNING_PARAMETERS = {
@@ -289,27 +327,35 @@ const PRUNING_PARAMETERS = {
     pruning_frequency: { control: 'slider', tab: 'callbacks', default: 100, min: 1, max: 1000, step: 1, label: 'Pruning frequency', help: 'Number of steps between sparsity updates.', showIf: (params) => params.pruning }
 };
 
-const hiddenLayersField = (defaultLayers) => ({
+// `sequences` says whether this architecture applies the hidden stack to the
+// token sequence rather than to pooled features — it decides which layer types
+// the backend will accept, so it must match the architecture's `build()`.
+const hiddenLayersField = (defaultLayers, { sequences = false } = {}) => ({
     control: 'layers',
     tab: 'model',
-    default: defaultLayers,
+    // Defaults carry an explicit type so every entry the form emits is
+    // self-describing, even the ones the user never touched.
+    default: defaultLayers.map((layer) => ({ type: DEFAULT_LAYER_TYPE, ...layer })),
+    types: sequences ? SEQUENCE_LAYER_TYPES : POOLED_LAYER_TYPES,
     label: 'Hidden layers',
-    help: 'Extra dense layers applied just before the output head — configure units and activation per layer.'
+    help: sequences
+        ? 'Extra layers applied just before the output head — configure type, units and activation per layer. This stack runs on the token sequence, so recurrent layers are available alongside dense.'
+        : 'Extra dense layers applied just before the output head — configure units and activation per layer.'
 });
 
 const ARCHITECTURE_PARAMETERS = {
     deep_neural_network: {
         max_tokens: { control: 'slider', tab: 'model', default: 10000, min: 1000, max: 50000, step: 1000, label: 'Max tokens', help: 'Maximum vocabulary size of the tokenizer. Less frequent tokens are dropped.' },
         sequence_length: { control: 'slider', tab: 'model', default: 100, min: 16, max: 512, step: 4, label: 'Sequence length', help: 'Maximum number of tokens per example. Longer inputs are truncated, shorter ones padded.' },
-        embedding_dims: { control: 'slider', tab: 'model', default: 64, min: 16, max: 512, step: 16, label: 'Embedding dimensions', help: 'Size of the learned word embedding vectors.' },
-        dropout: { control: 'slider', tab: 'model', default: 0.2, min: 0, max: 0.9, step: 0.05, label: 'Dropout rate', help: 'Fraction of units randomly dropped during training to reduce overfitting.' },
+        embedding_dims: { control: 'slider', tab: 'model', default: 128, min: 16, max: 512, step: 16, label: 'Embedding dimensions', help: 'Size of the learned word embedding vectors.' },
+        dropout: { control: 'slider', tab: 'model', default: 0.3, min: 0, max: 0.9, step: 0.05, label: 'Dropout rate', help: 'Fraction of units randomly dropped during training to reduce overfitting.' },
         hidden_layers: hiddenLayersField([])
     },
     recurrent_neural_network: {
         max_tokens: { control: 'slider', tab: 'model', default: 10000, min: 1000, max: 50000, step: 1000, label: 'Max tokens', help: 'Maximum vocabulary size of the tokenizer. Less frequent tokens are dropped.' },
         sequence_length: { control: 'slider', tab: 'model', default: 100, min: 16, max: 512, step: 4, label: 'Sequence length', help: 'Maximum number of tokens per example. Longer inputs are truncated, shorter ones padded.' },
-        embedding_dims: { control: 'slider', tab: 'model', default: 64, min: 16, max: 512, step: 16, label: 'Embedding dimensions', help: 'Size of the learned word embedding vectors.' },
-        dropout: { control: 'slider', tab: 'model', default: 0.2, min: 0, max: 0.9, step: 0.05, label: 'Dropout rate', help: 'Fraction of units randomly dropped during training to reduce overfitting.' },
+        embedding_dims: { control: 'slider', tab: 'model', default: 128, min: 16, max: 512, step: 16, label: 'Embedding dimensions', help: 'Size of the learned word embedding vectors.' },
+        dropout: { control: 'slider', tab: 'model', default: 0.3, min: 0, max: 0.9, step: 0.05, label: 'Dropout rate', help: 'Fraction of units randomly dropped during training to reduce overfitting.' },
         hidden_layers: hiddenLayersField([])
     },
     transformer: {
@@ -317,7 +363,7 @@ const ARCHITECTURE_PARAMETERS = {
         trainable: { control: 'switch', tab: 'model', default: false, label: 'Trainable encoder', help: 'Fine-tune the pretrained encoder weights during training. Slower per epoch, but usually more accurate.' },
         sequence_length: { control: 'slider', tab: 'model', default: 128, min: 16, max: 512, step: 16, label: 'Sequence length', help: 'Maximum number of tokens per example. Longer inputs are truncated, shorter ones padded.' },
         dropout: { control: 'slider', tab: 'model', default: 0.15, min: 0, max: 0.9, step: 0.05, label: 'Dropout rate', help: 'Fraction of units randomly dropped during training to reduce overfitting.' },
-        l2: { control: 'slider', tab: 'model', default: 0.01, min: 0, max: 0.1, step: 0.001, label: 'L2 regularisation', help: 'L2 penalty on the output head weights.' },
+        l2: { control: 'slider', tab: 'model', scale: 'log', default: 0.01, min: 0.000001, max: 0.1, label: 'L2 regularisation', help: 'L2 penalty on the output head weights.' },
         hidden_layers: hiddenLayersField([{ units: 768, activation: 'relu' }]),
         epochs: { ...COMMON_PARAMETERS.epochs, default: 5, max: 100 },
         batch_size: { ...COMMON_PARAMETERS.batch_size, default: 16 },
@@ -338,7 +384,7 @@ const TYPE_OVERRIDES = {
         recurrent_neural_network: {
             recurrent_layer: { control: 'select', tab: 'model', default: 'lstm', options: [['lstm', 'LSTM'], ['gru', 'GRU']], label: 'Recurrent layer', help: 'Type of recurrent cell.' },
             bidirectional: { control: 'switch', tab: 'model', default: true, label: 'Bidirectional', help: 'Process the sequence in both directions.' },
-            units: { control: 'slider', tab: 'model', default: 64, min: 16, max: 512, step: 16, label: 'Recurrent units', help: 'Number of units in the recurrent layer.' },
+            units: { control: 'slider', tab: 'model', default: 128, min: 16, max: 512, step: 16, label: 'Recurrent units', help: 'Number of units in the recurrent layer.' },
             recurrent_dropout: { control: 'slider', tab: 'model', default: 0.2, min: 0, max: 0.9, step: 0.05, label: 'Recurrent dropout', help: 'Dropout applied to the recurrent state transitions.' },
             hidden_layers: hiddenLayersField([{ units: 64, activation: 'relu' }]),
             ...PRUNING_PARAMETERS
@@ -348,26 +394,37 @@ const TYPE_OVERRIDES = {
         }
     },
     named_entity_recognition: {
+        // Both NER stacks are token-level: the hidden layers sit on the
+        // Bi-LSTM / encoder sequence output, above the per-token head.
         recurrent_neural_network: {
             sequence_length: { control: 'slider', tab: 'model', default: 128, min: 16, max: 512, step: 4, label: 'Sequence length', help: 'Maximum number of tokens per example. Longer inputs are truncated, shorter ones padded.' },
-            lstm_dims: { control: 'slider', tab: 'model', default: 100, min: 16, max: 512, step: 4, label: 'LSTM dimensions', help: 'Number of units in the bidirectional LSTM layer.' }
+            lstm_dims: { control: 'slider', tab: 'model', default: 128, min: 16, max: 512, step: 4, label: 'LSTM dimensions', help: 'Number of units in the bidirectional LSTM layer.' },
+            hidden_layers: hiddenLayersField([], { sequences: true }),
+            ...CRF_PARAMETER
         },
         transformer: {
-            hidden_layers: hiddenLayersField([{ units: 768, activation: 'tanh' }])
+            hidden_layers: hiddenLayersField([{ units: 768, activation: 'tanh' }], { sequences: true }),
+            ...CRF_PARAMETER
         }
     },
     natural_language_understanding: {
+        // The shared trunk feeds the slot head directly and the intent head
+        // through pooling, so the hidden stack itself runs on sequences.
         deep_neural_network: {
-            units: { control: 'slider', tab: 'model', default: 64, min: 16, max: 512, step: 16, label: 'LSTM units', help: 'Number of units in the bidirectional LSTM layer.' },
+            units: { control: 'slider', tab: 'model', default: 128, min: 16, max: 512, step: 16, label: 'LSTM units', help: 'Number of units in the bidirectional LSTM layer.' },
+            hidden_layers: hiddenLayersField([{ units: 64, activation: 'relu' }], { sequences: true }),
             intent_loss_weight: { control: 'slider', tab: 'schedule', default: 1, min: 0, max: 5, step: 0.1, label: 'Intent loss weight', help: 'Relative weight of the intent head in the combined loss.' },
-            slot_loss_weight: { control: 'slider', tab: 'schedule', default: 1, min: 0, max: 5, step: 0.1, label: 'Slot loss weight', help: 'Relative weight of the slot head in the combined loss.' },
-            monitor: { ...COMMON_PARAMETERS.monitor, options: NLU_MONITOR_OPTIONS },
+            slot_loss_weight: { control: 'slider', tab: 'schedule', default: 2, min: 0, max: 5, step: 0.1, label: 'Slot loss weight', help: 'Relative weight of the slot head in the combined loss.' },
+            monitor: { ...COMMON_PARAMETERS.monitor, options: (params) => monitorOptions(params, NLU_HEADS) },
+            ...CRF_PARAMETER,
             ...PRUNING_PARAMETERS
         },
         transformer: {
+            hidden_layers: hiddenLayersField([{ units: 768, activation: 'relu' }], { sequences: true }),
             intent_loss_weight: { control: 'slider', tab: 'schedule', default: 1, min: 0, max: 5, step: 0.1, label: 'Intent loss weight', help: 'Relative weight of the intent head in the combined loss.' },
-            slot_loss_weight: { control: 'slider', tab: 'schedule', default: 1, min: 0, max: 5, step: 0.1, label: 'Slot loss weight', help: 'Relative weight of the slot head in the combined loss.' },
-            monitor: { ...COMMON_PARAMETERS.monitor, options: NLU_MONITOR_OPTIONS }
+            slot_loss_weight: { control: 'slider', tab: 'schedule', default: 2, min: 0, max: 5, step: 0.1, label: 'Slot loss weight', help: 'Relative weight of the slot head in the combined loss.' },
+            monitor: { ...COMMON_PARAMETERS.monitor, options: (params) => monitorOptions(params, NLU_HEADS) },
+            ...CRF_PARAMETER
         }
     }
 };
@@ -384,8 +441,12 @@ const resolveParameters = (modelType, architecture) => {
     };
 };
 
+// Array defaults are either layer objects (cloned so edits never mutate the
+// registry) or plain metric names, which are copied as-is.
 const cloneDefault = (value) => (
-    Array.isArray(value) ? value.map((item) => ({ ...item })) : value
+    Array.isArray(value)
+        ? value.map((item) => (item && typeof item === 'object' ? { ...item } : item))
+        : value
 );
 
 const resolveDefaults = (modelType, architecture) => {
@@ -411,10 +472,18 @@ const clampNumber = (value, { min, max }) => {
 // Coerces a value carried over from a previous training run into something
 // the declared control can represent (sliders clamp, selects fall back to
 // the default, layer lists are sanitised entry by entry).
-const clampParameterValue = (metadata, value) => {
+const clampParameterValue = (metadata, value, params = {}) => {
+    if (metadata.control === 'checks') {
+        return normalizeMetricNames(value);
+    }
     if (metadata.control === 'layers') {
         if (!Array.isArray(value)) return cloneDefault(metadata.default);
+        const types = metadata.types || POOLED_LAYER_TYPES;
         return value.slice(0, MAX_HIDDEN_LAYERS).map((layer) => ({
+            // Runs that predate the type selector carry no type at all, and an
+            // architecture switch can carry a recurrent type onto a pooled
+            // stack the backend would reject; both resolve to dense.
+            type: types.includes(layer?.type) ? layer.type : DEFAULT_LAYER_TYPE,
             units: clampNumber(Number(layer?.units) || HIDDEN_LAYER_UNITS.min, HIDDEN_LAYER_UNITS),
             activation: ACTIVATION_OPTIONS.some(([option]) => option === layer?.activation)
                 ? layer.activation
@@ -425,7 +494,7 @@ const clampParameterValue = (metadata, value) => {
         return typeof value === 'number' ? clampNumber(value, metadata) : metadata.default;
     }
     if (metadata.control === 'select') {
-        return metadata.options.some(([option]) => option === value) ? value : metadata.default;
+        return optionsFor(metadata, params).some(([option]) => option === value) ? value : metadata.default;
     }
     if (metadata.control === 'switch') return Boolean(value);
     return value;
@@ -458,9 +527,11 @@ const getTrainingStartParameters = (modelType = 'text_classification', training 
         }
     }
 
+    // Ordered by the registry, so `metrics` is resolved before `monitor` —
+    // whose valid options depend on it.
     Object.entries(registry).forEach(([key, metadata]) => {
         if (previousParameters[key] === undefined) return;
-        params[key] = clampParameterValue(metadata, previousParameters[key]);
+        params[key] = clampParameterValue(metadata, previousParameters[key], params);
     });
     params.architecture = architecture;
     return params;
@@ -552,27 +623,59 @@ const formatReport = (report) => {
     return typeof report === 'string' ? report : JSON.stringify(report, null, 2);
 };
 
-const getTrainingReport = (training) => {
-    const result = training?.result;
-    if (!result) return '';
-    return {
-        train: getReport(result, 'train'),
-        test: getReport(result, 'test'),
-        summary: result.summary || '',
-        history: result.history || {}
-    };
-};
-
-const formatMetric = (value) => (
+export const formatMetric = (value) => (
     typeof value === 'number' ? value.toFixed(4) : ''
 );
 
-const ReportTable = ({ title, report }) => {
+// Every inspector tab is framed the same way: a toolbar strip along the top of
+// a card, whatever selects the view on the left and the actions on the right.
+// The tab body owns its own scrolling, so this stays out of the way of the
+// heights the panels set for themselves.
+export const PanelCard = ({ icon, title, hint, controls, actions, className = 'p-3', children }) => (
+    <Card className="border-light h-100">
+        <div className="d-flex flex-wrap align-items-center gap-2 px-3 py-2 bg-body-tertiary border-bottom border-light-subtle">
+            {/* Same heading treatment as CardHeading, which this strip already
+                borrows its framing from — but inline, so the view controls and
+                the download can share the row with it. */}
+            <span className="d-inline-flex align-items-center gap-2 text-body-emphasis">
+                <span className="text-primary lh-1">{icon}</span>
+                <SectionLabel>{title}</SectionLabel>
+            </span>
+            {/* One line on what the tab is showing. Dropped on narrow viewports,
+                where the controls need the room more than the prose does. */}
+            {hint && (
+                <span className="text-muted d-none d-lg-inline" style={{ fontSize: '0.7rem' }}>
+                    {hint}
+                </span>
+            )}
+            {controls}
+            <div className="d-flex align-items-center gap-2 ms-auto">{actions}</div>
+        </div>
+        <Card.Body className={className}>{children}</Card.Body>
+    </Card>
+);
+
+// One icon button per artifact, carrying the file type it produces the way the
+// plot toolbar's CSV and PNG buttons do.
+export const DownloadButton = ({ title, icon, onClick, disabled }) => (
+    <Button
+        variant="light"
+        size="sm"
+        className="border d-inline-flex align-items-center"
+        title={title}
+        aria-label={title}
+        disabled={disabled}
+        onClick={onClick}
+    >
+        {icon}
+    </Button>
+);
+
+const ReportTable = ({ report }) => {
     const rows = reportRows(report);
     const accuracy = report?.accuracy;
     return (
         <div style={{ minHeight: '400px' }}>
-            <h6 className="mt-3 small fw-bold text-muted">{title}</h6>
             {rows.length > 0 ? (
                 <Table responsive size="sm" className="small border border-light-subtle">
                     <thead className="bg-body-tertiary sticky-top" style={{ zIndex: 1 }}>
@@ -612,6 +715,58 @@ const ReportTable = ({ title, report }) => {
     );
 };
 
+// Exact-match metrics per slot / entity. Distinct from ReportTable, which shows
+// a per-class report: here every row is a whole annotation scored on its name
+// and both boundaries, so there is no accuracy to report — the footer carries
+// the overall exact-match score instead.
+const AnnotationTable = ({ unit, metrics }) => {
+    const rows = annotationRows(metrics);
+    const overall = metrics?.overall;
+    return (
+        <div style={{ minHeight: '400px' }}>
+            {rows.length > 0 ? (
+                <Table responsive size="sm" className="small border border-light-subtle">
+                    <thead className="bg-body-tertiary sticky-top" style={{ zIndex: 1 }}>
+                        <tr className="border-bottom border-light-subtle">
+                            <th className="border-end border-light-subtle text-capitalize">{unit}</th>
+                            <th className="border-end border-light-subtle">Precision</th>
+                            <th className="border-end border-light-subtle">Recall</th>
+                            <th className="border-end border-light-subtle">F1-score</th>
+                            <th>Support</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows.map((row) => (
+                            <tr key={row.label} className="border-bottom border-light-subtle">
+                                <td className="border-end border-light-subtle">{row.label}</td>
+                                <td className="border-end border-light-subtle">{formatMetric(row.precision)}</td>
+                                <td className="border-end border-light-subtle">{formatMetric(row.recall)}</td>
+                                <td className="border-end border-light-subtle">{formatMetric(row.f1)}</td>
+                                <td>{row.support}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                    {overall && (
+                        <tfoot className="fw-bold bg-body-tertiary">
+                            <tr>
+                                <td className="border-end border-light-subtle">overall</td>
+                                <td className="border-end border-light-subtle">{formatMetric(overall.precision)}</td>
+                                <td className="border-end border-light-subtle">{formatMetric(overall.recall)}</td>
+                                <td className="border-end border-light-subtle">{formatMetric(overall.f1)}</td>
+                                <td>{overall.support}</td>
+                            </tr>
+                        </tfoot>
+                    )}
+                </Table>
+            ) : (
+                <EmptyMessage>
+                    this version was trained before exact-match metrics were recorded.
+                </EmptyMessage>
+            )}
+        </div>
+    );
+};
+
 const EmptyState = ({ children }) => (
     <div
         className="d-flex align-items-center justify-content-center text-muted"
@@ -636,6 +791,21 @@ const TabTitle = ({ icon, children }) => (
     </span>
 );
 
+// Wall-clock time the run has taken. A finished run's is fixed, so only an
+// active one needs the once-a-second re-render that keeps the readout counting.
+const useTrainingElapsed = (training, active) => {
+    const [now, setNow] = useState(() => Date.now());
+
+    useEffect(() => {
+        if (!active) return;
+        setNow(Date.now());
+        const timer = setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(timer);
+    }, [active]);
+
+    return active ? getTrainingElapsed(training, now) : getTrainingRuntime(training);
+};
+
 const MetricStrip = ({ training, onStopTraining, stoppingTraining, onRestartTraining, restartingTraining }) => {
     const testAccuracy = getTrainingAccuracy(training);
     const active = isTrainingActive(training);
@@ -643,9 +813,11 @@ const MetricStrip = ({ training, onStopTraining, stoppingTraining, onRestartTrai
     // once it succeeds the final evaluated train accuracy takes over.
     const trainAccuracy = training?.status === 'SUCCESS'
         ? getTrainingTrainAccuracy(training)
-        : getLatestHistoryMetric(training, 'accuracy');
+        : getLiveAccuracy(training);
     const hasTestAccuracy = training?.status === 'SUCCESS' && testAccuracy !== null;
     const hasTrainAccuracy = trainAccuracy !== null && trainAccuracy !== undefined;
+    const epochs = active ? getTrainingEpochs(training) : null;
+    const elapsed = useTrainingElapsed(training, active);
 
     const items = [
         { label: 'Version', value: training?.version, icon: <Hash /> },
@@ -688,9 +860,14 @@ const MetricStrip = ({ training, onStopTraining, stoppingTraining, onRestartTrai
         { label: 'Started', value: training?.created_at, icon: <Clock /> },
         { label: 'Completed', value: training?.date_done || '-', icon: <Calendar3 /> },
         {
+            label: active ? 'Elapsed' : 'Runtime',
+            value: formatDuration(elapsed) || '-',
+            icon: <Stopwatch />
+        },
+        {
             label: 'Train / Test Accuracy',
             value: (
-                <div className="d-flex align-items-center justify-content-between w-100">
+                <div className="d-flex align-items-center justify-content-between w-100 gap-2">
                     <span className="fw-bold text-body-emphasis font-monospace">
                         {hasTrainAccuracy
                             ? `${(trainAccuracy * 100).toFixed(2)}`
@@ -701,11 +878,14 @@ const MetricStrip = ({ training, onStopTraining, stoppingTraining, onRestartTrai
                         : '—'}
                     </span>
                     {active && (
-                        <Spinner
-                            animation="border"
-                            size="sm"
-                            variant="primary"
-                        />
+                        <span className="d-inline-flex align-items-center gap-2 text-muted flex-shrink-0" style={{ fontSize: '0.65rem' }}>
+                            {epochs ? `epoch ${epochs}` : null}
+                            <Spinner
+                                animation="border"
+                                size="sm"
+                                variant="primary"
+                            />
+                        </span>
                     )}
                 </div>
             ),
@@ -716,7 +896,7 @@ const MetricStrip = ({ training, onStopTraining, stoppingTraining, onRestartTrai
     return (
         <Row className="g-3 mt-1">
             {items.map((item, idx) => (
-                <Col key={idx} xs={12} sm={6} md={4} lg={true}>
+                <Col key={idx} xs={12} sm={6} md={4} lg={3} xl={true}>
                     <Card className="h-100">
                         <Card.Body className="p-3 d-flex align-items-center">
                             <div className="text-primary me-3 fs-4">
@@ -779,13 +959,21 @@ const HistoryMetricStrip = ({ total, inProgress, succeeded, bestAccuracy, latest
     );
 };
 
-const ConfusionMatrix = ({ training, split }) => {
-    const matrix = getConfusionMatrix(training, split);
-    const report = getReport(training?.result, split);
+// sklearn indexes a confusion matrix by the sorted label set it derived from
+// the true/predicted values, and keys the classification report by that same
+// set plus its three summary rows — so dropping those rows recovers the axis
+// labels in matrix order.
+const MATRIX_SUMMARY_ROWS = ['accuracy', 'macro avg', 'weighted avg'];
 
-    const labels = useMemo(() => reportRows(report)
-        .filter(row => !['accuracy', 'macro avg', 'weighted avg'].includes(row.label))
-        .map(row => row.label), [report]);
+const matrixLabels = (report) => reportRows(report)
+    .filter(row => !MATRIX_SUMMARY_ROWS.includes(row.label))
+    .map(row => row.label);
+
+const ConfusionMatrix = ({ training, split, head }) => {
+    const matrix = getConfusionMatrix(training, split, head);
+    const report = getReport(training?.result, split, head);
+
+    const labels = useMemo(() => matrixLabels(report), [report]);
 
     const maxValue = useMemo(() => {
         if (!Array.isArray(matrix)) return 1;
@@ -904,9 +1092,24 @@ const HistoryCharts = ({ history }) => {
     const [left, setLeft] = useState('dataMin');
     const [right, setRight] = useState('dataMax');
 
+    // A STARTED training re-renders on every epoch socket push, which replaces
+    // `result.history` wholesale, so `metrics` is a new array identity even when
+    // the metric names are unchanged. Syncing on that identity wiped the user's
+    // selection on every
+    // tick; sync on the joined names instead so the selection only moves when
+    // the metric set genuinely changes — and even then keep what is still valid
+    // and opt in only the newly appeared names.
+    const metricsKey = metrics.join('|');
+
     useEffect(() => {
-        setSelectedMetrics(metrics);
-    }, [metrics]);
+        const names = metricsKey ? metricsKey.split('|') : [];
+        setSelectedMetrics(previous => {
+            const kept = previous.filter(metric => names.includes(metric));
+            const added = names.filter(metric => !previous.includes(metric));
+            if (added.length === 0 && kept.length === previous.length) return previous;
+            return [...kept, ...added];
+        });
+    }, [metricsKey]);
 
     const epochCount = useMemo(() => Math.max(...metrics.map(metric => history[metric].length), 0), [metrics, history]);
 
@@ -944,6 +1147,10 @@ const HistoryCharts = ({ history }) => {
 
     const isAllSelected = selectedMetrics.length === metrics.length;
 
+    // Badge on the Display toggle, so a non-default view is visible without
+    // opening the menu.
+    const activeDisplayOptions = [smoothing > 1, showPoints, logScale].filter(Boolean).length;
+
     const zoom = () => {
         if (refAreaLeft === refAreaRight || refAreaRight === '') {
             setRefAreaLeft('');
@@ -979,96 +1186,136 @@ const HistoryCharts = ({ history }) => {
     if (metrics.length === 0) return <EmptyState>No history data available.</EmptyState>;
 
     return (
-        <Row className="mt-2 gx-3" style={{ height: 'calc(100vh - 350px)' }}>
-            <Col className="h-100">
-                <Card className="border-light h-100">
-                    <div className="d-flex flex-wrap align-items-center gap-2 px-3 py-2 bg-body-tertiary border-bottom border-light-subtle">
-                        <div className="d-flex flex-wrap align-items-center column-gap-2 row-gap-2">
-                            <Form.Check
-                                type="checkbox"
-                                id="select-all-metrics"
-                                label={<span className="small fw-bold text-muted">All</span>}
-                                checked={isAllSelected}
-                                onChange={(e) => handleAllToggle(e.target.checked)}
-                                className="mb-0"
-                            />
-
-                            {metrics.map((metric, index) => (
+        <div className="mt-2" style={{ height: 'calc(100vh - 350px)' }}>
+            <PanelCard
+                icon={<BarChartFill />}
+                title="Training history"
+                className="p-3 d-flex flex-column"
+                actions={
+                    <>
+                        <Button variant="light" size="sm" className="border d-inline-flex align-items-center" title="Reset zoom" onClick={zoomOut}>
+                            <ArrowCounterclockwise />
+                        </Button>
+                        <DownloadButton title="Download metrics CSV" icon={<FiletypeCsv />} onClick={downloadCsv} />
+                        <DownloadButton title="Download chart PNG" icon={<FiletypePng />} onClick={downloadPng} />
+                    </>
+                }
+                controls={
+                    <>
+                        {/* Joint models (NLU) emit a metric per head plus its val_
+                            twin, so the selector lives in a dropdown rather than as
+                            an inline strip that would wrap the whole toolbar. The
+                            chart legend below carries the colour mapping instead. */}
+                        <Dropdown autoClose="outside">
+                            <Dropdown.Toggle
+                                variant="light"
+                                size="sm"
+                                className="border d-inline-flex align-items-center gap-1"
+                            >
+                                <Activity className="text-muted" />
+                                Metrics
+                                <Badge bg="primary" pill>{selectedMetrics.length}/{metrics.length}</Badge>
+                            </Dropdown.Toggle>
+                            <Dropdown.Menu className="p-2" style={{ minWidth: '240px', maxHeight: '320px', overflowY: 'auto' }}>
                                 <Form.Check
-                                    key={metric}
                                     type="checkbox"
-                                    id={`metric-${metric}`}
-                                    label={
-                                        <span className="d-inline-flex align-items-center gap-1 small" title={metric}>
-                                            <span
-                                                style={{
-                                                    width: '8px',
-                                                    height: '8px',
-                                                    borderRadius: '50%',
-                                                    backgroundColor: chartColors[index % chartColors.length],
-                                                    display: 'inline-block',
-                                                    flexShrink: 0
-                                                }}
-                                            />
-                                            {metric}
-                                        </span>
-                                    }
-                                    className="mb-0"
-                                    checked={selectedMetrics.includes(metric)}
-                                    onChange={() => {
-                                        if (selectedMetrics.includes(metric)) {
-                                            if (selectedMetrics.length > 1) {
-                                                setSelectedMetrics(selectedMetrics.filter(m => m !== metric));
-                                            }
-                                        } else {
-                                            setSelectedMetrics([...selectedMetrics, metric]);
-                                        }
-                                    }}
+                                    id="select-all-metrics"
+                                    label={<span className="small fw-bold text-muted">All</span>}
+                                    checked={isAllSelected}
+                                    onChange={(e) => handleAllToggle(e.target.checked)}
+                                    className="py-1 mb-1 border-bottom pb-2"
                                 />
-                            ))}
-                        </div>
 
-                        <div className="d-flex align-items-center gap-2 ms-xl-auto">
-                            <span className="small fw-bold text-muted">Smoothing</span>
-                            <Form.Range
-                                min={1}
-                                max={20}
-                                step={1}
-                                value={smoothing}
-                                onChange={(e) => setSmoothing(parseInt(e.target.value))}
-                                style={{ width: '80px' }}
-                            />
-                            <span className="small text-muted font-monospace" style={{ minWidth: '2ch' }}>{smoothing}</span>
-                        </div>
-                        <Form.Check
-                            type="switch"
-                            id="show-points"
-                            label={<span className="small text-muted fw-bold">Points</span>}
-                            checked={showPoints}
-                            onChange={(e) => setShowPoints(e.target.checked)}
-                            className="mb-0"
-                        />
-                        <Form.Check
-                            type="switch"
-                            id="log-scale-y"
-                            label={<span className="small text-muted fw-bold">Log Y</span>}
-                            checked={logScale}
-                            onChange={(e) => setLogScale(e.target.checked)}
-                            className="mb-0"
-                        />
-                        <div className="d-flex align-items-center gap-2">
-                            <Button variant="light" size="sm" className="border d-inline-flex align-items-center" title="Reset zoom" onClick={zoomOut}>
-                                <ArrowCounterclockwise />
-                            </Button>
-                            <Button variant="light" size="sm" className="border d-inline-flex align-items-center" title="Download CSV" onClick={downloadCsv}>
-                                <FiletypeCsv />
-                            </Button>
-                            <Button variant="light" size="sm" className="border d-inline-flex align-items-center" title="Download PNG" onClick={downloadPng}>
-                                <FiletypePng />
-                            </Button>
-                        </div>
-                    </div>
-                    <Card.Body className="p-3 d-flex flex-column">
+                                {metrics.map((metric, index) => (
+                                    <Form.Check
+                                        key={metric}
+                                        type="checkbox"
+                                        id={`metric-${metric}`}
+                                        label={
+                                            <span className="d-inline-flex align-items-center gap-1 small" title={metric}>
+                                                <span
+                                                    style={{
+                                                        width: '8px',
+                                                        height: '8px',
+                                                        borderRadius: '50%',
+                                                        backgroundColor: chartColors[index % chartColors.length],
+                                                        display: 'inline-block',
+                                                        flexShrink: 0
+                                                    }}
+                                                />
+                                                {metric}
+                                            </span>
+                                        }
+                                        className="py-1 mb-0"
+                                        checked={selectedMetrics.includes(metric)}
+                                        onChange={() => {
+                                            if (selectedMetrics.includes(metric)) {
+                                                if (selectedMetrics.length > 1) {
+                                                    setSelectedMetrics(selectedMetrics.filter(m => m !== metric));
+                                                }
+                                            } else {
+                                                setSelectedMetrics([...selectedMetrics, metric]);
+                                            }
+                                        }}
+                                    />
+                                ))}
+                            </Dropdown.Menu>
+                        </Dropdown>
+
+                        {/* Smoothing, points and log-Y are all "how the series
+                            are drawn" rather than "which series", so they share
+                            a second dropdown instead of sitting inline — the
+                            toolbar has to stay readable now that a run can
+                            track five metrics per head. */}
+                        <Dropdown autoClose="outside">
+                            <Dropdown.Toggle
+                                variant="light"
+                                size="sm"
+                                className="border d-inline-flex align-items-center gap-1"
+                            >
+                                <Sliders2 className="text-muted" />
+                                Display
+                                {activeDisplayOptions > 0 && (
+                                    <Badge bg="primary" pill>{activeDisplayOptions}</Badge>
+                                )}
+                            </Dropdown.Toggle>
+                            <Dropdown.Menu className="p-3" style={{ minWidth: '240px' }}>
+                                <div className="d-flex justify-content-between align-items-center mb-1">
+                                    <span className="small fw-bold text-muted">Smoothing</span>
+                                    <span className="small text-muted font-monospace">{smoothing}</span>
+                                </div>
+                                <Form.Range
+                                    min={1}
+                                    max={20}
+                                    step={1}
+                                    value={smoothing}
+                                    onChange={(e) => setSmoothing(parseInt(e.target.value))}
+                                />
+                                <div className="small text-muted mb-2" style={{ fontSize: '0.7rem' }}>
+                                    Running mean over the last N epochs. 1 shows the raw values.
+                                </div>
+                                <Form.Check
+                                    type="switch"
+                                    id="show-points"
+                                    label={<span className="small text-muted fw-bold">Points</span>}
+                                    checked={showPoints}
+                                    onChange={(e) => setShowPoints(e.target.checked)}
+                                    className="mb-1"
+                                />
+                                <Form.Check
+                                    type="switch"
+                                    id="log-scale-y"
+                                    label={<span className="small text-muted fw-bold">Log Y</span>}
+                                    checked={logScale}
+                                    onChange={(e) => setLogScale(e.target.checked)}
+                                    className="mb-0"
+                                />
+                            </Dropdown.Menu>
+                        </Dropdown>
+
+                    </>
+                }
+            >
                         <div className="flex-grow-1" onDoubleClick={zoomOut} ref={chartWrapRef}>
                             <ResponsiveContainer>
                                 <LineChart
@@ -1098,6 +1345,13 @@ const HistoryCharts = ({ history }) => {
                                         contentStyle={{ fontSize: '11px', border: '1px solid var(--bs-border-color)', borderRadius: '4px', backgroundColor: 'var(--bs-body-bg)', color: 'var(--bs-body-color)' }}
                                         itemStyle={{ padding: '1px 0' }}
                                     />
+                                    <RechartsLegend
+                                        verticalAlign="top"
+                                        align="left"
+                                        iconType="plainline"
+                                        iconSize={10}
+                                        wrapperStyle={{ fontSize: '11px', paddingBottom: '8px' }}
+                                    />
                                     {selectedMetrics.map((metric, index) => (
                                         <Line
                                             key={metric}
@@ -1116,58 +1370,192 @@ const HistoryCharts = ({ history }) => {
                                 </LineChart>
                             </ResponsiveContainer>
                         </div>
-                    </Card.Body>
-                </Card>
-            </Col>
-        </Row>
+            </PanelCard>
+        </div>
     );
 };
 
-const ReportsPanel = ({ training }) => {
-    const report = getTrainingReport(training);
+const SPLIT_OPTIONS = [['train', 'Train'], ['test', 'Test']];
+const SPLIT_LABELS = { train: 'Training', test: 'Test' };
 
-    return (
-        <Tabs defaultActiveKey="train-report" variant="pills" className="mb-3 border-0 small">
-            <Tab eventKey="train-report" title="Train">
-                <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 400px)' }}>
-                    <ReportTable title="Training Data Metrics" report={report?.train} />
-                </div>
-            </Tab>
-            <Tab eventKey="test-report" title="Test">
-                <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 400px)' }}>
-                    <ReportTable title="Test Data Metrics" report={report?.test} />
-                </div>
-            </Tab>
-        </Tabs>
-    );
-};
+// Joint (NLU) runs evaluate an intent head and a slot head; every other model
+// type has a single head and never shows this control.
+const HEAD_OPTIONS = [['intent', 'Intent'], ['slots', 'Slots']];
+const HEAD_LABELS = { intent: 'intent', slots: 'slot' };
 
-const ConfusionMatrixPanel = ({ training }) => (
-    <Tabs defaultActiveKey="train-matrix" variant="pills" className="mb-3 border-0 small">
-        <Tab eventKey="train-matrix" title="Train">
-            <ConfusionMatrix training={training} split="train" />
-        </Tab>
-        <Tab eventKey="test-matrix" title="Test">
-            <ConfusionMatrix training={training} split="test" />
-        </Tab>
-    </Tabs>
+const SegmentedControl = ({ options, value, onChange, label }) => (
+    <ButtonGroup size="sm" aria-label={label}>
+        {options.map(([option, optionLabel]) => (
+            <Button
+                key={option}
+                variant={value === option ? 'primary' : 'light'}
+                className="border small"
+                onClick={() => onChange(option)}
+            >
+                {optionLabel}
+            </Button>
+        ))}
+    </ButtonGroup>
 );
 
-const TrainingSummary = ({ training }) => {
-    const report = getTrainingReport(training);
+// Split and head selection shared by Reports and Matrix, so the two tabs always
+// offer the same axes and the download beside them matches what is on screen.
+export const EvaluationControls = ({ split, onSplit, head, onHead, heads }) => (
+    <>
+        <SegmentedControl options={SPLIT_OPTIONS} value={split} onChange={onSplit} label="Data split" />
+        {heads && (
+            <SegmentedControl options={HEAD_OPTIONS} value={head} onChange={onHead} label="Model head" />
+        )}
+    </>
+);
+
+// A run only carries a head once it has been evaluated with one, so the toggle
+// (and the head half of the filename) drop out for single-head model types.
+export const useEvaluationView = (training) => {
+    const heads = hasSlotMetrics(training);
+    const [split, setSplit] = useState('train');
+    const [head, setHead] = useState('intent');
+    return {
+        heads,
+        split,
+        setSplit,
+        head: heads ? head : null,
+        setHead,
+        title: heads
+            ? `${SPLIT_LABELS[split]} data — ${HEAD_LABELS[head]} metrics`
+            : `${SPLIT_LABELS[split]} data metrics`,
+        suffix: (name) => `${split}_${heads ? `${head}_` : ''}${name}`
+    };
+};
+
+// The unit an annotated model scores: a language understanding run tags under
+// its slots, a named entity recognition run under its entities. Null for text
+// classification, and for the intent half of a joint run, which classify whole
+// utterances and so read as a per-class report.
+const annotationUnit = (model, head) => {
+    if (model?.kind === 'named_entity_recognition') return 'entity';
+    if (model?.kind === 'natural_language_understanding' && head === 'slots') return 'slot';
+    return null;
+};
+
+const ReportsPanel = ({ training, model }) => {
+    const view = useEvaluationView(training);
+    // Annotated heads are scored on whole annotations, not tokens: a slot is
+    // filled with the matched text, so an annotation one word out is the wrong
+    // value rather than a partly-right one, and a per-token report would award
+    // it partial credit.
+    const unit = annotationUnit(model, view.head);
+    const metrics = unit ? getAnnotationMetrics(training, view.split) : null;
+    const report = unit ? null : getReport(training?.result, view.split, view.head);
+    const rows = unit ? annotationRows(metrics) : reportRows(report);
 
     return (
-        <pre className="p-3 mb-0 bg-body-tertiary border-0 rounded small overflow-auto" style={{ height: 'calc(100vh - 400px)', whiteSpace: 'pre-wrap' }}>
-            {report?.summary || 'No model summary available.'}
-        </pre>
+        <PanelCard
+            icon={<ListColumnsReverse />}
+            title={view.title}
+            className="p-0"
+            controls={
+                <EvaluationControls
+                    heads={view.heads}
+                    split={view.split}
+                    onSplit={view.setSplit}
+                    head={view.head}
+                    onHead={view.setHead}
+                />
+            }
+            actions={
+                <DownloadButton
+                    title="Download report CSV"
+                    icon={<FiletypeCsv />}
+                    disabled={rows.length === 0}
+                    onClick={() => downloadBlob(
+                        unit ? annotationCsv(metrics, unit) : reportCsv(report),
+                        trainingFilename(model, training, view.suffix('report.csv'))
+                    )}
+                />
+            }
+        >
+            <div className="overflow-auto px-3 pb-3" style={{ maxHeight: 'calc(100vh - 400px)' }}>
+                {unit ? (
+                    <AnnotationTable unit={unit} metrics={metrics} />
+                ) : (
+                    <ReportTable report={report} />
+                )}
+            </div>
+        </PanelCard>
     );
 };
 
-const TrainingPlots = ({ training }) => {
-    const report = getTrainingReport(training);
+const ConfusionMatrixPanel = ({ training, model }) => {
+    const view = useEvaluationView(training);
+    const matrix = getConfusionMatrix(training, view.split, view.head);
+    const hasMatrix = Array.isArray(matrix) && matrix.length > 0;
 
-    return <HistoryCharts history={report?.history} />;
+    return (
+        <PanelCard
+            icon={<Grid3x3GapFill />}
+            title="Confusion matrix"
+            className="p-0"
+            controls={
+                <EvaluationControls
+                    heads={view.heads}
+                    split={view.split}
+                    onSplit={view.setSplit}
+                    head={view.head}
+                    onHead={view.setHead}
+                />
+            }
+            actions={
+                <DownloadButton
+                    title="Download confusion matrix CSV"
+                    icon={<FiletypeCsv />}
+                    disabled={!hasMatrix}
+                    onClick={() => downloadBlob(
+                        confusionMatrixCsv(
+                            matrix,
+                            matrixLabels(getReport(training?.result, view.split, view.head))
+                        ),
+                        trainingFilename(model, training, view.suffix('confusion_matrix.csv'))
+                    )}
+                />
+            }
+        >
+            <ConfusionMatrix training={training} split={view.split} head={view.head} />
+        </PanelCard>
+    );
 };
+
+const TrainingSummary = ({ training, model }) => {
+    const summary = training?.result?.summary || '';
+
+    return (
+        <PanelCard
+            icon={<Stack />}
+            title="Model summary"
+            hint="Every layer in the network, with its output shape and parameter count."
+            className="p-0"
+            actions={
+                <DownloadButton
+                    title="Download summary TXT"
+                    icon={<FiletypeTxt />}
+                    disabled={!summary}
+                    onClick={() => downloadBlob(
+                        textBlob(summary),
+                        trainingFilename(model, training, 'summary.txt')
+                    )}
+                />
+            }
+        >
+            <pre className="p-3 mb-0 border-0 small overflow-auto" style={{ height: 'calc(100vh - 400px)', whiteSpace: 'pre-wrap' }}>
+                {summary || 'No model summary available.'}
+            </pre>
+        </PanelCard>
+    );
+};
+
+const TrainingPlots = ({ training }) => (
+    <HistoryCharts history={training?.result?.history || {}} />
+);
 
 const formatParameterValue = (value) => {
     if (value === null || value === undefined || value === '') return '-';
@@ -1176,7 +1564,112 @@ const formatParameterValue = (value) => {
     return String(value);
 };
 
-const TrainingParameters = ({ training }) => {
+const prettyParameterName = (name) => String(name).replace(/_/g, ' ');
+
+// Friendly names for the enum values that appear inside structured parameters,
+// keyed by the field they belong to — `metrics` labels its own items, layer
+// records label theirs per column.
+const PARAMETER_VALUE_LABELS = {
+    metrics: METRIC_LABELS,
+    type: Object.fromEntries(LAYER_TYPE_OPTIONS),
+    activation: Object.fromEntries(ACTIVATION_OPTIONS)
+};
+
+const parameterValueLabel = (name, value) => (
+    PARAMETER_VALUE_LABELS[name]?.[value] ?? formatParameterValue(value)
+);
+
+const isPrimitiveValue = (value) => (
+    value === null || value === undefined || ['string', 'number', 'boolean'].includes(typeof value)
+);
+
+// A list of records (the hidden-layer stack) only lays out as a table when
+// every entry is a flat object; the union of their keys becomes the columns.
+const recordColumns = (rows) => {
+    const columns = [];
+    for (const row of rows) {
+        if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
+        for (const [key, value] of Object.entries(row)) {
+            if (!isPrimitiveValue(value)) return null;
+            if (!columns.includes(key)) columns.push(key);
+        }
+    }
+    return columns.length ? columns : null;
+};
+
+// Lists of names (metrics) read best as chips.
+const ParameterBadges = ({ name, values }) => (
+    <div className="d-flex flex-wrap gap-1">
+        {values.map((value, index) => (
+            <Badge key={index} bg="light" text="dark" className="border fw-normal">
+                {parameterValueLabel(name, value)}
+            </Badge>
+        ))}
+    </div>
+);
+
+const ParameterRecords = ({ rows, columns }) => (
+    <Table size="sm" borderless className="mb-0 small w-auto">
+        <thead>
+            <tr className="text-muted">
+                <th className="fw-normal ps-0 py-1" style={{ width: '2rem' }}>#</th>
+                {columns.map((column) => (
+                    <th key={column} className="fw-normal py-1 text-capitalize">{prettyParameterName(column)}</th>
+                ))}
+            </tr>
+        </thead>
+        <tbody>
+            {rows.map((row, index) => (
+                <tr key={index}>
+                    <td className="text-muted ps-0 py-1">{index + 1}</td>
+                    {columns.map((column) => (
+                        <td key={column} className="py-1">
+                            {row[column] === undefined
+                                ? <span className="text-muted">-</span>
+                                : parameterValueLabel(column, row[column])}
+                        </td>
+                    ))}
+                </tr>
+            ))}
+        </tbody>
+    </Table>
+);
+
+const ParameterEntries = ({ entries }) => (
+    <div className="d-flex flex-column gap-1">
+        {entries.map(([key, value]) => (
+            <div key={key} className="d-flex gap-2">
+                <span className="text-muted text-capitalize" style={{ minWidth: '9rem' }}>
+                    {prettyParameterName(key)}
+                </span>
+                <span>{parameterValueLabel(key, value)}</span>
+            </div>
+        ))}
+    </div>
+);
+
+// Structured values get a layout that matches their shape; anything deeper or
+// mixed keeps the raw JSON so nothing is silently hidden.
+const ParameterValue = ({ name, value }) => {
+    if (Array.isArray(value)) {
+        if (value.length === 0) return <span className="text-muted">None</span>;
+        if (value.every(isPrimitiveValue)) return <ParameterBadges name={name} values={value} />;
+        const columns = recordColumns(value);
+        if (columns) return <ParameterRecords rows={value} columns={columns} />;
+    } else if (value && typeof value === 'object') {
+        const entries = Object.entries(value);
+        if (entries.length === 0) return <span className="text-muted">None</span>;
+        if (entries.every(([, item]) => isPrimitiveValue(item))) return <ParameterEntries entries={entries} />;
+    } else {
+        return <span className="font-monospace">{formatParameterValue(value)}</span>;
+    }
+
+    return (
+        <pre className="mb-0 bg-transparent p-0 border-0 font-monospace">{JSON.stringify(value, null, 2)}</pre>
+    );
+};
+
+const TrainingParameters = ({ training, model }) => {
     const parameters = training?.kwargs || {};
     const entries = Object.entries(parameters);
 
@@ -1185,6 +1678,22 @@ const TrainingParameters = ({ training }) => {
     }
 
     return (
+        <PanelCard
+            icon={<Sliders2 />}
+            title="Training parameters"
+            hint="The configuration this run was started with."
+            className="p-0"
+            actions={
+                <DownloadButton
+                    title="Download parameters JSON"
+                    icon={<FiletypeJson />}
+                    onClick={() => downloadBlob(
+                        jsonBlob(parameters),
+                        trainingFilename(model, training, 'parameters.json')
+                    )}
+                />
+            }
+        >
         <div className="overflow-auto" style={{ height: 'calc(100vh - 400px)' }}>
             <Table responsive hover size="sm" className="mb-0 small align-middle border-light-subtle">
                 <thead className="sticky-top">
@@ -1197,44 +1706,93 @@ const TrainingParameters = ({ training }) => {
                     {entries.map(([key, value]) => (
                         <tr key={key}>
                             <td className="fw-bold text-muted small text-capitalize">{key.replace(/_/g, ' ')}</td>
-                            <td className="font-monospace">
-                                {typeof value === 'object' && value !== null ? (
-                                    <pre className="mb-0 bg-transparent p-0 border-light-subtle">{formatParameterValue(value)}</pre>
-                                ) : (
-                                    formatParameterValue(value)
-                                )}
+                            <td>
+                                <ParameterValue name={key} value={value} />
                             </td>
                         </tr>
                     ))}
                 </tbody>
             </Table>
         </div>
+        </PanelCard>
     );
 };
 
-const TrainingInspector = ({ training, previousTraining, trainingData, previousTrainingData }) => {
+// The dataset and the version it is diffed against arrive well after the run
+// itself, so this tab carries its own loader rather than holding up the ones
+// that only need the training record.
+const TrainingData = ({ training, model, previousTraining, trainingData, previousTrainingData, loading }) => (
+    // The toolbar renders through the wait too, so the frame does not shift
+    // under the user when the dataset finally lands.
+    <PanelCard
+        icon={<PlusSlashMinus />}
+        title="Dataset changes"
+        hint="Utterances added, removed and edited since the previous version."
+        className="p-0"
+        actions={
+            <DownloadButton
+                title="Download dataset CSV"
+                icon={<FiletypeCsv />}
+                disabled={loading || !trainingData}
+                onClick={() => downloadBlob(
+                    rawCsvBlob(trainingData),
+                    trainingFilename(model, training, 'utterances.csv')
+                )}
+            />
+        }
+    >
+        {loading ? (
+            <div
+                className="d-flex flex-column justify-content-center align-items-center text-muted"
+                style={{ height: 'calc(100vh - 400px)', minHeight: '400px' }}
+            >
+                <Spinner animation="border" variant="secondary" />
+                <div className="small fw-bold mt-3">loading dataset...</div>
+            </div>
+        ) : (
+            <SimpleDiffViewer
+                oldValue={previousTrainingData}
+                newValue={trainingData}
+                oldVersion={previousTraining?.version || '0'}
+                newVersion={training.version}
+            />
+        )}
+    </PanelCard>
+);
+
+const TrainingInspector = ({ training, model, previousTraining, trainingData, previousTrainingData, dataLoading }) => {
     const defaultTab = training.status === 'FAILURE' ? 'traceback' : 'changes';
-    const report = getTrainingReport(training);
-    const hasSummary = Boolean(report?.summary);
-    const hasHistory = Boolean(report?.history && Object.keys(report.history).length > 0);
+    const hasSummary = Boolean(training?.result?.summary);
+    const hasHistory = Boolean(training?.result?.history && Object.keys(training.result.history).length > 0);
 
     return (
         <Card className="border-0 mt-4 overflow-hidden">
             <Card.Body className="p-0">
-                <Tabs defaultActiveKey={defaultTab} variant="pills" className="custom-tabs gap-2 mb-2">
+                {/* mountOnEnter: the plots pull in a chart per metric and the
+                    reports and matrices render a row per label, none of which
+                    is worth building for a tab the user never opens. */}
+                <Tabs defaultActiveKey={defaultTab} variant="pills" className="custom-tabs gap-2 mb-2" mountOnEnter>
                     <Tab
                         eventKey="changes"
                         title={<TabTitle icon={<PlusSlashMinus />}>Data</TabTitle>}
                     >
                         <div className="pt-3">
-                            <div className="border border-light-subtle rounded overflow-hidden">
-                                <SimpleDiffViewer
-                                    oldValue={previousTrainingData}
-                                    newValue={trainingData}
-                                    oldVersion={previousTraining?.version || '0'}
-                                    newVersion={training.version}
-                                />
-                            </div>
+                            <TrainingData
+                                training={training}
+                                model={model}
+                                previousTraining={previousTraining}
+                                trainingData={trainingData}
+                                previousTrainingData={previousTrainingData}
+                                loading={dataLoading}
+                            />
+                        </div>
+                    </Tab>
+                    <Tab
+                        eventKey="parameters"
+                        title={<TabTitle icon={<Sliders2 />}>Parameters</TabTitle>}
+                    >
+                        <div className="pt-3">
+                            <TrainingParameters training={training} model={model} />
                         </div>
                     </Tab>
                     <Tab
@@ -1243,15 +1801,7 @@ const TrainingInspector = ({ training, previousTraining, trainingData, previousT
                         disabled={!hasSummary && training.status !== 'SUCCESS'}
                     >
                         <div className="pt-3">
-                            <TrainingSummary training={training} />
-                        </div>
-                    </Tab>
-                    <Tab
-                        eventKey="parameters"
-                        title={<TabTitle icon={<Sliders2 />}>Parameters</TabTitle>}
-                    >
-                        <div className="pt-3">
-                            <TrainingParameters training={training} />
+                            <TrainingSummary training={training} model={model} />
                         </div>
                     </Tab>
                     <Tab
@@ -1269,7 +1819,7 @@ const TrainingInspector = ({ training, previousTraining, trainingData, previousT
                         disabled={training.status !== 'SUCCESS'}
                     >
                         <div className="pt-3">
-                            <ReportsPanel training={training} />
+                            <ReportsPanel training={training} model={model} />
                         </div>
                     </Tab>
                     <Tab
@@ -1278,7 +1828,16 @@ const TrainingInspector = ({ training, previousTraining, trainingData, previousT
                         disabled={training.status !== 'SUCCESS'}
                     >
                         <div className="pt-3">
-                            <ConfusionMatrixPanel training={training} />
+                            <ConfusionMatrixPanel training={training} model={model} />
+                        </div>
+                    </Tab>
+                    <Tab
+                        eventKey="thresholds"
+                        title={<TabTitle icon={<GraphUp />}>Thresholds</TabTitle>}
+                        disabled={training.status !== 'SUCCESS'}
+                    >
+                        <div className="pt-3">
+                            <ThresholdsPanel training={training} model={model} />
                         </div>
                     </Tab>
                     <Tab
@@ -1287,9 +1846,27 @@ const TrainingInspector = ({ training, previousTraining, trainingData, previousT
                         disabled={training.status !== 'FAILURE'}
                     >
                         <div className="pt-3">
-                            <pre className="p-3 mb-0 bg-danger bg-opacity-10 text-danger border-0 rounded small overflow-auto" style={{ height: 'calc(100vh - 400px)' }}>
-                                {training.traceback || 'No traceback available.'}
-                            </pre>
+                            <PanelCard
+                                icon={<BugFill />}
+                                title="Traceback"
+                                hint="What the training worker raised when this run failed."
+                                className="p-0"
+                                actions={
+                                    <DownloadButton
+                                        title="Download traceback TXT"
+                                        icon={<FiletypeTxt />}
+                                        disabled={!training.traceback}
+                                        onClick={() => downloadBlob(
+                                            textBlob(training.traceback),
+                                            trainingFilename(model, training, 'traceback.txt')
+                                        )}
+                                    />
+                                }
+                            >
+                                <pre className="p-3 mb-0 bg-danger bg-opacity-10 text-danger border-0 small overflow-auto" style={{ height: 'calc(100vh - 400px)' }}>
+                                    {training.traceback || 'No traceback available.'}
+                                </pre>
+                            </PanelCard>
                         </div>
                     </Tab>
                 </Tabs>
@@ -1310,6 +1887,7 @@ const TrainingVersion = () => {
     const [trainingData, setTrainingData] = useState('');
     const [previousTrainingData, setPreviousTrainingData] = useState('');
     const [loading, setLoading] = useState(false);
+    const [dataLoading, setDataLoading] = useState(false);
     const [stoppingTraining, setStoppingTraining] = useState(false);
     const [restartingTraining, setRestartingTraining] = useState(false);
     const [showRestartConfirmation, setShowRestartConfirmation] = useState(false);
@@ -1395,54 +1973,80 @@ const TrainingVersion = () => {
     };
 
     useEffect(() => {
-        if (user && modelId && trainingId) {
-            const getTraining = async () => {
-                try {
-                    setLoading(true);
-                    const headers = { "Authorization": `Bearer ${user.token}` };
+        if (!user || !modelId || !trainingId) return;
 
-                    // Fetch current training
-                    const trainingResponse = await axios.get(`/api/models/${modelId}/trainings/${trainingId}`, {
-                        params: { extended: '1' },
-                        headers
-                    });
-                    const currentTraining = trainingResponse.data;
-                    setTraining(currentTraining);
+        let cancelled = false;
+        const headers = { "Authorization": `Bearer ${user.token}` };
+        const fail = (error) => {
+            if (!cancelled) setAlert({ variant: 'danger', message: error.response?.data?.error || error.message });
+        };
 
-                    // Fetch trainings list to find previous
-                    const listResponse = await axios.get(`/api/models/${modelId}/trainings`, {
-                        params: { extended: '1', per_page: 100 },
-                        headers
-                    });
+        // The run itself is a single cheap read, and everything except the Data
+        // tab is derived from it — so it gates the page.
+        const getTraining = async () => {
+            try {
+                setLoading(true);
+                const response = await axios.get(`/api/models/${modelId}/trainings/${trainingId}`, {
+                    params: { extended: '1' },
+                    headers
+                });
+                if (cancelled) return;
+                setTraining(response.data);
+            } catch (error) {
+                fail(error);
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        };
 
-                    const allTrainings = listResponse.data.trainings || [];
-                    const currentIndex = allTrainings.findIndex(t => t.id === currentTraining.id);
-                    let previous = null;
-                    if (currentIndex !== -1 && currentIndex < allTrainings.length - 1) {
-                        previous = allTrainings[currentIndex + 1];
-                    }
-                    setPreviousTraining(previous);
+        // Resolving the previous version means materializing every run's Celery
+        // result, and both datasets come out of blob storage; together they
+        // dwarf the fetch above, so they run alongside it and only the Data tab
+        // waits on them.
+        const getTrainingData = async () => {
+            try {
+                setDataLoading(true);
+                const listResponse = await axios.get(`/api/models/${modelId}/trainings`, {
+                    params: { extended: '1', per_page: 100 },
+                    headers
+                });
+                if (cancelled) return;
 
-                    // Fetch data for diff
-                    const dataPromises = [
-                        axios.get(`/api/models/${modelId}/trainings/${trainingId}/data`, { headers }).then(res => res.data)
-                    ];
-                    if (previous) {
-                        dataPromises.push(axios.get(`/api/models/${modelId}/trainings/${previous.id}/data`, { headers }).then(res => res.data));
-                    }
+                const allTrainings = listResponse.data.trainings || [];
+                const currentIndex = allTrainings.findIndex(t => String(t.id) === String(trainingId));
+                const previous = currentIndex !== -1 && currentIndex < allTrainings.length - 1
+                    ? allTrainings[currentIndex + 1]
+                    : null;
+                setPreviousTraining(previous);
 
-                    const [currentData, prevData] = await Promise.all(dataPromises);
-                    setTrainingData(currentData);
-                    setPreviousTrainingData(prevData || '');
-
-                } catch (error) {
-                    setAlert({ variant: 'danger', message: error.response?.data?.error || error.message });
-                } finally {
-                    setLoading(false);
+                const dataPromises = [
+                    axios.get(`/api/models/${modelId}/trainings/${trainingId}/data`, { headers }).then(res => res.data)
+                ];
+                if (previous) {
+                    dataPromises.push(axios.get(`/api/models/${modelId}/trainings/${previous.id}/data`, { headers }).then(res => res.data));
                 }
-            };
-            getTraining();
-        }
+
+                const [currentData, prevData] = await Promise.all(dataPromises);
+                if (cancelled) return;
+                setTrainingData(currentData);
+                setPreviousTrainingData(prevData || '');
+            } catch (error) {
+                fail(error);
+            } finally {
+                if (!cancelled) setDataLoading(false);
+            }
+        };
+
+        // Clear first, so switching versions never diffs the new dataset
+        // against whatever the previous one left behind.
+        setTrainingData('');
+        setPreviousTrainingData('');
+        setPreviousTraining(null);
+
+        getTraining();
+        getTrainingData();
+
+        return () => { cancelled = true; };
     }, [user, modelId, trainingId]);
 
     useEffect(() => {
@@ -1508,9 +2112,11 @@ const TrainingVersion = () => {
                     />
                     <TrainingInspector
                         training={training}
+                        model={model}
                         previousTraining={previousTraining}
                         trainingData={trainingData}
                         previousTrainingData={previousTrainingData}
+                        dataLoading={dataLoading}
                     />
                     <Modal centered show={showStopConfirmation} onHide={() => setShowStopConfirmation(false)}>
                         <Modal.Header closeButton>
@@ -1519,9 +2125,9 @@ const TrainingVersion = () => {
                         <Modal.Body>
                             <p className="small">Stop this training run? Progress from the active run will be interrupted.</p>
                             <div className="d-flex justify-content-end gap-2">
-                                <Button variant="light" size="sm" className="border small" onClick={() => setShowStopConfirmation(false)} disabled={stoppingTraining}>CANCEL</Button>
+                                <Button variant="light" size="sm" className="border small" onClick={() => setShowStopConfirmation(false)} disabled={stoppingTraining}>Cancel</Button>
                                 <Button variant="danger" size="sm" className="small" onClick={handleStopTraining} disabled={stoppingTraining}>
-                                    {stoppingTraining ? <><Spinner animation="border" size="sm" />&nbsp;STOPPING...</> : 'STOP'}
+                                    {stoppingTraining ? <><Spinner animation="border" size="sm" />&nbsp;Stopping...</> : 'Stop'}
                                 </Button>
                             </div>
                         </Modal.Body>
@@ -1542,7 +2148,7 @@ const TrainingVersion = () => {
                                     className="border small"
                                     disabled={restartingTraining}
                                 >
-                                    CANCEL
+                                    Cancel
                                 </Button>
                                 <Button
                                     variant="warning"
@@ -1552,9 +2158,9 @@ const TrainingVersion = () => {
                                     className="small"
                                 >
                                     {restartingTraining ? (
-                                        <><Spinner animation="border" size="sm" />&nbsp;RETRYING...</>
+                                        <><Spinner animation="border" size="sm" />&nbsp;Retrying...</>
                                     ) : (
-                                        'RETRY'
+                                        'Retry'
                                     )}
                                 </Button>
                             </div>
@@ -1696,6 +2302,11 @@ const History = () => {
 
     const updateParameter = (field, value) => {
         const next = { ...paramters, [field]: value };
+        // Dropping a metric can strip the option `monitor` points at, leaving
+        // the select on a value Keras will never log; fall back to the default.
+        if (field === 'metrics' && registry.monitor) {
+            next.monitor = clampParameterValue(registry.monitor, next.monitor, next);
+        }
         setParameters(next);
         setParameterErrors(validateParameters(next));
     };
@@ -1782,15 +2393,59 @@ const History = () => {
                 value={paramters[field]}
                 onChange={(e) => updateParameter(field, e.target.value)}
             >
-                {metadata.options.map(([value, label]) => (
+                {optionsFor(metadata, paramters).map(([value, label]) => (
                     <option key={value} value={value}>{label}</option>
                 ))}
             </Form.Select>
         </TrainingField>
     );
 
+    const renderChecksControl = (field, metadata) => {
+        const selected = Array.isArray(paramters[field]) ? paramters[field] : [];
+        const toggle = (name) => updateParameter(
+            field,
+            // Keep at least one metric selected — a run with none would fall
+            // back to accuracy on the server anyway, and the empty state gives
+            // the monitor select nothing to point at.
+            selected.includes(name)
+                ? (selected.length > 1 ? selected.filter((entry) => entry !== name) : selected)
+                : normalizeMetricNames([...selected, name])
+        );
+        return (
+            <Form.Group className="mb-3" controlId={`training-${field}`}>
+                <Form.Label className="small fw-bold mb-1">{metadata.label}</Form.Label>
+                <div className="border rounded p-2">
+                    {optionsFor(metadata, paramters).map(([name, label]) => (
+                        <Form.Check
+                            key={name}
+                            type="checkbox"
+                            id={`training-${field}-${name}`}
+                            className="small mb-1"
+                            checked={selected.includes(name)}
+                            disabled={selected.length === 1 && selected.includes(name)}
+                            onChange={() => toggle(name)}
+                            label={
+                                <>
+                                    {label}
+                                    <span className="text-muted d-block" style={{ fontSize: '0.7rem' }}>
+                                        {METRIC_HELP[name]}
+                                    </span>
+                                </>
+                            }
+                        />
+                    ))}
+                </div>
+                <Form.Text className="text-muted d-block" style={{ fontSize: '0.7rem' }}>{metadata.help}</Form.Text>
+            </Form.Group>
+        );
+    };
+
     const renderHiddenLayersControl = (field, metadata) => {
         const layers = Array.isArray(paramters[field]) ? paramters[field] : [];
+        // Dense-only stacks keep the single-choice select off the row.
+        const typeOptions = LAYER_TYPE_OPTIONS.filter(
+            ([value]) => (metadata.types || POOLED_LAYER_TYPES).includes(value)
+        );
         const updateLayer = (index, patch) => updateParameter(
             field,
             layers.map((layer, i) => (i === index ? { ...layer, ...patch } : layer))
@@ -1804,7 +2459,7 @@ const History = () => {
                         size="sm"
                         className="border py-0 px-2 small"
                         disabled={layers.length >= MAX_HIDDEN_LAYERS}
-                        onClick={() => updateParameter(field, [...layers, { units: 64, activation: 'relu' }])}
+                        onClick={() => updateParameter(field, [...layers, { type: DEFAULT_LAYER_TYPE, units: 64, activation: 'relu' }])}
                     >
                         <PlusLg />&nbsp;layer
                     </Button>
@@ -1817,6 +2472,19 @@ const History = () => {
                 {layers.map((layer, index) => (
                     <div key={index} className="d-flex align-items-center gap-2 mb-2">
                         <span className="small text-muted font-monospace" style={{ width: '1.25rem' }}>{index + 1}</span>
+                        {typeOptions.length > 1 && (
+                            <Form.Select
+                                size="sm"
+                                style={{ width: '5.5rem' }}
+                                aria-label={`Layer ${index + 1} type`}
+                                value={layer.type || DEFAULT_LAYER_TYPE}
+                                onChange={(e) => updateLayer(index, { type: e.target.value })}
+                            >
+                                {typeOptions.map(([value, label]) => (
+                                    <option key={value} value={value}>{label}</option>
+                                ))}
+                            </Form.Select>
+                        )}
                         <Form.Range
                             className="flex-grow-1"
                             min={HIDDEN_LAYER_UNITS.min}
@@ -1857,12 +2525,13 @@ const History = () => {
                 .filter(([, metadata]) => metadata.tab === tab)
                 .map(([field, metadata]) => {
                     if (metadata.showIf && !metadata.showIf(paramters)) return null;
-                    const fullWidth = ['switch', 'layers'].includes(metadata.control) || field === 'pretrained_model';
+                    const fullWidth = ['switch', 'layers', 'checks'].includes(metadata.control) || field === 'pretrained_model';
                     return (
                         <Col sm={fullWidth ? 12 : 6} key={field}>
                             {metadata.control === 'slider' && renderSliderControl(field, metadata)}
                             {metadata.control === 'switch' && renderSwitchControl(field, metadata)}
                             {metadata.control === 'select' && renderSelectControl(field, metadata)}
+                            {metadata.control === 'checks' && renderChecksControl(field, metadata)}
                             {metadata.control === 'layers' && renderHiddenLayersControl(field, metadata)}
                         </Col>
                     );
@@ -1902,7 +2571,7 @@ const History = () => {
         if (field === 'architecture') return ARCHITECTURE_LABELS[value] || value;
         if (field === 'hidden_layers') {
             return Array.isArray(value) && value.length > 0
-                ? value.map((layer) => `${layer.units}·${layer.activation}`).join(' → ')
+                ? value.map((layer) => `${layer.type || DEFAULT_LAYER_TYPE}·${layer.units}·${layer.activation}`).join(' → ')
                 : 'none';
         }
         if (typeof value === 'boolean') return value ? 'on' : 'off';
@@ -2136,7 +2805,7 @@ const History = () => {
                     <ButtonToolbar>
                         <ButtonGroup className="me-2">
                             {hasActiveTraining ? (
-                                <Button variant="light" disabled className="border">
+                                <Button variant="primary" disabled>
                                     <Spinner
                                         animation={activeTrainingStatus === 'STARTED' ? 'grow' : 'border'}
                                         size="sm"
@@ -2145,9 +2814,8 @@ const History = () => {
                                 </Button>
                             ) : (
                                 <Button
-                                    variant="light"
+                                    variant="primary"
                                     onClick={handleOpenStartTraining}
-                                    className="border"
                                 >
                                     <PlusLg />&nbsp;create training
                                 </Button>
@@ -2226,7 +2894,7 @@ const History = () => {
                                                 <td className="font-monospace">{(() => {
                                                     const trainAcc = training.status === 'SUCCESS'
                                                         ? getTrainingTrainAccuracy(training)
-                                                        : getLatestHistoryMetric(training, 'accuracy');
+                                                        : getLiveAccuracy(training);
                                                     return trainAcc !== null && trainAcc !== undefined ? (trainAcc * 100).toFixed(2) : '';
                                                 })()}</td>
                                                 <td className="font-monospace">{training.status === 'SUCCESS' && getTrainingAccuracy(training) !== null && (getTrainingAccuracy(training) * 100).toFixed(2)}</td>
@@ -2399,6 +3067,12 @@ const History = () => {
                                     <Tab eventKey="schedule" title="Schedule">
                                         {renderTabFields('schedule')}
                                     </Tab>
+                                    {/* Ahead of Callbacks: what the run tracks
+                                        determines what early stopping can
+                                        monitor. */}
+                                    <Tab eventKey="metrics" title="Metrics">
+                                        {renderTabFields('metrics')}
+                                    </Tab>
                                     <Tab eventKey="callbacks" title="Callbacks">
                                         {renderTabFields('callbacks')}
                                     </Tab>
@@ -2408,8 +3082,8 @@ const History = () => {
                                 </Tabs>
                             </div>
                             <div className="d-flex justify-content-end gap-2">
-                                <Button variant="light" size="sm" className="border small" onClick={handleCloseStartTraining}>CANCEL</Button>
-                                <Button variant="primary" size="sm" className="small" type="submit">CONTINUE</Button>
+                                <Button variant="light" size="sm" className="border small" onClick={handleCloseStartTraining}>Cancel</Button>
+                                <Button variant="primary" size="sm" className="small" type="submit">Continue</Button>
                             </div>
                         </Modal.Body>
                     </Form>
@@ -2428,7 +3102,7 @@ const History = () => {
                             : `Retry ${trainingAction?.trainings.length > 1 ? `these ${trainingAction.trainings.length} trainings` : 'this training'}? The existing results for ${trainingAction?.trainings.length > 1 ? 'these versions' : 'this version'} will be replaced.`}
                     </p>
                     <div className="d-flex justify-content-end gap-2">
-                        <Button variant="light" size="sm" className="border small" onClick={() => setTrainingAction(null)}>CANCEL</Button>
+                        <Button variant="light" size="sm" className="border small" onClick={() => setTrainingAction(null)}>Cancel</Button>
                         <Button
                             variant={trainingAction?.type === 'stop' ? 'danger' : 'warning'}
                             size="sm"
@@ -2440,7 +3114,7 @@ const History = () => {
                                 if (action?.type === 'retry') await Promise.all(action.trainings.map((training) => handleRestartTraining(training)));
                             }}
                         >
-                            {trainingAction?.type === 'stop' ? 'STOP' : 'RETRY'}
+                            {trainingAction?.type === 'stop' ? 'Stop' : 'Retry'}
                         </Button>
                     </div>
                 </Modal.Body>
@@ -2461,7 +3135,7 @@ const History = () => {
                         <p className="small">Are you sure you want to delete this training record?</p>
                     )}
                     <div className="d-flex justify-content-end gap-2">
-                        <Button variant="light" size="sm" onClick={handleCloseDeleteConfirmation} className="border small">CANCEL</Button>
+                        <Button variant="light" size="sm" onClick={handleCloseDeleteConfirmation} className="border small">Cancel</Button>
                         <Button
                             variant="danger"
                             size="sm"
@@ -2470,9 +3144,9 @@ const History = () => {
                             className="small"
                         >
                             {submitting ? (
-                                <><Spinner animation="border" size="sm" />&nbsp;DELETING...</>
+                                <><Spinner animation="border" size="sm" />&nbsp;Deleting...</>
                             ) : (
-                                'DELETE'
+                                'Delete'
                             )}
                         </Button>
                     </div>
