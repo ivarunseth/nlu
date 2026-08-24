@@ -4,7 +4,7 @@ from flask import abort, url_for, current_app
 
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from jwt import encode
+from jwt import encode, decode, InvalidTokenError
 
 from .. import db
 from ..utils.common import timestamp, format_timestamp
@@ -42,6 +42,25 @@ class User(db.Model):
             'exp': datetime.utcnow() + timedelta(minutes=expiry or current_app.config['TOKEN_EXPIRY'])
         }, current_app.config['SECRET_KEY'])
         return self.token
+
+    def token_usable(self):
+        """Whether the stored token could still authenticate a request.
+
+        A token is only cleared from the row when a request actually presents
+        it (``server.auth._invalidate_token``), so a session that lapsed while
+        the user was idle leaves an expired JWT sitting here. Sign-in has to
+        check the ``exp`` claim rather than just the column being non-NULL,
+        otherwise it hands that dead token straight back to the client.
+        """
+        if self.token is None:
+            return False
+        try:
+            decode(self.token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
+        except InvalidTokenError:
+            # ExpiredSignatureError subclasses InvalidTokenError, so this
+            # covers expiry and a token minted under a rotated SECRET_KEY.
+            return False
+        return True
 
     @property
     def model_list(self):

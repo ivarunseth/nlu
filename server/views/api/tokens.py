@@ -13,7 +13,7 @@ def create_token():
     Request a user token.
     This endpoint is requires basic auth with nickname and password.
     """
-    if g.current_user.token is None:
+    if not g.current_user.token_usable():
         g.current_user.generate_token()
         db.session.commit()
     return g.current_user.to_dict(), 200
