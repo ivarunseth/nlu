@@ -1,5 +1,5 @@
 import { lazy, Suspense, useContext, useEffect, useState } from 'react';
-import { Container, Row, Col, Nav } from 'react-bootstrap';
+import { Container, Row, Col, Nav, Navbar } from 'react-bootstrap';
 import { Translate, ClockHistory, ClipboardCheck, RocketTakeoff, Activity, Gear } from 'react-bootstrap-icons';
 import { Routes, Route, Link, useLocation, useParams } from 'react-router-dom';
 import { SocketProvider } from '../../contexts/SocketContext';
@@ -17,6 +17,15 @@ const Settings = lazy(() => import('./routes/settings/Settings'));
 const TrainingVersion = lazy(() => import('./routes/history/History').then((module) => ({
     default: module.TrainingVersion
 })));
+
+const SECTIONS = {
+    build: { icon: <Translate />, label: 'Build' },
+    history: { icon: <ClockHistory />, label: 'History' },
+    test: { icon: <ClipboardCheck />, label: 'Test' },
+    publish: { icon: <RocketTakeoff />, label: 'Publish' },
+    analyse: { icon: <Activity />, label: 'Analyse' },
+    settings: { icon: <Gear />, label: 'Settings' },
+};
 
 const ModelContent = () => {
     const { modelId } = useParams();
@@ -101,7 +110,7 @@ const ModelContent = () => {
     return (
         <>
             <Row className='page-context-bar align-items-center gx-3 row-gap-2'>
-                <Col xs={12} md={4} xl={5} className='d-flex align-items-center'>
+                <Col xs={12} lg={4} xl={5} className='d-flex align-items-center'>
                     <nav
                         aria-label='breadcrumb'
                         className='d-flex align-items-center flex-wrap gap-1 lh-sm'
@@ -150,68 +159,36 @@ const ModelContent = () => {
                         )}
                     </nav>
                 </Col>
-                <Col xs={12} md={8} xl={7} className='d-flex align-items-center'>
-                    <Nav
-                        fill
-                        variant='underline'
-                        activeKey={activeSection}
-                        className='justify-content-md-end flex-nowrap overflow-auto w-100'
-                    >
-                        <Nav.Item>
-                            <Nav.Link
-                                eventKey='build'
-                                as={Link}
-                                to={`${modelBasePath}/build`}
+                <Col xs={12} lg={8} xl={7} className='d-flex align-items-center'>
+                    <Navbar expand='lg' collapseOnSelect className='p-0 w-100'>
+                        <Navbar.Toggle aria-controls='model-subnav-collapse' className='border-0 ms-auto'>
+                            <span className='navbar-toggler-icon' />
+                            {' '}
+                            {SECTIONS[activeSection]?.icon}
+                            {' '}
+                            {SECTIONS[activeSection]?.label}
+                        </Navbar.Toggle>
+                        <Navbar.Collapse id='model-subnav-collapse'>
+                            <Nav
+                                fill
+                                variant='underline'
+                                activeKey={activeSection}
+                                className='justify-content-lg-end flex-nowrap overflow-auto w-100'
                             >
-                                <Translate />&nbsp;Build
-                            </Nav.Link>
-                        </Nav.Item>
-                        <Nav.Item>
-                            <Nav.Link
-                                eventKey='history'
-                                as={Link}
-                                to={`${modelBasePath}/history`}
-                            >
-                                <ClockHistory />&nbsp;History
-                            </Nav.Link>
-                        </Nav.Item>
-                        <Nav.Item>
-                            <Nav.Link
-                                eventKey='test'
-                                as={Link}
-                                to={`${modelBasePath}/test`}
-                            >
-                                <ClipboardCheck />&nbsp;Test
-                            </Nav.Link>
-                        </Nav.Item>
-                        <Nav.Item>
-                            <Nav.Link
-                                eventKey='publish'
-                                as={Link}
-                                to={`${modelBasePath}/publish`}
-                            >
-                                <RocketTakeoff />&nbsp;Publish
-                            </Nav.Link>
-                        </Nav.Item>
-                        <Nav.Item>
-                            <Nav.Link
-                                eventKey='analyse'
-                                as={Link}
-                                to={`${modelBasePath}/analyse`}
-                            >
-                                <Activity />&nbsp;Analyse
-                            </Nav.Link>
-                        </Nav.Item>
-                        <Nav.Item>
-                            <Nav.Link
-                                eventKey='settings'
-                                as={Link}
-                                to={`${modelBasePath}/settings`}
-                            >
-                                <Gear />&nbsp;Settings
-                            </Nav.Link>
-                        </Nav.Item>
-                    </Nav>
+                                {Object.entries(SECTIONS).map(([key, { icon, label }]) => (
+                                    <Nav.Item key={key}>
+                                        <Nav.Link
+                                            eventKey={key}
+                                            as={Link}
+                                            to={`${modelBasePath}/${key}`}
+                                        >
+                                            {icon}&nbsp;{label}
+                                        </Nav.Link>
+                                    </Nav.Item>
+                                ))}
+                            </Nav>
+                        </Navbar.Collapse>
+                    </Navbar>
                 </Col>
             </Row>
             <Suspense fallback={null}>
