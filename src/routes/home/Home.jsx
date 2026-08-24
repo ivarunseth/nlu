@@ -179,8 +179,7 @@ const Home = () => {
                     <ButtonToolbar>
                         <ButtonGroup className="me-2">
                             <Button
-                                variant="light"
-                                className="border"
+                                variant="primary"
                                 onClick={() => setShowCreateForm(true)}
                             >
                                 <PlusLg />&nbsp;create model

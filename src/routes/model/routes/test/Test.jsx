@@ -1041,7 +1041,7 @@ const Test = () => {
                                                 <kbd className="bg-body-secondary text-muted border px-1 py-0" style={{ fontSize: "0.65rem" }}>Enter</kbd>
                                                 to run
                                             </span>
-                                            <Button type="submit" variant="light" size="sm" disabled={loading || busy || !isDeployed || !query.trim()} className="border d-inline-flex align-items-center gap-1 px-3">
+                                            <Button type="submit" variant="primary" size="sm" disabled={loading || busy || !isDeployed || !query.trim()} className="d-inline-flex align-items-center gap-1 px-3">
                                                 {loading ? (
                                                     <><Spinner animation="border" size="sm" />&nbsp;Sending</>
                                                 ) : !isDeployed ? (

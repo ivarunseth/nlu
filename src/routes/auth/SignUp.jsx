@@ -125,8 +125,7 @@ const SignUp = () => {
                         <div className="d-grid gap-2 mb-3">
                             <Button
                                 type="submit"
-                                variant="light"
-                                className="border"
+                                variant="primary"
                                 disabled={submitting}
                             >
                             {submitting ? (

@@ -82,7 +82,7 @@ const ImportDatasetModal = ({ show, submitting, summary, formats = DATASET_FORMA
                         </Alert>
                     )}
                     <div className="d-grid gap-2">
-                        <Button type="submit" variant="light" className="border" disabled={submitting || !file}>
+                        <Button type="submit" variant="primary" disabled={submitting || !file}>
                             {submitting ? (
                                 <><Spinner animation="border" size="sm" />&nbsp;Importing...</>
                             ) : (

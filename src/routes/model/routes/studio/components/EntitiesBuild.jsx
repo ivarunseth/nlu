@@ -183,7 +183,7 @@ const EntitiesBuild = ({ entityLink, onMutate }) => {
             )}
             <Row className="mt-4 g-2">
                 <Col xs="auto">
-                    <Button variant="light" className="border" onClick={handleOpenCreate}>
+                    <Button variant="primary" onClick={handleOpenCreate}>
                         <PlusLg />&nbsp;create entity
                     </Button>
                 </Col>

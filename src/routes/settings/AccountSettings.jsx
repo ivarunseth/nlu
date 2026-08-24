@@ -69,7 +69,7 @@ function AccountSettings() {
                                 </Form.Group>
 
                                 <div className="d-flex justify-content-end">
-                                    <Button variant="light" size="sm" className="border small" type="submit">
+                                    <Button variant="primary" size="sm" className="small" type="submit">
                                         SAVE CHANGES
                                     </Button>
                                 </div>

@@ -1,4 +1,5 @@
-import { Button, Form, InputGroup, Modal, Spinner } from "react-bootstrap";
+import { Form, InputGroup } from "react-bootstrap";
+import FormModal from "../../../../../shared/components/FormModal";
 
 const LabelFormModal = ({
     show,
@@ -14,72 +15,59 @@ const LabelFormModal = ({
     onDatasetChange,
     onHeaderChange
 }) => (
-    <Modal centered show={show} onHide={onHide}>
-        <Modal.Header closeButton>
-            <Modal.Title>{title}</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-            <Form noValidate validated={validated} onSubmit={onSubmit}>
-                <Form.Group className="mb-3">
-                    <InputGroup hasValidation>
-                        <Form.Floating>
-                            <Form.Control
-                                id="label-name"
-                                type="text"
-                                placeholder="Enter a name..."
-                                value={name}
-                                onChange={(e) => onNameChange(e.target.value)}
-                                autoFocus
-                                required
-                            />
-                            <Form.Label htmlFor="label-name">Name</Form.Label>
-                            <Form.Control.Feedback type="invalid">
-                                Please enter a name.
-                            </Form.Control.Feedback>
-                        </Form.Floating>
-                    </InputGroup>
-                    <Form.Text muted>
-                        Choose a unique name for the label.
-                    </Form.Text>
-                </Form.Group>
-                <Form.Group className="mb-3">
-                    <Form.Label>Dataset</Form.Label>
+    <FormModal
+        show={show}
+        title={title}
+        validated={validated}
+        submitting={submitting}
+        onHide={onHide}
+        onSubmit={onSubmit}
+    >
+        <Form.Group className="mb-3">
+            <InputGroup hasValidation>
+                <Form.Floating>
                     <Form.Control
-                        type="file"
-                        onChange={(e) => onDatasetChange(e.target.files[0])}
+                        id="label-name"
+                        type="text"
+                        placeholder="Enter a name..."
+                        value={name}
+                        onChange={(e) => onNameChange(e.target.value)}
+                        autoFocus
+                        required
                     />
-                    <Form.Text muted>
-                        You can optionally upload a dataset containing comma or tab separated text and labels.
-                    </Form.Text>
-                </Form.Group>
-                <Form.Group className="mb-3">
-                    <Form.Check
-                        type="checkbox"
-                        label="contains header"
-                        disabled={!dataset}
-                        onChange={(e) => onHeaderChange(e.target.checked)}
-                        checked={header}
-                    />
-                    <Form.Text muted>
-                        Check only if the dataset contains a header with column names.
-                    </Form.Text>
-                </Form.Group>
-                <div className="d-grid gap-2">
-                    <Button type="submit" variant="light" className="border" disabled={submitting}>
-                        {submitting ? (
-                            <>
-                                <Spinner animation="border" size="sm" />
-                                &nbsp;
-                                Submitting...
-                            </>
-                        ) : (
-                            "Submit"
-                        )}
-                    </Button>
-                </div>
-            </Form>
-        </Modal.Body>
-    </Modal>
+                    <Form.Label htmlFor="label-name">Name</Form.Label>
+                    <Form.Control.Feedback type="invalid">
+                        Please enter a name.
+                    </Form.Control.Feedback>
+                </Form.Floating>
+            </InputGroup>
+            <Form.Text muted>
+                Choose a unique name for the label.
+            </Form.Text>
+        </Form.Group>
+        <Form.Group className="mb-3">
+            <Form.Label>Dataset</Form.Label>
+            <Form.Control
+                type="file"
+                onChange={(e) => onDatasetChange(e.target.files[0])}
+            />
+            <Form.Text muted>
+                You can optionally upload a dataset containing comma or tab separated text and labels.
+            </Form.Text>
+        </Form.Group>
+        <Form.Group>
+            <Form.Check
+                type="checkbox"
+                label="contains header"
+                disabled={!dataset}
+                onChange={(e) => onHeaderChange(e.target.checked)}
+                checked={header}
+            />
+            <Form.Text muted>
+                Check only if the dataset contains a header with column names.
+            </Form.Text>
+        </Form.Group>
+    </FormModal>
 );
 
 export default LabelFormModal;

@@ -222,18 +222,13 @@ const ClassificationBuild = ({ noun = "label", labelLink, onMutate }) => {
 
     return (
         <>
-            <Row className="mt-4">
-                <Col>
-                    {alert && <Alert variant={alert.variant} onClose={() => setAlert(null)} dismissible>{alert.message}</Alert>}
-                </Col>
-            </Row>
+            {alert && <Alert className="mt-4" variant={alert.variant} onClose={() => setAlert(null)} dismissible>{alert.message}</Alert>}
             <Row className="mt-4 g-2 align-items-center">
                 <Col xs={12} md="auto">
                     <ButtonToolbar>
                         <ButtonGroup className="me-2">
                             <Button
-                                variant="light"
-                                className="border"
+                                variant="primary"
                                 onClick={() => setShowCreateForm(true)}
                             >
                                 <PlusLg />&nbsp;create {noun}

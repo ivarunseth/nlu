@@ -198,11 +198,11 @@ const Settings = () => {
                                 )}
                                 <div className="d-flex justify-content-end gap-2 mt-3">
                                     <Button variant="light" size="sm" className="border small" disabled={saving} onClick={() => navigate("/")}>
-                                        CANCEL
+                                        Cancel
                                     </Button>
                                     <Button type="submit" variant="primary" size="sm" className="small d-inline-flex align-items-center gap-2" disabled={saving}>
                                         {saving && <Spinner animation="border" size="sm" />}
-                                        SAVE
+                                        Save
                                     </Button>
                                 </div>
                             </Form>
@@ -244,7 +244,7 @@ const Settings = () => {
                                 deployments. This cannot be undone.
                             </p>
                             <Button variant="outline-danger" size="sm" className="small" onClick={() => setShowDelete(true)}>
-                                DELETE MODEL
+                                Delete model
                             </Button>
                         </Card.Body>
                     </Card>
