@@ -21,9 +21,11 @@
   --app-chart-axis: #495057;
 }
 
-/* The app uses variant="light" for its subtle bordered action buttons. In dark
-   mode remap them onto Bootstrap's adaptive surface tokens instead of the
-   fixed light palette, so every such button adapts without per-usage changes. */
+/* Primary actions (form submits, the main create button on a page) use
+   variant="primary". variant="light" is the subtle bordered treatment for
+   everything secondary: cancel, toolbars, per-row actions. In dark mode remap
+   those onto Bootstrap's adaptive surface tokens instead of the fixed light
+   palette, so every such button adapts without per-usage changes. */
 [data-bs-theme="dark"] .btn-light {
   --bs-btn-color: var(--bs-body-color);
   --bs-btn-bg: var(--bs-tertiary-bg);
@@ -140,6 +142,233 @@ code {
 .no-scrollbar {
   -ms-overflow-style: none;  /* IE and Edge */
   scrollbar-width: none;  /* Firefox */
+}
+
+/* Entity catalogue values are edited straight in the table cell — there is no
+   edit or save button — so the field is styled as plain text and a dashed
+   underline is the only affordance: it firms up on hover, goes solid accent on
+   focus, and flashes green once a save lands (the confirmation the missing save
+   button would otherwise give). Built on Bootstrap's theme tokens, so it adapts
+   to dark mode without a separate block. */
+.inline-edit {
+    width: calc(100% + 0.5rem);
+    margin-left: -0.5rem;
+    padding: 0.125rem 0.5rem;
+    border: 0;
+    border-bottom: 1px dashed var(--bs-border-color);
+    border-radius: 0.25rem 0.25rem 0 0;
+    background-color: transparent;
+    color: inherit;
+    font: inherit;
+    outline: none;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.inline-edit:hover {
+    border-bottom-color: var(--bs-secondary-color);
+    background-color: var(--bs-tertiary-bg);
+}
+
+.inline-edit:focus {
+    border-bottom-style: solid;
+    border-bottom-color: var(--bs-primary);
+    background-color: var(--bs-tertiary-bg);
+}
+
+.inline-edit-saved {
+    animation: inline-edit-saved 1.2s ease-out;
+}
+
+@keyframes inline-edit-saved {
+    0%, 30% {
+        border-bottom-style: solid;
+        border-bottom-color: var(--bs-success);
+    }
+    100% {
+        border-bottom-color: var(--bs-border-color);
+    }
+}
+
+/* Utterance rows are edited in place with their entity spans still highlighted:
+   a transparent <textarea> laid exactly over a layer that mirrors its text. The
+   browser keeps the text, caret, selection, undo and IME; React only renders the
+   layer beneath. */
+.utterance-field {
+    position: relative;
+}
+
+/* EVERY property here affects where glyphs land, so the two layers must declare
+   them identically — the highlights line up only for as long as both lay text
+   out the same way. Change one, change the other. */
+.utterance-layer,
+.utterance-input {
+    font: inherit;
+    line-height: 2;
+    letter-spacing: inherit;
+    text-align: left;
+    padding: 0 0.25rem;
+    border: 0;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+/* In flow, so it sets the field's height — and it is the text you actually see,
+   since the textarea's own glyphs are transparent. */
+.utterance-layer {
+    pointer-events: none;
+    color: var(--bs-body-color);
+    border-bottom: 1px dashed transparent;
+    border-radius: 0.25rem 0.25rem 0 0;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.utterance-input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    resize: none;
+    overflow: hidden;
+    outline: none;
+    background-color: transparent;
+    color: transparent;
+    caret-color: var(--bs-body-color);
+}
+
+/* Translucent so the entity colours still read through a selection. */
+.utterance-input::selection {
+    background-color: rgba(var(--bs-primary-rgb), 0.25);
+}
+
+.utterance-row:hover .utterance-layer {
+    border-bottom-color: var(--bs-border-color);
+}
+
+.utterance-field:focus-within .utterance-layer {
+    border-bottom-style: solid;
+    border-bottom-color: var(--bs-primary);
+    background-color: var(--bs-tertiary-bg);
+}
+
+/* Reboot gives <mark> its own padding and background; both have to go, since
+   padding here would shift every glyph after it out from under the caret. The
+   box-shadow fakes that padding back visually without occupying any space. */
+.utterance-span {
+    padding: 0;
+    border-radius: 3px;
+}
+
+/* Names the span under the pointer. Inert, so it never intercepts a click meant
+   for the text underneath. Positioned from JS, which hit-tests the pointer
+   against the span rectangles — the layer takes no pointer events, so :hover is
+   not available here. */
+.utterance-tip {
+    position: absolute;
+    z-index: 4;
+    transform: translate(-50%, calc(-100% - 0.3rem));
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.45rem;
+    border: 1px solid transparent;
+    border-radius: 0.25rem;
+    white-space: nowrap;
+    pointer-events: none;
+    font-size: 0.7rem;
+    line-height: 1.6;
+    color: #fff;
+    background-color: rgba(33, 37, 41, 0.95);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+/* Not a straight inversion: flipping to a light chip would put a glaring white
+   box over a dark page. Lift it onto the raised surface token instead, with a
+   border to separate it from the row behind. */
+[data-bs-theme="dark"] .utterance-tip {
+    color: var(--bs-body-color);
+    background-color: var(--bs-secondary-bg);
+    border-color: var(--bs-border-color);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+}
+
+/* Used when the span sits too near the top of the scrolling list for the label
+   to fit above it. */
+.utterance-tip-below {
+    transform: translate(-50%, 0.3rem);
+}
+
+/* Revealed purely by focus, so showing it costs no React render — a re-render
+   mid-edit would disturb the caret in the textarea. */
+.utterance-hint {
+    display: none;
+}
+
+.utterance-row:focus-within .utterance-hint {
+    display: block;
+}
+
+/* The "add synonym" slot is a ghost chip: a dashed pill holding a borderless
+   field and its + button, so it sits in the chip row as an obvious empty slot
+   rather than a heavy form control bolted onto the end. */
+.synonym-add {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    /* Mirrors .badge exactly — same font size, em-relative padding, line height
+       and radius — so the ghost slot is the chips' shape, just unfilled. */
+    font-size: 0.75em;
+    line-height: 1;
+    padding: 0.35em 0.65em;
+    border: 1px dashed var(--bs-border-color);
+    border-radius: var(--bs-border-radius);
+    transition: border-color 0.15s ease;
+}
+
+.synonym-add:focus-within {
+    border-style: solid;
+    border-color: var(--bs-primary);
+}
+
+.synonym-add input {
+    width: 6.5rem;
+    height: auto;
+    padding: 0;
+    border: 0;
+    outline: none;
+    background-color: transparent;
+    color: inherit;
+    font-size: inherit;
+    line-height: inherit;
+}
+
+.synonym-add button {
+    display: inline-flex;
+    align-items: center;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--bs-secondary-color);
+    transition: color 0.15s ease;
+}
+
+.synonym-add button:enabled:hover {
+    color: var(--bs-primary);
+}
+
+.synonym-add button:disabled {
+    opacity: 0.35;
+}
+
+/* Keep the remove affordance quiet until the chip is actually pointed at. */
+.synonym-remove {
+    cursor: pointer;
+    opacity: 0.4;
+    transition: opacity 0.15s ease;
+}
+
+.synonym-chip:hover .synonym-remove,
+.synonym-remove:hover {
+    opacity: 1;
 }
 
 .entity-picker-item {

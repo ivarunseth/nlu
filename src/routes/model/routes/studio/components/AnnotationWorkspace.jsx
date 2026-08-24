@@ -24,7 +24,6 @@ const AnnotationWorkspace = ({
     suggestions,
     showIntent,
     onAnnotate,
-    onRemoveAnnotation,
     onEdit,
     onDelete,
     onAlert,
@@ -89,7 +88,6 @@ const AnnotationWorkspace = ({
                                     suggestions={suggestions}
                                     showIntent={showIntent}
                                     onAnnotate={onAnnotate}
-                                    onRemoveAnnotation={onRemoveAnnotation}
                                     onEdit={onEdit}
                                     onDelete={onDelete}
                                     onAlert={onAlert}

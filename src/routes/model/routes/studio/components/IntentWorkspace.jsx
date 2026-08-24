@@ -230,19 +230,6 @@ const IntentWorkspace = ({ intentId }) => {
         }
     };
 
-    const handleRemoveAnnotation = async (utteranceId, annotationId) => {
-        try {
-            const response = await axios.delete(
-                `/api/models/${modelId}/utterances/${utteranceId}/tags/${annotationId}`,
-                { headers }
-            );
-            replaceUtterance(response.data);
-            setSlotsRefresh((n) => n + 1);
-        } catch (error) {
-            showError(error);
-        }
-    };
-
     const handleEditUtterance = async (utteranceId, raw) => {
         const original = utterances.find((utterance) => utterance.id === utteranceId);
         if (!original) return true;
@@ -408,7 +395,7 @@ const IntentWorkspace = ({ intentId }) => {
                 left={(
                     <>
                         <InputGroup className="mb-3">
-                            <Button variant="light" className="border" onClick={handleOpenCreateSlot}>
+                            <Button variant="primary" onClick={handleOpenCreateSlot}>
                                 <PlusLg className="me-1" />
                                 Create slot
                             </Button>
@@ -457,7 +444,6 @@ const IntentWorkspace = ({ intentId }) => {
                             suggestions={suggestions}
                             showIntent={false}
                             onAnnotate={handleAnnotate}
-                            onRemoveAnnotation={handleRemoveAnnotation}
                             onEdit={handleEditUtterance}
                             onDelete={handleDeleteUtterance}
                             onAlert={(message) => setAlert({ variant: "warning", message })}

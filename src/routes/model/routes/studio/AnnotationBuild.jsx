@@ -254,19 +254,6 @@ const AnnotationBuild = () => {
         }
     };
 
-    const handleRemoveAnnotation = async (utteranceId, annotationId) => {
-        try {
-            const response = await axios.delete(
-                `/api/models/${modelId}/utterances/${utteranceId}/tags/${annotationId}`,
-                { headers }
-            );
-            replaceUtterance(response.data);
-            setEntitiesRefresh((n) => n + 1);
-        } catch (error) {
-            showError(error);
-        }
-    };
-
     // Seamless in-place edit: the row hands back inline {entity: value} markup,
     // so text and annotations are updated together in one round trip. Returns
     // whether the row may leave edit mode (false keeps the draft on a bad edit).
@@ -463,8 +450,7 @@ const AnnotationBuild = () => {
                     <>
                         <InputGroup className="mb-3">
                             <Button
-                                variant="light"
-                                className="border"
+                                variant="primary"
                                 onClick={handleOpenCreateEntity}
                             >
                                 <PlusLg className="me-1" />
@@ -543,7 +529,6 @@ const AnnotationBuild = () => {
                             suggestions={suggestions}
                             showIntent={nlu}
                             onAnnotate={handleAnnotate}
-                            onRemoveAnnotation={handleRemoveAnnotation}
                             onEdit={handleEditUtterance}
                             onDelete={handleDeleteUtterance}
                             onAlert={(message) => setAlert({ variant: "warning", message })}
