@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import uuid
 import shutil
 import tempfile
 
@@ -35,13 +36,27 @@ def model(self, model_id, path, model_type, **kwargs):
     heartbeat_interval = setting('heartbeat_interval', config.INFERENCE_HEARTBEAT_INTERVAL, float)
     heartbeat_ttl = setting('heartbeat_ttl', max(int(heartbeat_interval * 3), 1), int)
     output_ttl = setting('output_ttl', config.INFERENCE_OUTPUT_TTL, int)
+    start_ttl = int(config.INFERENCE_START_TTL)
+
+    # Identifies this run as the owner of the alive flag. It is not the task
+    # id: a lazy revive reuses the deployment's task id, and only the run that
+    # actually set the flag may retire it.
+    run = uuid.uuid4().hex
 
     # The route names the task id that owns this deployment; a run that was
     # superseded while still queued must not load or serve under it.
     if route is not None and route.task_id and route.task_id != self.request.id:
         return
 
-    lock = registry.lock(model_id, timeout=heartbeat_ttl)
+    # The lock is the serving-ownership token, so it has to outlive every
+    # blocking step taken while holding it. Loading is unbounded (artifact
+    # download, framework import, graph load) and nothing refreshes the lock
+    # until the first heartbeat, which is a further heartbeat_interval after
+    # the model comes online -- so a heartbeat_ttl lock silently expires
+    # mid-load and the first heartbeat then kills a healthy deployment. Start
+    # on the same budget the control plane reserves for a start, and narrow to
+    # heartbeat_ttl once the heartbeat loop is refreshing it.
+    lock = registry.lock(model_id, timeout=max(start_ttl, heartbeat_ttl))
 
     try:
         # Wait briefly for a superseded predecessor to notice the republished
@@ -61,7 +76,15 @@ def model(self, model_id, path, model_type, **kwargs):
         from ..models import Model
         model = Model.load(model_type, directory)
 
-        registry.online(model_id, ttl=heartbeat_ttl)
+        try:
+            lock.timeout = heartbeat_ttl
+            lock.reacquire()
+        except LockError:
+            # Loading outran even the start budget; serve nothing rather than
+            # serve without owning the deployment.
+            return
+
+        registry.online(model_id, ttl=heartbeat_ttl, owner=run)
         online = True
 
         idle_since = time.monotonic()
@@ -111,11 +134,13 @@ def model(self, model_id, path, model_type, **kwargs):
             if now - last_heartbeat >= heartbeat_interval:
                 alive = self.check_status(task_id=self.request.id)
                 if alive:
-                    registry.heartbeat(model_id, ttl=heartbeat_ttl)
+                    # Ownership first: a run that has lost the lock must not
+                    # advertise itself as serving for another heartbeat_ttl.
                     try:
                         lock.reacquire()
                     except LockError:
                         break
+                    registry.heartbeat(model_id, ttl=heartbeat_ttl, owner=run)
                     last_heartbeat = now
 
     finally:
@@ -130,10 +155,18 @@ def model(self, model_id, path, model_type, **kwargs):
             if online:
                 registry.offline(model_id)
                 registry.purge(model_id)
-        
+
             try:
                 lock.release()
             except LockError:
                 pass
-        
+
+        elif online:
+            # The lock is gone: either it expired under a stall, or a restart
+            # handed serving over. Retire this run's own alive flag so the
+            # infer view stops pushing requests into a queue nobody is
+            # reading; the flag is only cleared while it still names this run,
+            # so a replacement that already came online keeps its own.
+            registry.retire(model_id, run)
+
         shutil.rmtree(directory, ignore_errors=True)

@@ -142,15 +142,30 @@ class Registry:
             thread_local=False,
         )
 
-    def online(self, model_id, ttl):
-        self.redis.set(self._alive(model_id), '1', ex=ttl)
+    # Clear the alive flag only while it still names ``owner``. A serving run
+    # that lost its lock has to retire its own flag without wiping the flag of
+    # the replacement that took over.
+    _RETIRE = """
+    if redis.call('get', KEYS[1]) == ARGV[1] then
+        return redis.call('del', KEYS[1])
+    end
+    return 0
+    """
+
+    def online(self, model_id, ttl, owner='1'):
+        self.redis.set(self._alive(model_id), owner, ex=ttl)
         self.redis.delete(self._starting(model_id))
 
-    def heartbeat(self, model_id, ttl):
-        self.redis.set(self._alive(model_id), '1', ex=ttl)
+    def heartbeat(self, model_id, ttl, owner='1'):
+        self.redis.set(self._alive(model_id), owner, ex=ttl)
 
     def offline(self, model_id):
         self.redis.delete(self._alive(model_id), self._starting(model_id))
+
+    def retire(self, model_id, owner):
+        """Drop the alive flag if ``owner`` still holds it, leaving the start
+        claim alone: it may already belong to a replacement."""
+        self.redis.eval(self._RETIRE, 1, self._alive(model_id), owner)
 
     def get(self, keys, pull=False):
         """Fetch many outputs in one round-trip, keyed by request id;
