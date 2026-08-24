@@ -18,13 +18,14 @@ const METRICS = [
     { key: "weighted F1", color: COLORS[6], get: (v) => v.weighted?.f1 }
 ];
 
-// The slot half of a language understanding version, from the entity-level
-// scores the fixed evaluate stores (type + boundaries must match exactly).
+// The slot half of a language understanding version. These score whole
+// annotations — a slot counts only when its name and both boundaries match — so
+// they need no qualifier: the token view is the one that has to say so.
 const NLU_METRICS = [
-    { key: "slot F1 (entity)", color: COLORS[2], get: (v) => v.slots?.f1 },
-    { key: "slot precision (entity)", color: COLORS[7], get: (v) => v.slots?.precision },
+    { key: "slot F1", color: COLORS[2], get: (v) => v.slots?.f1 },
+    { key: "slot precision", color: COLORS[7], get: (v) => v.slots?.precision },
     // The palette's eight colours are all taken; Tableau brown matches it.
-    { key: "slot recall (entity)", color: "#9C755F", get: (v) => v.slots?.recall }
+    { key: "slot recall", color: "#9C755F", get: (v) => v.slots?.recall }
 ];
 
 // Cross-version model quality: trends, overfit gap, per-label F1 movement,
@@ -32,12 +33,12 @@ const NLU_METRICS = [
 // entity recognition the stored report is token-level over IOB tags:
 // accuracy reads as token accuracy, per-entity F1 collapses the B-/I- tag
 // scores, and the confusions are tag pairs. For language understanding the
-// headline metrics are the intent metrics and the slot half adds
-// entity-level F1 trends plus a per-slot table.
+// headline metrics are the intent metrics and the slot half adds exact-match
+// slot F1 trends plus a per-slot table.
 const Versions = ({ versions, best, confusions, win, setWin, ner, nlu }) => {
     const { modelId } = useParams();
     const [selected, setSelected] = useState(nlu
-        ? ["test accuracy", "macro F1", "slot F1 (entity)"]
+        ? ["test accuracy", "macro F1", "slot F1"]
         : ["test accuracy", "macro F1"]);
 
     if (!versions.length) {
@@ -158,8 +159,8 @@ const Versions = ({ versions, best, confusions, win, setWin, ner, nlu }) => {
                             ...data.map((row) => [row.version, ...selected.map((key) => row[key] ?? "")])
                         ]}
                         foot={ner
-                            ? "token-level metrics over IOB tags — a partially matched span still scores its matched tokens"
-                            : nlu && "accuracy and macro/weighted metrics score the intent; the slot metrics are entity-level — a span counts only when type and boundaries match"}
+                            ? "token metrics over IOB tags — a partly matched entity still scores its matched tokens"
+                            : nlu && "accuracy and macro/weighted metrics score the intent; the slot metrics count a slot only when its name and both boundaries match"}
                     >
                         <TrendLines
                             data={data}
@@ -291,7 +292,7 @@ const Versions = ({ versions, best, confusions, win, setWin, ner, nlu }) => {
                                 title="Per-slot F1"
                                 right={
                                     <span className="text-muted" style={{ fontSize: "0.7rem" }}>
-                                        entity-level: type and boundaries must match · test split
+                                        name and both boundaries must match · test split
                                     </span>
                                 }
                             />

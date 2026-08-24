@@ -134,6 +134,36 @@ def _avg(report, key):
     }
 
 
+def _annotation_scores(block):
+    """
+    Normalizes an evaluation's annotation metrics (``slots`` for language
+    understanding, ``entities`` for named entity recognition) to
+    ``{accuracy, precision, recall, f1, labels: {name: f1}}``.
+
+    Reads both the current shape — exact-match scores on the block itself, per
+    name under ``labels``, token view under ``tokens`` — and the shape stored by
+    artifacts trained before that, which nested the scores under ``entity`` with
+    the per-name breakdown keyed ``slots``. Stored evaluations are never
+    rewritten, so both must keep working.
+    """
+    block = block or {}
+    legacy = block.get('entity') or {}
+    scores = legacy or block
+    labels = (legacy.get('slots') if legacy else block.get('labels')) or {}
+    accuracy = (block.get('tokens') or {}).get('accuracy', block.get('accuracy'))
+    return {
+        'accuracy': accuracy,
+        'precision': scores.get('precision'),
+        'recall': scores.get('recall'),
+        'f1': scores.get('f1'),
+        'labels': {
+            name: metrics.get('f1')
+            for name, metrics in labels.items()
+            if isinstance(metrics, dict)
+        }
+    }
+
+
 def _date_done(task):
     date = task.date_done
     if not date:
@@ -539,22 +569,11 @@ def get_version_analytics(modelId):
             'labels': label_scores
         }
         if model.kind == NLU:
-            # The joint model's top-level metrics are its intent metrics;
-            # the slot half reports the entity-level scores (a span counts
-            # only when type and boundaries match) the fixed evaluate stores.
-            slots = ((result.get('evaluation') or {}).get('test') or {}).get('slots') or {}
-            entity = slots.get('entity') or {}
-            version['slots'] = {
-                'accuracy': slots.get('accuracy'),
-                'precision': entity.get('precision'),
-                'recall': entity.get('recall'),
-                'f1': entity.get('f1'),
-                'labels': {
-                    name: metrics.get('f1')
-                    for name, metrics in (entity.get('slots') or {}).items()
-                    if isinstance(metrics, dict)
-                }
-            }
+            # The joint model's top-level metrics are its intent metrics; the
+            # slot half reports the exact-match scores (an annotation counts
+            # only when its slot and both boundaries match).
+            evaluation = ((result.get('evaluation') or {}).get('test') or {})
+            version['slots'] = _annotation_scores(evaluation.get('slots'))
         versions.append(version)
 
     # Objective: test accuracy, tie-broken by macro F1.
