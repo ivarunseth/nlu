@@ -15,6 +15,7 @@ const FormModal = ({
     validated,
     submitting,
     size,
+    scrollable = false,
     submitLabel = "Submit",
     submittingLabel = "Submitting...",
     onHide,
@@ -25,6 +26,9 @@ const FormModal = ({
         centered
         show={show}
         size={size}
+        // Long forms scroll their body instead of pushing the footer off a
+        // short viewport, which is where the submit button lives.
+        scrollable={scrollable}
         // Closing mid-request would strand the caller's submitting state.
         onHide={submitting ? undefined : onHide}
         aria-labelledby="form-modal-title"

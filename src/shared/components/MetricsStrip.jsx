@@ -13,7 +13,7 @@ const MetricsStrip = ({ items, className = "mt-1" }) => (
                     <Card.Body className="p-3 d-flex align-items-center">
                         <div className="text-primary me-3 fs-4 lh-1">{item.icon}</div>
                         <div className="flex-grow-1" style={{ minWidth: 0 }}>
-                            <div className="text-muted small fw-bold" style={{ fontSize: "0.65rem" }}>{item.label}</div>
+                            <div className="text-muted small fw-bold" style={{ fontSize: "var(--app-text-xs)" }}>{item.label}</div>
                             <div className="text-body-emphasis small fw-medium text-truncate">
                                 {item.value ?? "-"}
                                 {item.sub && <span className="text-muted fw-normal ms-1">{item.sub}</span>}

@@ -1,8 +1,11 @@
 import React, { lazy, Suspense } from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import { UserProvider } from "./contexts/UserContext";
+import { ApiProvider } from "./contexts/ApiContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Header from "./layout/Header";
+import RouteFallback from "./shared/components/RouteFallback";
+import RouteErrorBoundary from "./shared/components/RouteErrorBoundary";
 import Footer from "./layout/Footer";
 
 const SignIn = lazy(() => import("./routes/auth/SignIn"));
@@ -17,10 +20,12 @@ const App = () => {
         <ThemeProvider>
             <Router>
                 <UserProvider>
+                <ApiProvider>
                     <div className="d-flex flex-column min-vh-100">
                         <Header />
                         <main className="flex-grow-1">
-                            <Suspense fallback={null}>
+                            <RouteErrorBoundary>
+                            <Suspense fallback={<RouteFallback />}>
                                 <Routes>
                                     <Route path="/signin" element={<SignIn />} />
                                     <Route path="/signup" element={<SignUp />} />
@@ -30,9 +35,11 @@ const App = () => {
                                     <Route path="/models/:modelId/*" element={<Model />} />
                                 </Routes>
                             </Suspense>
+                            </RouteErrorBoundary>
                         </main>
-                        <Footer />
+                        {/* <Footer /> */}
                     </div>
+                </ApiProvider>
                 </UserProvider>
             </Router>
         </ThemeProvider>

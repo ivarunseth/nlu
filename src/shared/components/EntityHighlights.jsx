@@ -44,7 +44,7 @@ const EntityHighlights = ({ text = "", entities = [], colorOf = entityColor }) =
                     <span
                         key={index}
                         className="badge rounded-pill ms-1 me-1 px-2 py-1 align-middle fw-normal"
-                        style={{ backgroundColor: color, color: textColor, fontSize: "0.8rem" }}
+                        style={{ backgroundColor: color, color: textColor, fontSize: "var(--app-text-sm)" }}
                         title={typeof segment.entity.score === "number" ? `${segment.entity.entity} ${(segment.entity.score * 100).toFixed(1)}%` : segment.entity.entity}
                     >
                         {segment.text}

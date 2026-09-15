@@ -27,7 +27,7 @@ const SessionExpiredModal = ({ show, onSignIn }) => (
                 Your session has expired
             </h5>
             <p className="text-body-secondary mb-0">
-                You have been signed out. Please sign in again to continue.
+                You have been signed out. Sign in again to return to where you left off.
             </p>
         </Modal.Body>
         <Modal.Footer className="border-0 flex-column px-4 pb-4 pt-0">

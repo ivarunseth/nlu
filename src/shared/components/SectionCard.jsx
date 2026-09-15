@@ -4,7 +4,7 @@ import { InfoCircle } from "react-bootstrap-icons";
 // pages: uppercase section labels, card header bars and empty states.
 
 export const SectionLabel = ({ children }) => (
-    <span className="small fw-bold text-muted text-uppercase" style={{ fontSize: "0.65rem", letterSpacing: "0.04em" }}>
+    <span className="small fw-bold text-muted text-uppercase" style={{ fontSize: "var(--app-text-xs)", letterSpacing: "0.04em" }}>
         {children}
     </span>
 );
@@ -22,7 +22,7 @@ export const CardHeading = ({ icon, title, right }) => (
 export const EmptyState = ({ icon, children, minHeight = "260px" }) => (
     <div
         className="d-flex align-items-center justify-content-center text-muted"
-        style={{ minHeight, border: "1px solid var(--bs-border-color)", borderRadius: "4px", background: "var(--bs-body-bg)" }}
+        style={{ minHeight, border: "1px solid var(--bs-border-color)", borderRadius: "var(--bs-border-radius-sm)", background: "var(--bs-body-bg)" }}
     >
         <div className="text-center px-3">
             <div className="fs-3 mb-2 opacity-50">{icon || <InfoCircle />}</div>
