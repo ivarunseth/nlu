@@ -1,8 +1,9 @@
 import React, { useState, useContext } from "react";
-import { Form, Button, Card, Container, Row, Col } from 'react-bootstrap';
+import { Form, Button, Card, Row, Col } from 'react-bootstrap';
 import { PersonGear } from "react-bootstrap-icons";
 import { UserContext } from "../../contexts/UserContext";
 import { CardHeading } from "../../shared/components/SectionCard";
+import PageShell from "../../shared/components/PageShell";
 
 function AccountSettings() {
     const { user, setUser } = useContext(UserContext);
@@ -12,16 +13,15 @@ function AccountSettings() {
 
     const handleSave = async (e) => {
         e.preventDefault();
-        // Logic to update the user info
-        // try {
-        //     const response = await axios.put(`/api/users/${user.id}`, )
-        // }
+        // NOTE: this only updates local state — the change is never persisted.
+        // Finishing it means calling api.users.update(user.id, ...) from
+        // useApi(), once the payload shape (whether password travels with the
+        // profile fields) is settled.
         setUser({ email, username, password });
     };
 
     return (
-        <Container fluid>
-            <div className="page-context-bar" aria-hidden="true" />
+        <PageShell>
             <Row className="justify-content-md-center mt-4">
                 <Col md={6}>
                     <Card className="border-light overflow-hidden">
@@ -69,7 +69,7 @@ function AccountSettings() {
                                 </Form.Group>
 
                                 <div className="d-flex justify-content-end">
-                                    <Button variant="primary" size="sm" className="small" type="submit">
+                                    <Button variant="primary" type="submit">
                                         SAVE CHANGES
                                     </Button>
                                 </div>
@@ -78,7 +78,7 @@ function AccountSettings() {
                     </Card>
                 </Col>
             </Row>
-        </Container>
+        </PageShell>
     );
 }
 
