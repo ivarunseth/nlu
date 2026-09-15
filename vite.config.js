@@ -3,13 +3,12 @@ import react from '@vitejs/plugin-react'
 
 // Mirrors ALLOWED_ENVIRONMENTS in server/config.py: one control-plane
 // (app.py) and one data-plane (triton.py) port pair per environment.
-// Start the dev server against another stack with e.g. `FLASK_ENV=testing npm run dev`.
+// Start the dev server against another stack with e.g. `FLASK_ENV=production npm run dev`.
 const PORTS = {
-    development: { server: 5001, triton: 5002 },
-    testing: { server: 5003, triton: 5004 },
-    production: { server: 5005, triton: 5006 }
+    testing: { server: 5001, triton: 5002 },
+    production: { server: 5003, triton: 5004 }
 }
-const { server, triton } = PORTS[process.env.FLASK_ENV || 'development']
+const { server, triton } = PORTS[process.env.FLASK_ENV || 'testing']
 
 export default defineConfig({
     plugins: [react()],
