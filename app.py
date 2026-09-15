@@ -4,6 +4,21 @@ monkey.patch_all()
 
 import sys
 
+
+def create_app():
+    """Control-plane app for the ``flask`` CLI.
+
+    The CLI discovers this factory in app.py by name, so `flask db upgrade`
+    works with no FLASK_APP set. It returns the Flask app alone: the CLI has
+    no use for the Socket.IO server, and only a Flask instance is accepted.
+    server/__init__.py skips background-task startup while 'db' is in argv,
+    so a migration command does not boot the telemetry consumer.
+    """
+    from server import create_application_server
+    app, _ = create_application_server()
+    return app
+
+
 def main(arg):
     if arg == 'triton':
         from server import create_triton_server

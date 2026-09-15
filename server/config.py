@@ -5,7 +5,10 @@ load_dotenv()
 
 
 class Config(object):
-    DEBUG = False
+    # The debug server is opt-in rather than implied by an environment name,
+    # so a non-production stack does not run the interactive debugger by
+    # accident. app.py also drives its reloader off this flag.
+    DEBUG = os.environ.get('FLASK_DEBUG', 'false').lower() in ('1', 'true', 'yes')
     TESTING = False
 
     SECRET_KEY = os.environ.get('SECRET_KEY', '51f52814-0071-11e6-a247-000ec6c2372c')
@@ -29,9 +32,8 @@ class Config(object):
             'token_ttl': int(os.environ.get(f'INFERENCE_API_KEY_TTL_{name.upper()}', token_ttl)),
         }
         for name, server_port, triton_port, token_ttl in (
-            ('development', 5001, 5002, 2 * 60 * 60),
-            ('testing', 5003, 5004, 12 * 60 * 60),
-            ('production', 5005, 5006, 30 * 24 * 60 * 60),
+            ('testing', 5001, 5002, 12 * 60 * 60),
+            ('production', 5003, 5004, 30 * 24 * 60 * 60),
         )
     }
     
@@ -69,21 +71,37 @@ class Config(object):
     DATASET_IO_BATCH_SIZE = int(os.environ.get('DATASET_IO_BATCH_SIZE', 5000))
 
 
-class DevelopmentConfig(Config):
-    DEBUG = True
-
-
 class ProductionConfig(Config):
     pass
 
 
 class TestingConfig(Config):
-    TESTING = True
-    SERVER_NAME = 'localhost'
+    # The staging stack a version is validated in before it is promoted to
+    # production. It is a real serving environment, not a unit-test harness,
+    # so it keeps Flask's normal error handling.
+    pass
 
 
+# Keyed by FLASK_ENV, which names both the Flask config and the inference
+# environment the process serves. Every key here must also appear in
+# ALLOWED_ENVIRONMENTS, which supplies its ports, registry and key TTL.
 configs = {
-    'development': DevelopmentConfig,
-    'production': ProductionConfig,
-    'testing': TestingConfig
+    'testing': TestingConfig,
+    'production': ProductionConfig
 }
+
+
+def config_for(name):
+    """The Flask config class for an environment name.
+
+    Raised as a named error rather than a bare ``KeyError`` because the only
+    way to get here is a stale ``FLASK_ENV`` — ``development`` was retired as
+    an environment, so an old .env lands squarely on this path.
+    """
+    try:
+        return configs[name]
+    except KeyError:
+        raise ValueError(
+            'Unknown FLASK_ENV %r. Valid environments: %s'
+            % (name, ', '.join(configs))
+        ) from None

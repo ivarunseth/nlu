@@ -14,7 +14,7 @@ from sqlalchemy.engine import Engine
 
 from redis import StrictRedis
 
-from .config import configs
+from .config import config_for
 from .storage import Storage
 
 
@@ -56,9 +56,9 @@ redis = StrictRedis(host=os.environ.get('REDIS_HOST', 'localhost'),
 store = Storage()
 
 
-def create_application_server(config_name=os.environ.get('FLASK_ENV', 'development')):
+def create_application_server(config_name=os.environ.get('FLASK_ENV', 'testing')):
     app = Flask(__name__)
-    app.config.from_object(configs[config_name])
+    app.config.from_object(config_for(config_name))
     app.config['ENVIRONMENT'] = config_name
 
     db.init_app(app)
@@ -88,7 +88,7 @@ def create_application_server(config_name=os.environ.get('FLASK_ENV', 'developme
 
 def create_triton_server(config_name=os.environ.get('FLASK_ENV', 'production')):
     app = Flask(__name__)
-    app.config.from_object(configs[config_name])
+    app.config.from_object(config_for(config_name))
     app.config['ENVIRONMENT'] = config_name
 
     from .views import triton as triton_bp
