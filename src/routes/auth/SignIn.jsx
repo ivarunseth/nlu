@@ -45,10 +45,17 @@ const SignIn = () => {
         }
     };
 
+    // Bounce a visitor who is *already* signed in away from the sign-in page.
+    //
+    // Deliberately keyed to mount only. Keeping `user` in the dependency list
+    // made this fire again the instant signIn() set the user, and since it runs
+    // after that state commit it overrode signIn()'s own navigate() — which is
+    // the one that returns the user to the page their session expired on. The
+    // redirect was being computed correctly and then thrown away here.
+    const wasSignedInOnMount = useRef(Boolean(user));
     useEffect(() => {
-        if (user)
-            navigate('/');
-    }, [user, navigate]);
+        if (wasSignedInOnMount.current) navigate('/');
+    }, [navigate]);
 
     useEffect(() => {
         if (location.state && location.state.alert) {

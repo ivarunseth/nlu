@@ -2,6 +2,36 @@
    theme-aware via data-bs-theme; these cover custom colors only. To add a new
    theme, add another [data-bs-theme="..."] block overriding these tokens. */
 :root {
+  /* Micro-typography ladder. Bootstrap's scale bottoms out at .small
+     (0.875em); everything denser than that was previously set with inline
+     fontSize values — 55 of them, drifting between 0.65rem, 0.7rem and
+     0.8rem. Two named steps replace all of them, so the app's dense text
+     retunes from here rather than from 20 component files. */
+  /* Inter for the interface, JetBrains Mono for the 87 places that show model
+     ids, API keys, IOB tags, JSON and predictions. Both are self-hosted
+     variable fonts (@fontsource-variable/*) rather than CDN-loaded, so the app
+     renders identically offline and leaks nothing to a font host.
+
+     Neither face covers Indic scripts. That is deliberate and correct: the
+     browser falls back per glyph, so interface chrome renders in Inter while
+     Devanagari, Tamil, Bengali and the rest render in the platform's own Indic
+     font (Kohinoor on macOS, Nirmala UI on Windows, Noto on Linux) — which are
+     better Indic faces than anything shipped here would be. Keep the system
+     entries in these stacks; they are what makes that work. */
+  --app-font-sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, 'Noto Sans', 'Helvetica Neue', Arial, sans-serif;
+  --app-font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo,
+    Monaco, Consolas, 'Liberation Mono', monospace;
+
+  /* Bootstrap resolves body text, <code>, <kbd>, <pre> and the .font-monospace
+     utility through these two, so overriding them re-faces every component
+     without editing one. */
+  --bs-body-font-family: var(--app-font-sans);
+  --bs-font-monospace: var(--app-font-mono);
+
+  --app-text-xs: 0.7rem;
+  --app-text-sm: 0.8rem;
+
   --app-json-key: #d63384;
   --app-json-string: #198754;
   --app-json-number: #fd7e14;
@@ -40,6 +70,16 @@
   --bs-btn-disabled-bg: var(--bs-tertiary-bg);
   --bs-btn-disabled-border-color: var(--bs-border-color);
 }
+
+/* Density. Two are intentional, and which one applies is decided by the page,
+   not by the control:
+     - Data workspaces (Build, History, Test, Publish, Analyse) are dense:
+       size="sm" controls and .small text, so more rows fit on screen.
+     - Entry and form pages (Home, Sign in, Account settings, Model settings)
+       are comfortable: default-size controls, matching the Form.Control they
+       sit beside. A sm button under a full-size input reads as an afterthought.
+   Dialogs follow their content: FormModal is comfortable, and the confirmation
+   modals inside a dense page keep that page's sizing. */
 
 /* Cards use border-light for a fainter-than-default frame. Bootstrap's
    .border-light stays near-white in dark mode, so remap it to a border that
@@ -86,6 +126,17 @@
   color: var(--bs-emphasis-color) !important;
 }
 
+/* This is a data tool: versions, counts, latencies and scores are read down a
+   column, so digits must occupy identical widths or rows visibly jitter.
+   Proportional figures stay on prose, where they read better. */
+table,
+.badge,
+code,
+.recharts-text,
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
 /* Recharts draws with SVG presentation attributes; theme them from CSS. */
 .recharts-cartesian-grid line {
   stroke: var(--app-chart-grid);
@@ -112,16 +163,13 @@ footer a:hover {
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: var(--app-font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+  font-family: var(--app-font-mono);
 }
 
 .page-context-bar {
@@ -156,7 +204,7 @@ code {
     padding: 0.125rem 0.5rem;
     border: 0;
     border-bottom: 1px dashed var(--bs-border-color);
-    border-radius: 0.25rem 0.25rem 0 0;
+    border-radius: var(--bs-border-radius-sm) var(--bs-border-radius-sm) 0 0;
     background-color: transparent;
     color: inherit;
     font: inherit;
@@ -219,7 +267,7 @@ code {
     pointer-events: none;
     color: var(--bs-body-color);
     border-bottom: 1px dashed transparent;
-    border-radius: 0.25rem 0.25rem 0 0;
+    border-radius: var(--bs-border-radius-sm) var(--bs-border-radius-sm) 0 0;
     transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
@@ -256,7 +304,7 @@ code {
    box-shadow fakes that padding back visually without occupying any space. */
 .utterance-span {
     padding: 0;
-    border-radius: 3px;
+    border-radius: var(--bs-border-radius-sm);
 }
 
 /* Names the span under the pointer. Inert, so it never intercepts a click meant
@@ -271,10 +319,10 @@ code {
     align-items: center;
     padding: 0.1rem 0.45rem;
     border: 1px solid transparent;
-    border-radius: 0.25rem;
+    border-radius: var(--bs-border-radius-sm);
     white-space: nowrap;
     pointer-events: none;
-    font-size: 0.7rem;
+    font-size: var(--app-text-xs);
     line-height: 1.6;
     color: #fff;
     background-color: rgba(33, 37, 41, 0.95);
@@ -374,18 +422,54 @@ code {
 .entity-picker-item {
     cursor: pointer;
     transition: background-color 0.12s ease;
-    border-radius: 6px;
+    border-radius: var(--bs-border-radius);
     margin: 0 6px;
 }
 
+/* Theme tokens, not a black overlay: rgba(0,0,0,.05) over a dark surface is
+   invisible, so this picker had no hover feedback at all in dark mode. */
 .entity-picker-item:hover {
-    background: rgba(0, 0, 0, 0.05);
+    background-color: var(--bs-tertiary-bg);
 }
 
 .entity-picker-item:active {
-    background: rgba(0, 0, 0, 0.08);
+    background-color: var(--bs-secondary-bg);
 }
 
 .entity-picker-item .entity-dot {
     flex-shrink: 0;
+}
+
+/* Shown while a lazily-loaded route chunk is fetched. A 2px indeterminate bar
+   rather than a centred spinner: chunks usually resolve in a few hundred ms,
+   and a spinner that appears and vanishes that fast reads as a flicker. Both
+   Suspense boundaries previously rendered null, so switching model tabs blanked
+   the content area with no sign anything was happening. */
+.route-progress {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  background-color: var(--bs-tertiary-bg);
+}
+
+.route-progress-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 35%;
+  background-color: var(--bs-primary);
+  border-radius: var(--bs-border-radius-sm);
+  animation: route-progress 1.1s ease-in-out infinite;
+}
+
+@keyframes route-progress {
+  0% { left: -35%; }
+  100% { left: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-progress-bar {
+    animation: none;
+    width: 100%;
+    opacity: 0.4;
+  }
 }

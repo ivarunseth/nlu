@@ -2,11 +2,12 @@ import React, { useState, useRef } from "react";
 import { Alert, Button, Container, Form, InputGroup, Spinner, Row, Col } from "react-bootstrap";
 import { Eye, EyeSlash } from "react-bootstrap-icons";
 import { Link, useNavigate } from "react-router-dom";
-import axios from "axios";
+import { useApi } from "../../contexts/ApiContext";
 
 const SignUp = () => {
 
     const navigate = useNavigate();
+    const api = useApi();
 
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -34,9 +35,8 @@ const SignUp = () => {
                 let data = new FormData();
                 data.append('email', email);
                 data.append('password', password);
-                const response = await axios.post('/api/users', data, {});
-                if (response.status === 201)
-                    navigate('/signin', { state: {alert: {variant: "success", message: "You have successfully signed up. Welcome aboard!"}}})
+                await api.users.create(data);
+                navigate('/signin', { state: {alert: {variant: "success", message: "You have successfully signed up. Welcome aboard!"}}})
             } catch (error) {
                 setAlert({ variant: 'danger', message: error.response.data.error });
             } finally {
