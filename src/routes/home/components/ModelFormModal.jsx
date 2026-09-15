@@ -1,5 +1,6 @@
 import { Form, InputGroup } from "react-bootstrap";
 import FormModal from "../../../shared/components/FormModal";
+import FileDropzone from "../../../shared/components/FileDropzone";
 
 const ModelFormModal = ({
     show,
@@ -25,7 +26,11 @@ const ModelFormModal = ({
         title={title}
         validated={validated}
         submitting={submitting}
-        size="lg"
+        // Every field here is full-width and single-column, so the extra 300px
+        // of `lg` only stretched the inputs and lengthened the eye's travel
+        // from label to value. It is the tallest form in the app, though, so it
+        // scrolls rather than overflowing a laptop viewport.
+        scrollable
         onHide={onHide}
         onSubmit={onSubmit}
     >
@@ -67,14 +72,15 @@ const ModelFormModal = ({
             </Form.Group>
         )}
         <Form.Group className="mb-3">
-            <Form.Label>Dataset</Form.Label>
-            <Form.Control
-                type="file"
-                onChange={(e) => onDatasetChange(e.target.files[0])}
+            <Form.Label htmlFor="model-dataset">Dataset</Form.Label>
+            <FileDropzone
+                id="model-dataset"
+                file={dataset}
+                onSelect={onDatasetChange}
+                accept=".csv,.tsv"
+                prompt="Drag and drop a dataset here, or click to browse."
+                hint="Comma or tab separated text and labels · optional"
             />
-            <Form.Text muted>
-                You can optionally upload a dataset containing comma or tab separated text and labels.
-            </Form.Text>
         </Form.Group>
         <Form.Group className="mb-3">
             <Form.Check

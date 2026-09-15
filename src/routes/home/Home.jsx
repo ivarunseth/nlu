@@ -1,6 +1,6 @@
-import axios from "axios";
+import { useApi } from "../../contexts/ApiContext";
 import { useContext, useEffect, useState } from "react";
-import { Alert, Button, ButtonGroup, ButtonToolbar, Col, Container, Form, Row } from "react-bootstrap";
+import { Alert, Button, ButtonGroup, ButtonToolbar, Col, Form, Row } from "react-bootstrap";
 import { PlusLg } from "react-bootstrap-icons";
 import { UserContext } from "../../contexts/UserContext";
 import AppPagination from "../../shared/components/AppPagination";
@@ -9,6 +9,7 @@ import useDebounce from "../../shared/hooks/useDebounce";
 import useTableControls from "../../shared/hooks/useTableControls";
 import downloadBlob from "../../shared/utils/downloadBlob";
 import ModelFormModal from "./components/ModelFormModal";
+import PageShell from "../../shared/components/PageShell";
 import ModelsTable from "./components/ModelsTable";
 
 const PER_PAGE = 7;
@@ -27,6 +28,7 @@ const MODEL_FILTERS = [
 
 const Home = () => {
     const { user } = useContext(UserContext);
+    const api = useApi();
     const [query, setQuery] = useState("");
     const [alert, setAlert] = useState(null);
     const [models, setModels] = useState([]);
@@ -106,9 +108,7 @@ const Home = () => {
                 data.append("header", header);
             }
             data.append("description", description);
-            const headers = { Authorization: `Bearer ${user.token}` };
-            const response = await axios.post("/api/models", data, { headers });
-            const { import_summary: importSummary, ...createdModel } = response.data;
+            const { import_summary: importSummary, ...createdModel } = await api.models.create(data);
 
             if (page === 1) {
                 setModels((prevModels) => (
@@ -130,12 +130,7 @@ const Home = () => {
 
     const handleDownload = async (model) => {
         try {
-            const headers = { Authorization: `Bearer ${user.token}` };
-            const response = await axios.get(`/api/models/${model.id}?format=csv`, {
-                responseType: "blob",
-                headers
-            });
-            downloadBlob(response.data, `${model.name}.csv`);
+            downloadBlob(await api.models.exportCsv(model.id), `${model.name}.csv`);
         } catch (error) {
             setAlert({ variant: "danger", message: error.response.data.error });
         }
@@ -150,12 +145,11 @@ const Home = () => {
             const getModels = async () => {
                 try {
                     setLoading(true);
-                    const headers = { Authorization: `Bearer ${user.token}` };
                     const params = { page, per_page: PER_PAGE, ...controls.params };
                     if (debouncedQuery !== "") params.query = debouncedQuery;
-                    const response = await axios.get("/api/models", { params, headers });
-                    setModels(response.data.models);
-                    setTotal(response.data.total);
+                    const { models: page_models, total } = await api.models.list(params);
+                    setModels(page_models);
+                    setTotal(total);
                 } catch (error) {
                     setAlert({ variant: "danger", message: error.response.data.error });
                 } finally {
@@ -164,11 +158,10 @@ const Home = () => {
             };
             getModels();
         }
-    }, [user, page, debouncedQuery, controlsKey]);
+    }, [api, user, page, debouncedQuery, controlsKey]);
 
     return (
-        <Container fluid>
-            <div className="page-context-bar" aria-hidden="true" />
+        <PageShell>
             <Row className="mt-4">
                 <Col>
                     {alert && <Alert variant={alert.variant} onClose={() => setAlert(null)} dismissible>{alert.message}</Alert>}
@@ -240,7 +233,7 @@ const Home = () => {
                 onHeaderChange={setHeader}
                 onDescriptionChange={setDescription}
             />
-        </Container>
+        </PageShell>
     );
 };
 
