@@ -1,12 +1,12 @@
-import axios from "axios";
+import { useApi } from "../../../../contexts/ApiContext";
 import { useContext, useEffect, useState } from "react";
 import { Alert, Button, Card, Col, Form, Row, Spinner } from "react-bootstrap";
 import { Boxes, Calendar3, Clock, ExclamationTriangleFill, Gear, Hash, Stack } from "react-bootstrap-icons";
 import { useNavigate, useParams } from "react-router-dom";
 import { ModelContext } from "../../../../contexts/ModelContext";
-import { UserContext } from "../../../../contexts/UserContext";
 import { CardHeading, SectionLabel } from "../../../../shared/components/SectionCard";
 import ModelStatusBadge from "../../../../shared/components/ModelStatusBadge";
+import FileDropzone from "../../../../shared/components/FileDropzone";
 import TypeToConfirmModal from "../../../../shared/components/TypeToConfirmModal";
 
 // Human-readable label for each model kind (kinds are create-time only).
@@ -29,7 +29,7 @@ const DetailRow = ({ icon, label, children }) => (
 
 const Settings = () => {
     const { modelId } = useParams();
-    const { user } = useContext(UserContext);
+    const api = useApi();
     const { model, setModel } = useContext(ModelContext);
     const navigate = useNavigate();
 
@@ -83,9 +83,7 @@ const Settings = () => {
                 data.append("dataset", dataset);
                 data.append("header", header);
             }
-            const headers = { Authorization: `Bearer ${user.token}` };
-            const response = await axios.put(`/api/models/${modelId}`, data, { headers });
-            const { import_summary: importSummary, ...updated } = response.data;
+            const { import_summary: importSummary, ...updated } = await api.models.update(modelId, data);
             setModel(updated);
             setDataset(null);
             setHeader(true);
@@ -101,9 +99,7 @@ const Settings = () => {
         setDeleteError(null);
         try {
             setDeleting(true);
-            await axios.delete(`/api/models/${modelId}`, {
-                headers: { Authorization: `Bearer ${user.token}` }
-            });
+            await api.models.remove(modelId);
             navigate("/");
         } catch (error) {
             setDeleteError(error.response?.data?.error || error.response?.data?.message || error.message);
@@ -158,7 +154,7 @@ const Settings = () => {
                                         readOnly
                                         disabled
                                     />
-                                    <Form.Text muted style={{ fontSize: "0.7rem" }}>
+                                    <Form.Text muted style={{ fontSize: "var(--app-text-xs)" }}>
                                         A model's type is fixed once it is created.
                                     </Form.Text>
                                 </Form.Group>
@@ -173,15 +169,18 @@ const Settings = () => {
                                     />
                                 </Form.Group>
                                 <Form.Group className="mb-2">
-                                    <Form.Label className="small fw-bold mb-1">Replace dataset</Form.Label>
-                                    <Form.Control
-                                        type="file"
-                                        onChange={(event) => setDataset(event.target.files[0] || null)}
+                                    <Form.Label className="small fw-bold mb-1" htmlFor="replace-dataset">Replace dataset</Form.Label>
+                                    <FileDropzone
+                                        id="replace-dataset"
+                                        file={dataset}
+                                        onSelect={setDataset}
+                                        accept=".csv,.tsv"
+                                        disabled={saving}
+                                        clearDisabled={saving}
+                                        minHeight="96px"
+                                        prompt="Drag and drop a dataset here, or click to browse."
+                                        hint={`Optional · replaces this model's existing${isAnnotated ? " utterances and their annotations" : " utterances"}`}
                                     />
-                                    <Form.Text muted style={{ fontSize: "0.7rem" }}>
-                                        Optional. Uploading a dataset replaces this model's existing
-                                        {isAnnotated ? " utterances (their annotations included)" : " utterances"}.
-                                    </Form.Text>
                                 </Form.Group>
                                 {!isAnnotated && (
                                     <Form.Group className="mb-3">
@@ -197,10 +196,10 @@ const Settings = () => {
                                     </Form.Group>
                                 )}
                                 <div className="d-flex justify-content-end gap-2 mt-3">
-                                    <Button variant="light" size="sm" className="border small" disabled={saving} onClick={() => navigate("/")}>
+                                    <Button variant="light" className="border" disabled={saving} onClick={() => navigate("/")}>
                                         Cancel
                                     </Button>
-                                    <Button type="submit" variant="primary" size="sm" className="small d-inline-flex align-items-center gap-2" disabled={saving}>
+                                    <Button type="submit" variant="primary" className="d-inline-flex align-items-center gap-2" disabled={saving}>
                                         {saving && <Spinner animation="border" size="sm" />}
                                         Save
                                     </Button>
@@ -243,7 +242,7 @@ const Settings = () => {
                                 Deleting this model permanently removes its dataset, trainings and
                                 deployments. This cannot be undone.
                             </p>
-                            <Button variant="outline-danger" size="sm" className="small" onClick={() => setShowDelete(true)}>
+                            <Button variant="outline-danger" onClick={() => setShowDelete(true)}>
                                 Delete model
                             </Button>
                         </Card.Body>

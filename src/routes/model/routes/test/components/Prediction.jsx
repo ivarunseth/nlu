@@ -69,7 +69,7 @@ export const ScoreBar = ({ score, variant = "primary" }) => {
     );
 };
 
-// `reference` is development's prediction; when supplied, each output whose
+// `reference` is the testing environment's prediction; when supplied, each output whose
 // label differs is flagged in danger and each whose score differs (same label)
 // gets a warning score bar. `colorOf` maps an entity/slot name to a colour and
 // is threaded to the entity highlights and IOB token chips so a prediction

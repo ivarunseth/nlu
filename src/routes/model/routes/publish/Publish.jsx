@@ -34,7 +34,7 @@ import { useSocket } from "../../../../contexts/SocketContext";
 import { useTheme } from "../../../../contexts/ThemeContext";
 import { CardHeading } from "../../../../shared/components/SectionCard";
 import { formatThreshold, getThresholds, getTrainingAccuracy, parseApiDate } from "../../../../shared/utils/training";
-import axios from "axios";
+import { useApi } from "../../../../contexts/ApiContext";
 
 // Deployment pipeline, ordered. Models are validated in testing before production.
 const ENVIRONMENTS = [
@@ -179,11 +179,11 @@ const EnvironmentCard = ({
                                             : `Promote v${training?.version} to production`}
                                     />
                                     {live ? (
-                                        <span className="text-muted text-end" style={{ fontSize: "0.7rem" }}>
+                                        <span className="text-muted text-end" style={{ fontSize: "var(--app-text-xs)" }}>
                                             Use the stop button to stop.
                                         </span>
                                     ) : (
-                                        <span className="text-muted text-end" style={{ fontSize: "0.7rem" }}>
+                                        <span className="text-muted text-end" style={{ fontSize: "var(--app-text-xs)" }}>
                                             Promote to production
                                         </span>
                                     )}
@@ -238,8 +238,8 @@ const EnvironmentCard = ({
                         )}
                         <div className="small text-muted d-flex align-items-center gap-2 mb-1">
                             <Link45deg className="text-primary flex-shrink-0" />
-                            <span className="fw-bold" style={{ fontSize: "0.7rem" }}>
-                                <Badge className="border" bg={theme} text={theme === "dark" ? "light" : "dark"} style={{ fontSize: "0.7rem" }}>
+                            <span className="fw-bold" style={{ fontSize: "var(--app-text-xs)" }}>
+                                <Badge className="border" bg={theme} text={theme === "dark" ? "light" : "dark"} style={{ fontSize: "var(--app-text-xs)" }}>
                                     POST
                                 </Badge>
                             </span>
@@ -319,7 +319,7 @@ const EnvironmentCard = ({
                     <div className="d-flex flex-column align-items-center justify-content-center text-center text-muted flex-grow-1 py-4">
                         <CloudHaze2 className="fs-3 mb-2 opacity-50" />
                         <p className="mb-1 small fw-bold">Nothing deployed</p>
-                        <p className="mb-0 text-muted" style={{ fontSize: "0.7rem", maxWidth: "260px" }}>
+                        <p className="mb-0 text-muted" style={{ fontSize: "var(--app-text-xs)", maxWidth: "260px" }}>
                             {environment.description}
                         </p>
                         {busy && (
@@ -480,7 +480,7 @@ const ConfigField = ({ id, label, help, step, value, onChange, disabled, error }
         <Form.Label className="small fw-bold mb-1">{label}</Form.Label>
         <Form.Control type="number" size="sm" min={0} step={step} value={value} onChange={onChange} disabled={disabled} isInvalid={Boolean(error)} />
         <Form.Control.Feedback type="invalid">{error}</Form.Control.Feedback>
-        <Form.Text className="text-muted" style={{ fontSize: "0.7rem" }}>{help}</Form.Text>
+        <Form.Text className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>{help}</Form.Text>
     </Form.Group>
 );
 
@@ -513,7 +513,7 @@ const ConfigFormFields = ({ form, onChange, errors = {}, activeTab, onTabChange,
                 checked={form.lazy}
                 onChange={(event) => onChange("lazy", event.target.checked)}
             />
-            <Form.Text className="text-muted d-block mb-3" style={{ fontSize: "0.7rem" }}>
+            <Form.Text className="text-muted d-block mb-3" style={{ fontSize: "var(--app-text-xs)" }}>
                 Start the model on the first prediction request and shut it down
                 when idle. When disabled, the task starts at deploy time and stays
                 resident until stoped.
@@ -586,7 +586,7 @@ const ConfigFormFields = ({ form, onChange, errors = {}, activeTab, onTabChange,
                 checked={form.cache}
                 onChange={(event) => onChange("cache", event.target.checked)}
             />
-            <Form.Text className="text-muted d-block mb-3" style={{ fontSize: "0.7rem" }}>
+            <Form.Text className="text-muted d-block mb-3" style={{ fontSize: "var(--app-text-xs)" }}>
                 Serve repeated identical queries from cache. When disabled, every request
                 runs inference and its prediction is discarded once delivered.
             </Form.Text>
@@ -733,6 +733,7 @@ const ConfigSummary = ({ config }) => (
 const Publish = () => {
     const { modelId } = useParams();
     const { user } = useContext(UserContext);
+    const api = useApi();
     // Only to decide which threshold controls are meaningful for this model
     // type; the config payload carries both fields either way.
     const { model } = useContext(ModelContext);
@@ -784,20 +785,18 @@ const Publish = () => {
 
     useEffect(() => {
         if (!user || !modelId) return;
-        const headers = { Authorization: `Bearer ${user.token}` };
-
         const load = async () => {
             try {
                 setLoading(true);
-                const [trainingsResponse, instancesResponse] = await Promise.all([
-                    axios.get(`/api/models/${modelId}/trainings`, { params: { per_page: 100 }, headers }),
-                    axios.get(`/api/models/${modelId}/instances`, { headers })
+                const [trainingsData, instancesData] = await Promise.all([
+                    api.trainings.list(modelId, { per_page: 100 }),
+                    api.instances.list(modelId)
                 ]);
-                const successful = (trainingsResponse.data.trainings || [])
+                const successful = (trainingsData.trainings || [])
                     .filter((training) => training.status === "SUCCESS")
                     .sort((a, b) => b.version - a.version);
                 setTrainings(successful);
-                setInstances(instancesResponse.data.instances || []);
+                setInstances(instancesData.instances || []);
             } catch (error) {
                 setAlert({ variant: "danger", message: error.response?.data?.error || error.message });
             } finally {
@@ -855,13 +854,13 @@ const Publish = () => {
         setPendingAction({ type: "deploy", environment, trainingId });
         setAlert(null);
         try {
-            const response = await axios.post(
-                `/api/models/${modelId}/instances`,
-                // Restarts send no config: the server keeps the current one.
+            // Restarts send no config: the server keeps the current one.
+            const { instances } = await api.instances.deploy(
+                modelId,
                 config ? { [environment]: true, config } : { [environment]: true },
-                { params: { training_id: trainingId }, headers: { Authorization: `Bearer ${user.token}` } }
+                trainingId
             );
-            setInstances(response.data.instances || []);
+            setInstances(instances || []);
         } catch (error) {
             setAlert({ variant: "danger", message: error.response?.data?.error || error.message });
         } finally {
@@ -875,12 +874,10 @@ const Publish = () => {
         setPendingAction({ type: "stop", environment, trainingId: instance.training_id });
         setAlert(null);
         try {
-            const response = await axios.post(
-                `/api/models/${modelId}/instances`,
-                { [environment]: false },
-                { params: { training_id: instance.training_id }, headers: { Authorization: `Bearer ${user.token}` } }
+            const { instances } = await api.instances.deploy(
+                modelId, { [environment]: false }, instance.training_id
             );
-            setInstances(response.data.instances || []);
+            setInstances(instances || []);
         } catch (error) {
             setAlert({ variant: "danger", message: error.response?.data?.error || error.message });
         } finally {
@@ -894,14 +891,8 @@ const Publish = () => {
         setPendingAction({ type: "reset-key", environment, trainingId: instance.training_id });
         setAlert(null);
         try {
-            const response = await axios.put(
-                `/api/models/${modelId}/instances/${instance.id}`,
-                { api_key: null },
-                { headers: { Authorization: `Bearer ${user.token}` } }
-            );
-            setInstances((prev) => prev.map((item) => (
-                item.id === response.data.instance.id ? response.data.instance : item
-            )));
+            const { instance: rotated } = await api.instances.update(modelId, instance.id, { api_key: null });
+            setInstances((prev) => prev.map((item) => (item.id === rotated.id ? rotated : item)));
         } catch (error) {
             setAlert({ variant: "danger", message: error.response?.data?.error || error.message });
         } finally {
@@ -981,14 +972,8 @@ const Publish = () => {
         setConfigSaving(true);
         setConfigError(null);
         try {
-            const response = await axios.put(
-                `/api/models/${modelId}/instances/${configTarget.instance.id}`,
-                { config },
-                { headers: { Authorization: `Bearer ${user.token}` } }
-            );
-            setInstances((prev) => prev.map((item) => (
-                item.id === response.data.instance.id ? response.data.instance : item
-            )));
+            const { instance: saved } = await api.instances.update(modelId, configTarget.instance.id, { config });
+            setInstances((prev) => prev.map((item) => (item.id === saved.id ? saved : item)));
             setConfigTarget(null);
             setConfigForm(null);
         } catch (error) {
@@ -1154,7 +1139,7 @@ const Publish = () => {
                                     icon={<RocketTakeoff />}
                                     title="Releases"
                                     right={
-                                        <span className="text-muted" style={{ fontSize: "0.7rem" }}>
+                                        <span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>
                                             Deploy a version to testing, then promote it from the Testing card above.
                                         </span>
                                     }

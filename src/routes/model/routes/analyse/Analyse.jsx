@@ -2,7 +2,7 @@ import { useContext, useEffect, useState } from "react";
 import { Alert, Col, Nav, Row, Spinner } from "react-bootstrap";
 import { Activity, Broadcast, Database, GraphUp, Grid1x2 } from "react-bootstrap-icons";
 import { useParams } from "react-router-dom";
-import axios from "axios";
+import { useApi } from "../../../../contexts/ApiContext";
 import { UserContext } from "../../../../contexts/UserContext";
 import { ModelContext } from "../../../../contexts/ModelContext";
 import Overview from "./components/Overview";
@@ -33,24 +33,24 @@ const Analyse = () => {
     const [best, setBest] = useState(null);
     const [confusions, setConfusions] = useState(null);
     const [instances, setInstances] = useState([]);
+    const api = useApi();
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
     useEffect(() => {
         if (!user || !modelId) return;
-        const headers = { Authorization: `Bearer ${user.token}` };
         const load = async () => {
             try {
                 setLoading(true);
-                const [datasetRes, versionsRes, instancesRes] = await Promise.all([
-                    axios.get(`/api/models/${modelId}/analytics/dataset`, { headers }),
-                    axios.get(`/api/models/${modelId}/analytics/versions`, { headers }),
-                    axios.get(`/api/models/${modelId}/instances`, { headers })
+                const [dataset, versions, instances] = await Promise.all([
+                    api.analytics.dataset(modelId),
+                    api.analytics.versions(modelId),
+                    api.instances.list(modelId)
                 ]);
-                setDataset(datasetRes.data);
-                setVersions(versionsRes.data.versions || []);
-                setBest(versionsRes.data.best || null);
-                setInstances(instancesRes.data.instances || []);
+                setDataset(dataset);
+                setVersions(versions.versions || []);
+                setBest(versions.best || null);
+                setInstances(instances.instances || []);
                 setError(null);
             } catch (err) {
                 setError(err.response?.data?.error || err.message);
@@ -59,17 +59,13 @@ const Analyse = () => {
             }
         };
         load();
-    }, [user, modelId]);
+    }, [api, user, modelId]);
 
     useEffect(() => {
         if (!user || !modelId) return;
         const loadConfusions = async () => {
             try {
-                const response = await axios.get(`/api/models/${modelId}/analytics/confusions`, {
-                    params: { window: win },
-                    headers: { Authorization: `Bearer ${user.token}` }
-                });
-                setConfusions(response.data);
+                setConfusions(await api.analytics.confusions(modelId, { window: win }));
             } catch (err) {
                 console.error(err.response?.data?.error || err.message);
             }

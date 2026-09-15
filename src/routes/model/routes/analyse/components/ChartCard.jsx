@@ -50,7 +50,7 @@ const ChartCard = ({ icon, title, name, right, bar, csv, foot, height = 300, chi
                     {children}
                 </div>
                 {foot && (
-                    <div className="text-muted mt-2" style={{ fontSize: "0.7rem" }}>{foot}</div>
+                    <div className="text-muted mt-2" style={{ fontSize: "var(--app-text-xs)" }}>{foot}</div>
                 )}
             </Card.Body>
         </Card>

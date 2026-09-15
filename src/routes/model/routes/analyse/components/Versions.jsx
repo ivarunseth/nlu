@@ -124,7 +124,7 @@ const Versions = ({ versions, best, confusions, win, setWin, ner, nlu }) => {
                                 <div>
                                     <div
                                         className="text-muted small fw-bold"
-                                        style={{ fontSize: "0.65rem" }}
+                                        style={{ fontSize: "var(--app-text-xs)" }}
                                         title="Ranked by test accuracy, tie-broken by macro F1"
                                     >
                                         RECOMMENDED VERSION
@@ -190,7 +190,7 @@ const Versions = ({ versions, best, confusions, win, setWin, ner, nlu }) => {
                             icon={<Grid3x3Gap />}
                             title={ner ? "Per-entity F1" : nlu ? "Per-intent F1" : "Per-label F1"}
                             right={
-                                <span className="text-muted" style={{ fontSize: "0.7rem" }}>
+                                <span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>
                                     {ner ? "B-/I- tag scores merged per entity · test split" : "test split, by version"}
                                 </span>
                             }
@@ -249,7 +249,7 @@ const Versions = ({ versions, best, confusions, win, setWin, ner, nlu }) => {
                             icon={<Shuffle />}
                             title={ner ? "Persistent tag confusions" : "Persistent confusions"}
                             right={
-                                <span className="text-muted" style={{ fontSize: "0.7rem" }}>
+                                <span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>
                                     across {confusions?.window ?? 0} version{confusions?.window === 1 ? "" : "s"}
                                 </span>
                             }
@@ -291,7 +291,7 @@ const Versions = ({ versions, best, confusions, win, setWin, ner, nlu }) => {
                                 icon={<Grid3x3Gap />}
                                 title="Per-slot F1"
                                 right={
-                                    <span className="text-muted" style={{ fontSize: "0.7rem" }}>
+                                    <span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>
                                         name and both boundaries must match · test split
                                     </span>
                                 }

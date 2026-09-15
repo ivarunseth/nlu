@@ -14,7 +14,7 @@ import {
     Tags
 } from "react-bootstrap-icons";
 import { useParams } from "react-router-dom";
-import axios from "axios";
+import { useApi } from "../../../../../contexts/ApiContext";
 import { UserContext } from "../../../../../contexts/UserContext";
 import { formatThreshold } from "../../../../../shared/utils/training";
 import { CardHeading, EmptyMessage, EmptyState, SectionLabel } from "../../../../../shared/components/SectionCard";
@@ -23,7 +23,7 @@ import ChartCard from "./ChartCard";
 import Strip from "./Strip";
 import { BLUE, RED, TEAL, Hist, TimeLines } from "./charts";
 
-const ENV_ORDER = ["development", "testing", "production"];
+const ENV_ORDER = ["testing", "production"];
 const WINDOWS = [[1, "last hour"], [6, "last 6 hours"], [24, "last 24 hours"], [168, "last 7 days"]];
 const REFRESH_MS = 30000;
 
@@ -73,7 +73,7 @@ const FeedRow = ({ record, colorOf }) => {
                                         {intents[0].name}
                                     </Badge>
                                     {intents[0].score != null && (
-                                        <span className="text-muted font-monospace me-1" style={{ fontSize: "0.7rem" }}>
+                                        <span className="text-muted font-monospace me-1" style={{ fontSize: "var(--app-text-xs)" }}>
                                             {(intents[0].score * 100).toFixed(1)}%
                                         </span>
                                     )}
@@ -149,7 +149,7 @@ const FeedRow = ({ record, colorOf }) => {
                             {labels[0].name}
                         </Badge>
                         {labels[0].score != null && (
-                            <span className="text-muted font-monospace" style={{ fontSize: "0.7rem" }}>
+                            <span className="text-muted font-monospace" style={{ fontSize: "var(--app-text-xs)" }}>
                                 {(labels[0].score * 100).toFixed(1)}%
                             </span>
                         )}
@@ -171,6 +171,7 @@ const FeedRow = ({ record, colorOf }) => {
 // keeps the aggregates and the feed moving with the traffic.
 const Traffic = ({ dataset, instances, ner, nlu }) => {
     const { modelId } = useParams();
+    const api = useApi();
     const { user } = useContext(UserContext);
 
     const [env, setEnv] = useState("");
@@ -217,11 +218,7 @@ const Traffic = ({ dataset, instances, ner, nlu }) => {
         const load = async (spin) => {
             try {
                 if (spin) setLoading(true);
-                const response = await axios.get(`/api/models/${modelId}/analytics/live`, {
-                    params: { hours, ...(env && { environment: env }) },
-                    headers: { Authorization: `Bearer ${user.token}` }
-                });
-                setData(response.data);
+                setData(await api.analytics.live(modelId, { hours, ...(env && { environment: env }) }));
                 setError(null);
             } catch (err) {
                 setError(err.response?.data?.error || err.message);
@@ -376,7 +373,7 @@ const Traffic = ({ dataset, instances, ner, nlu }) => {
                             <Col lg={4}>
                                 <Card className="border-light overflow-hidden h-100">
                                     <CardHeading icon={<Stopwatch />} title="Latency" right={
-                                        <span className="text-muted" style={{ fontSize: "0.7rem" }}>server-measured</span>
+                                        <span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>server-measured</span>
                                     } />
                                     <Card.Body className="p-0">
                                         <Table size="sm" className="mb-0 small align-middle">
@@ -453,7 +450,7 @@ const Traffic = ({ dataset, instances, ner, nlu }) => {
                             <Col lg={4}>
                                 <Card className="border-light overflow-hidden h-100">
                                     <CardHeading icon={ner ? <Tags/> : <Bookmarks />} title={ner ? "Predicted entity mix" : nlu ? "Predicted intent mix" : "Predicted label mix"} right={
-                                        <span className="text-muted" style={{ fontSize: "0.7rem" }}>vs dataset share</span>
+                                        <span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>vs dataset share</span>
                                     } />
                                     <Card.Body className="p-0">
                                         {data.labels.length ? (
@@ -499,7 +496,7 @@ const Traffic = ({ dataset, instances, ner, nlu }) => {
                                 <Col lg={4}>
                                     <Card className="border-light overflow-hidden h-100">
                                         <CardHeading icon={<Diagram2 />} title="Predicted slot mix" right={
-                                            <span className="text-muted" style={{ fontSize: "0.7rem" }}>vs dataset share</span>
+                                            <span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>vs dataset share</span>
                                         } />
                                         <Card.Body className="p-0">
                                             {(data.slot_labels || []).length ? (
@@ -542,7 +539,7 @@ const Traffic = ({ dataset, instances, ner, nlu }) => {
                                 <Col lg={4}>
                                     <Card className="border-light overflow-hidden h-100">
                                         <CardHeading icon={<Tags />} title="Predicted entity mix" right={
-                                            <span className="text-muted" style={{ fontSize: "0.7rem" }}>vs dataset share</span>
+                                            <span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>vs dataset share</span>
                                         } />
                                         <Card.Body className="p-0">
                                             {(data.entity_labels || []).length ? (
@@ -587,7 +584,7 @@ const Traffic = ({ dataset, instances, ner, nlu }) => {
                                         icon={<Broadcast />}
                                         title="Recent requests"
                                         right={
-                                            <span className="text-muted" style={{ fontSize: "0.7rem" }}>
+                                            <span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>
                                                 latest {feed.length} request{feed.length === 1 ? "" : "s"}
                                             </span>
                                         }

@@ -15,13 +15,26 @@ import { parseApiDate, pct } from "../../../../../shared/utils/training";
 import Strip from "./Strip";
 import { BLUE, LabelBars, TrendLines } from "./charts";
 
-const ENV_ORDER = ["development", "testing", "production"];
+const ENV_ORDER = ["testing", "production"];
 
 // Thresholds behind the "needs attention" warnings.
 const RATIO_LIMIT = 10;
 const MIN_EXAMPLES = 5;
 const WEAK_F1 = 0.6;
 const GAP_LIMIT = 0.15;
+
+// Entity list-type checks. An entity is declared open or closed by hand, but
+// its annotations say how it actually behaves: distinct surface values per span
+// is near 1 when every mention is unique, and near 0 when they are drawn from a
+// small fixed vocabulary. Where the two disagree, the declaration is usually
+// the thing that is wrong — and it matters, because training enumerates a
+// closed list's catalogue and generalizes an open one with UNK variants.
+const TYPE_MIN_SPANS = 10;        // below this the ratio is noise, not signal
+const UNIQUE_RATIO = 0.7;         // closed, yet nearly every mention is unique
+const CATALOGUE_LIMIT = 100;      // closed, yet far too many values to enumerate
+const REPEAT_RATIO = 0.1;         // open, yet mentions repeat heavily
+const REPEAT_MAX_VALUES = 25;
+const ENUMERABLE_VALUES = 10;     // this few distinct values is a fixed set
 
 // The glanceable health summary: metric strip, plain-language one-liner,
 // warnings, and the headline card of each tab with a deep link into it.
@@ -142,6 +155,41 @@ const Overview = ({ dataset, versions, best, instances, ner, nlu, goto }) => {
             tab: "model"
         });
     }
+    // Entities whose declared list type disagrees with their annotations. Empty
+    // for classification models, which have no entities at all.
+    const mistyped = (dataset?.entities || [])
+        // A backend that predates list_type in this payload yields no warnings
+        // rather than wrong ones — without the guard, a missing type reads as
+        // "not closed" and every closed entity becomes a false positive.
+        .filter((entity) => (entity.list_type === "open" || entity.list_type === "closed")
+            && entity.count >= TYPE_MIN_SPANS && entity.values > 0)
+        .map((entity) => {
+            const ratio = entity.values / entity.count;
+            if (entity.list_type === "closed") {
+                if (ratio >= UNIQUE_RATIO) return { ...entity, should: "open" };
+                if (entity.values > CATALOGUE_LIMIT) return { ...entity, should: "open" };
+            } else {
+                if (entity.values <= ENUMERABLE_VALUES) return { ...entity, should: "closed" };
+                if (ratio <= REPEAT_RATIO && entity.values <= REPEAT_MAX_VALUES) return { ...entity, should: "closed" };
+            }
+            return null;
+        })
+        .filter(Boolean);
+
+    const name3 = (list) => list.slice(0, 3).map((entity) => entity.name).join(", ") + (list.length > 3 ? "…" : "");
+    const shouldOpen = mistyped.filter((entity) => entity.should === "open");
+    const shouldClosed = mistyped.filter((entity) => entity.should === "closed");
+    if (shouldOpen.length) warns.push({
+        text: `${shouldOpen.length} closed ${shouldOpen.length > 1 ? "entities look" : "entity looks"} unbounded — values barely repeat: ${name3(shouldOpen)}.`,
+        to: "build?tab=entities",
+        label: "entities"
+    });
+    if (shouldClosed.length) warns.push({
+        text: `${shouldClosed.length} open ${shouldClosed.length > 1 ? "entities draw" : "entity draws"} on a small fixed vocabulary — ${shouldClosed.length > 1 ? "they may be closed lists" : "it may be a closed list"}: ${name3(shouldClosed)}.`,
+        to: "build?tab=entities",
+        label: "entities"
+    });
+
     const stale = deployed.filter((entry) => entry.stale);
     if (stale.length) warns.push({
         text: `${stale.map((entry) => entry.environment).join(", ")} ${stale.length > 1 ? "are" : "is"} serving a version retrained after deployment.`,
@@ -187,7 +235,7 @@ const Overview = ({ dataset, versions, best, instances, ner, nlu, goto }) => {
                                         </Button>
                                     ) : (
                                         <Link className="ms-auto small text-decoration-none text-nowrap" to={`/models/${modelId}/${warn.to}`}>
-                                            {warn.to} →
+                                            {warn.label || warn.to} →
                                         </Link>
                                     )}
                                 </ListGroup.Item>

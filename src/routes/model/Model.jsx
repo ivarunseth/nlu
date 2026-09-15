@@ -1,11 +1,14 @@
 import { lazy, Suspense, useContext, useEffect, useState } from 'react';
-import { Container, Row, Col, Nav, Navbar } from 'react-bootstrap';
+import { Row, Col, Nav, Navbar } from 'react-bootstrap';
 import { Translate, ClockHistory, ClipboardCheck, RocketTakeoff, Activity, Gear } from 'react-bootstrap-icons';
 import { Routes, Route, Link, useLocation, useParams } from 'react-router-dom';
 import { SocketProvider } from '../../contexts/SocketContext';
 import { ModelContext, ModelProvider } from '../../contexts/ModelContext';
+import RouteFallback from '../../shared/components/RouteFallback';
+import RouteErrorBoundary from '../../shared/components/RouteErrorBoundary';
+import PageShell from '../../shared/components/PageShell';
 import { UserContext } from '../../contexts/UserContext';
-import axios from 'axios';
+import { useApi } from '../../contexts/ApiContext';
 
 const Build = lazy(() => import('./routes/studio/Build'));
 const Utterances = lazy(() => import('./routes/utterances/Utterances'));
@@ -17,6 +20,10 @@ const Settings = lazy(() => import('./routes/settings/Settings'));
 const TrainingVersion = lazy(() => import('./routes/history/History').then((module) => ({
     default: module.TrainingVersion
 })));
+
+// Crumbs derived from route params arrive lower case; the rest of the
+// navigation is Title Case, so bring them onto the same convention.
+const capitalise = (value) => (value ? value.charAt(0).toUpperCase() + value.slice(1) : value);
 
 const SECTIONS = {
     build: { icon: <Translate />, label: 'Build' },
@@ -31,6 +38,7 @@ const ModelContent = () => {
     const { modelId } = useParams();
     const { user } = useContext(UserContext);
     const { model } = useContext(ModelContext);
+    const api = useApi();
     const location = useLocation();
     const modelBasePath = `/models/${modelId}`;
     const pathParts = location.pathname.split('/').filter(Boolean);
@@ -63,15 +71,9 @@ const ModelContent = () => {
         if (user && modelId && detailLabelId) {
             const getLabel = async () => {
                 try {
-                    const response = await axios.get(
-                        `/api/models/${modelId}/${detailResource}/${detailLabelId}`,
-                        {
-                            headers: {
-                                Authorization: `Bearer ${user.token}`,
-                            },
-                        }
-                    );
-                    setLabelName(response.data.name);
+                    const resource = detailResource === 'entities' ? api.entities : api.intents;
+                    const { name } = await resource.get(modelId, detailLabelId);
+                    setLabelName(name);
                 } catch (error) {
                     setLabelName('');
                     console.error(error.response?.data?.error || error.message);
@@ -81,21 +83,14 @@ const ModelContent = () => {
         } else {
             setLabelName('');
         }
-    }, [user, modelId, detailResource, detailLabelId]);
+    }, [api, user, modelId, detailResource, detailLabelId]);
 
     useEffect(() => {
         if (user && modelId && trainingId) {
             const getTraining = async () => {
                 try {
-                    const response = await axios.get(
-                        `/api/models/${modelId}/trainings/${trainingId}`,
-                        {
-                            headers: {
-                                Authorization: `Bearer ${user.token}`,
-                            },
-                        }
-                    );
-                    setTrainingVersion(response.data.version);
+                    const { version } = await api.trainings.get(modelId, trainingId);
+                    setTrainingVersion(version);
                 } catch (error) {
                     setTrainingVersion('');
                     console.error(error.response?.data?.error || error.message);
@@ -105,10 +100,10 @@ const ModelContent = () => {
         } else {
             setTrainingVersion('');
         }
-    }, [user, modelId, trainingId]);
+    }, [api, user, modelId, trainingId]);
 
     return (
-        <>
+        <PageShell contextBar={(
             <Row className='page-context-bar align-items-center gx-3 row-gap-2'>
                 <Col xs={12} lg={4} xl={5} className='d-flex align-items-center'>
                     <nav
@@ -117,7 +112,7 @@ const ModelContent = () => {
                         style={{ minHeight: '42px' }}
                     >
                         <Link to='/' className='text-decoration-none'>
-                            models
+                            Models
                         </Link>
                         <span className='text-muted px-1'>/</span>
                         <span className='text-body'>
@@ -127,13 +122,13 @@ const ModelContent = () => {
                         {detailLabelId || trainingId ? (
                             <>
                                 <Link to={detailParentLink} className='text-decoration-none'>
-                                    {activeSection}
+                                    {SECTIONS[activeSection]?.label || activeSection}
                                 </Link>
                                 <span className='text-muted px-1'>/</span>
                                 {buildTab && (
                                     <>
                                         <span className='text-body'>
-                                            {buildTab}
+                                            {capitalise(buildTab)}
                                         </span>
                                         <span className='text-muted px-1'>/</span>
                                     </>
@@ -145,13 +140,13 @@ const ModelContent = () => {
                         ) : (
                             <>
                                 <span className='text-body'>
-                                    {activeSection}
+                                    {SECTIONS[activeSection]?.label || activeSection}
                                 </span>
                                 {buildTab && (
                                     <>
                                         <span className='text-muted px-1'>/</span>
                                         <span className='text-body'>
-                                            {buildTab}
+                                            {capitalise(buildTab)}
                                         </span>
                                     </>
                                 )}
@@ -191,7 +186,11 @@ const ModelContent = () => {
                     </Navbar>
                 </Col>
             </Row>
-            <Suspense fallback={null}>
+        )}>
+            {/* Inside the shell, so a crashing tab keeps the breadcrumb and
+                sub-nav on screen and the user can click their way out. */}
+            <RouteErrorBoundary>
+            <Suspense fallback={<RouteFallback />}>
                 <Routes>
                     <Route path="build" element={<Build />} />
                     <Route path="history" element={<History />} />
@@ -203,20 +202,19 @@ const ModelContent = () => {
                     <Route path="build/:labelId/utterances" element={<Utterances />} />
                 </Routes>
             </Suspense>
-        </>
+            </RouteErrorBoundary>
+        </PageShell>
     );
 }
 
 const Model = () => {
 
     return (
-        <Container fluid>
-            <ModelProvider>
-                <SocketProvider>
-                    <ModelContent />
-                </SocketProvider>
-            </ModelProvider>
-        </Container>
+        <ModelProvider>
+            <SocketProvider>
+                <ModelContent />
+            </SocketProvider>
+        </ModelProvider>
     );
 }
 

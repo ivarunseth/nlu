@@ -1,4 +1,4 @@
-import { useContext, useState } from "react";
+import { useState } from "react";
 import { Badge, Button, ButtonGroup, Card, Col, Form, Row, Spinner, Table } from "react-bootstrap";
 import {
     ArrowLeftRight,
@@ -17,8 +17,7 @@ import {
     Bookmarks
 } from "react-bootstrap-icons";
 import { Link, useParams } from "react-router-dom";
-import axios from "axios";
-import { UserContext } from "../../../../../contexts/UserContext";
+import { useApi } from "../../../../../contexts/ApiContext";
 import { CardHeading, EmptyMessage, EmptyState } from "../../../../../shared/components/SectionCard";
 import { pct } from "../../../../../shared/utils/training";
 import ChartCard from "./ChartCard";
@@ -36,7 +35,7 @@ const range = (bin) => (bin.lo === bin.hi ? `${bin.lo}` : `${bin.lo}–${bin.hi}
 // annotation panels read exactly as they do for named entity recognition.
 const Dataset = ({ dataset, versions, ner, nlu }) => {
     const { modelId } = useParams();
-    const { user } = useContext(UserContext);
+    const api = useApi();
 
     const [sort, setSort] = useState("name");
     const [view, setView] = useState("chart");
@@ -79,11 +78,7 @@ const Dataset = ({ dataset, versions, ner, nlu }) => {
         }
         try {
             setCoverage({ state: "loading" });
-            const response = await axios.get(`/api/models/${modelId}/analytics/coverage`, {
-                params: { training_id: id },
-                headers: { Authorization: `Bearer ${user.token}` }
-            });
-            setCoverage({ state: "ready", ...response.data });
+            setCoverage({ state: "ready", ...await api.analytics.coverage(modelId, { training_id: id }) });
         } catch (error) {
             setCoverage({
                 state: error.response?.status === 404 ? "missing" : "error",
@@ -290,7 +285,7 @@ const Dataset = ({ dataset, versions, ner, nlu }) => {
                                 <CardHeading
                                     icon={<Diagram2 />}
                                     title={nlu ? "Slot co-occurrence" : "Entity co-occurrence"}
-                                    right={<span className="text-muted" style={{ fontSize: "0.7rem" }}>{nlu ? "slots" : "entities"} annotated in the same utterance</span>}
+                                    right={<span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>{nlu ? "slots" : "entities"} annotated in the same utterance</span>}
                                 />
                                 <Card.Body className="p-0">
                                     {annotation?.cooccurrence?.length ? (
@@ -333,7 +328,7 @@ const Dataset = ({ dataset, versions, ner, nlu }) => {
                             <CardHeading
                                 icon={<Diagram2 />}
                                 title="Intent ↔ slot"
-                                right={<span className="text-muted" style={{ fontSize: "0.7rem" }}>which slots each intent's utterances carry</span>}
+                                right={<span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>which slots each intent's utterances carry</span>}
                             />
                             <Card.Body className="p-0">
                                 {annotation?.intent_slots?.length ? (
@@ -376,7 +371,7 @@ const Dataset = ({ dataset, versions, ner, nlu }) => {
                             icon={<Files />}
                             title="Duplicates"
                             right={
-                                <span className={duplicates.conflicts ? "text-danger" : "text-muted"} style={{ fontSize: "0.7rem" }}>
+                                <span className={duplicates.conflicts ? "text-danger" : "text-muted"} style={{ fontSize: "var(--app-text-xs)" }}>
                                     {duplicates.exact} exact · {duplicates.near} near
                                     {!ner && ` · ${duplicates.conflicts} conflicts`}
                                 </span>

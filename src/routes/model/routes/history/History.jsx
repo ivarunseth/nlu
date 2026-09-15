@@ -90,7 +90,7 @@ import useDebounce from "../../../../shared/hooks/useDebounce";
 import useTableControls from "../../../../shared/hooks/useTableControls";
 import SortHeader from "../../../../shared/components/SortHeader";
 import { TableFilters, FilterChips } from "../../../../shared/components/TableFilters";
-import axios from "axios";
+import { useApi } from '../../../../contexts/ApiContext';
 // Vite's explicit worker import. The `new Worker(new URL(...), ...)` form relies
 // on static analysis of that exact expression and silently yields a worker that
 // never loads when it does not match; this compiles to a constructor both in dev
@@ -1878,6 +1878,7 @@ const TrainingInspector = ({ training, model, previousTraining, trainingData, pr
 const TrainingVersion = () => {
     const { modelId, trainingId } = useParams();
     const { user } = useContext(UserContext);
+    const api = useApi();
     const { model } = useContext(ModelContext);
     const socket = useSocket();
 
@@ -1899,13 +1900,8 @@ const TrainingVersion = () => {
 
     const handleDownload = async () => {
         try {
-            const response = await axios.get(`/api/models/${modelId}/trainings/${training.id}?format=zip`, {
-                responseType: 'blob',
-                headers: {
-                    "Authorization": `Bearer ${user.token}`
-                }
-            });
-            const href = URL.createObjectURL(response.data);
+            const archive = await api.trainings.downloadArtifact(modelId, training.id);
+            const href = URL.createObjectURL(archive);
             const link = document.createElement('a');
             link.href = href;
             link.download = `${model?.name || 'model'}_${training.version}.zip`;
@@ -1923,15 +1919,7 @@ const TrainingVersion = () => {
 
         try {
             setStoppingTraining(true);
-            const response = await axios.post(
-                `/api/models/${modelId}/trainings/${training.id}/stop`,
-                {},
-                {
-                    headers: {
-                        "Authorization": `Bearer ${user.token}`
-                    }
-                }
-            );
+            const response = { data: await api.trainings.stop(modelId, training.id) };
             setTraining(prev => ({
                 ...prev,
                 ...response.data,
@@ -1954,15 +1942,7 @@ const TrainingVersion = () => {
 
         try {
             setRestartingTraining(true);
-            const response = await axios.post(
-                `/api/models/${modelId}/trainings/${training.id}/start`,
-                training.kwargs || {},
-                {
-                    headers: {
-                        "Authorization": `Bearer ${user.token}`
-                    }
-                }
-            );
+            const response = { data: await api.trainings.start(modelId, training.id, training.kwargs || {}) };
             setTraining(response.data);
             handleCloseRestartConfirmation();
         } catch (error) {
@@ -1976,7 +1956,6 @@ const TrainingVersion = () => {
         if (!user || !modelId || !trainingId) return;
 
         let cancelled = false;
-        const headers = { "Authorization": `Bearer ${user.token}` };
         const fail = (error) => {
             if (!cancelled) setAlert({ variant: 'danger', message: error.response?.data?.error || error.message });
         };
@@ -1986,12 +1965,9 @@ const TrainingVersion = () => {
         const getTraining = async () => {
             try {
                 setLoading(true);
-                const response = await axios.get(`/api/models/${modelId}/trainings/${trainingId}`, {
-                    params: { extended: '1' },
-                    headers
-                });
+                const run = await api.trainings.get(modelId, trainingId, { extended: '1' });
                 if (cancelled) return;
-                setTraining(response.data);
+                setTraining(run);
             } catch (error) {
                 fail(error);
             } finally {
@@ -2006,24 +1982,19 @@ const TrainingVersion = () => {
         const getTrainingData = async () => {
             try {
                 setDataLoading(true);
-                const listResponse = await axios.get(`/api/models/${modelId}/trainings`, {
-                    params: { extended: '1', per_page: 100 },
-                    headers
-                });
+                const listed = await api.trainings.list(modelId, { extended: '1', per_page: 100 });
                 if (cancelled) return;
 
-                const allTrainings = listResponse.data.trainings || [];
+                const allTrainings = listed.trainings || [];
                 const currentIndex = allTrainings.findIndex(t => String(t.id) === String(trainingId));
                 const previous = currentIndex !== -1 && currentIndex < allTrainings.length - 1
                     ? allTrainings[currentIndex + 1]
                     : null;
                 setPreviousTraining(previous);
 
-                const dataPromises = [
-                    axios.get(`/api/models/${modelId}/trainings/${trainingId}/data`, { headers }).then(res => res.data)
-                ];
+                const dataPromises = [api.trainings.metrics(modelId, trainingId)];
                 if (previous) {
-                    dataPromises.push(axios.get(`/api/models/${modelId}/trainings/${previous.id}/data`, { headers }).then(res => res.data));
+                    dataPromises.push(api.trainings.metrics(modelId, previous.id));
                 }
 
                 const [currentData, prevData] = await Promise.all(dataPromises);
@@ -2178,6 +2149,7 @@ const History = () => {
     const { modelId } = useParams();
 
     const { user } = useContext(UserContext);
+    const api = useApi();
     const { model } = useContext(ModelContext);
 
     const socket = useSocket();
@@ -2542,9 +2514,8 @@ const History = () => {
     const handleTrain = async () => {
         try {
             setStartingTraining(true);
-            const headers = { "Authorization": `Bearer ${user.token}` };
-            let response = await axios.post(`/api/models/${modelId}/trainings`, {}, { headers });
-            response = await axios.post(`/api/models/${modelId}/trainings/${response.data.id}/start`, paramters, { headers });
+            const created = await api.trainings.create(modelId);
+            const response = { data: await api.trainings.start(modelId, created.id, paramters) };
             setCurrentTraining(response.data);
             syncActiveTraining(response.data);
             if (page === 1) {
@@ -2586,13 +2557,8 @@ const History = () => {
 
     const handleDownload = async (training) => {
         try {
-            const response = await axios.get(`/api/models/${model.id}/trainings/${training.id}?format=zip`, {
-                responseType: 'blob',
-                headers: {
-                    "Authorization": `Bearer ${user.token}`
-                }
-            });
-            const href = URL.createObjectURL(response.data);
+            const archive = await api.trainings.downloadArtifact(model.id, training.id);
+            const href = URL.createObjectURL(archive);
             const link = document.createElement('a');
             link.href = href;
             link.download = `${model.name}_${training.version}.zip`;
@@ -2610,13 +2576,7 @@ const History = () => {
 
         try {
             setStoppingTrainingIds(prev => new Set(prev).add(training.id));
-            const headers = { "Authorization": `Bearer ${user.token}` };
-            const response = await axios.post(
-                `/api/models/${modelId}/trainings/${training.id}/stop`,
-                {},
-                { headers }
-            );
-            updateTraining(response.data);
+            updateTraining(await api.trainings.stop(modelId, training.id));
         } catch (error) {
             setAlert({ variant: 'danger', message: error.response?.data?.error || error.message });
         } finally {
@@ -2633,13 +2593,7 @@ const History = () => {
 
         try {
             setRestartingTrainingIds(prev => new Set(prev).add(training.id));
-            const headers = { "Authorization": `Bearer ${user.token}` };
-            const response = await axios.post(
-                `/api/models/${modelId}/trainings/${training.id}/start`,
-                training.kwargs || {},
-                { headers }
-            );
-            updateTraining(response.data);
+            updateTraining(await api.trainings.start(modelId, training.id, training.kwargs || {}));
         } catch (error) {
             setAlert({ variant: 'danger', message: error.response?.data?.error || error.message });
         } finally {
@@ -2665,8 +2619,7 @@ const History = () => {
         try {
             setSubmitting(true);
             setLoading(true);
-            const headers = { "Authorization": `Bearer ${user.token}` }
-            await Promise.all(trainingIds.map((trainingId) => axios.delete(`/api/models/${model.id}/trainings/${trainingId}`, { headers })));
+            await Promise.all(trainingIds.map((trainingId) => api.trainings.remove(model.id, trainingId)));
             setActiveTrainings(prev => prev.filter(training => !trainingIds.includes(training.id)));
             const remainingOnPage = trainings.length - trainingIds.length;
             if (remainingOnPage > 0) {
@@ -2679,11 +2632,11 @@ const History = () => {
                     let params = { extended: '1', page: page, per_page: perPage };
                     if (debouncedQuery !== '')
                         params.query = debouncedQuery;
-                    const response = await axios.get(`/api/models/${model.id}/trainings`, { params, headers });
-                    setTrainings(response.data.trainings);
-                    setTotal(response.data.total);
+                    const listed = await api.trainings.list(model.id, params);
+                    setTrainings(listed.trainings);
+                    setTotal(listed.total);
                     if (trainingIds.includes(currentTraining?.id))
-                        setCurrentTraining(response.data.trainings[0]);
+                        setCurrentTraining(listed.trainings[0]);
                 }
             } else {
                 if (page > 1) {
@@ -2719,15 +2672,12 @@ const History = () => {
                     setLoading(true)
                     let params = { extended: '1', page: page, per_page: perPage, ...controls.params };
                     if (debouncedQuery) params.query = debouncedQuery;
-                    const headers = { "Authorization": `Bearer ${user.token}` };
-                    const [response, activeResponse] = await Promise.all([
-                        axios.get(`/api/models/${modelId}/trainings`, { params, headers }),
-                        axios.get(`/api/models/${modelId}/trainings`, {
-                            params: { extended: '1', page: 1, per_page: 1000 },
-                            headers
-                        })
+                    const [listed, active] = await Promise.all([
+                        api.trainings.list(modelId, params),
+                        api.trainings.list(modelId, { extended: '1', page: 1, per_page: 1000 })
                     ]);
-                    setActiveTrainings((activeResponse.data.trainings || []).filter(isTrainingActive));
+                    const response = { data: listed };
+                    setActiveTrainings((active.trainings || []).filter(isTrainingActive));
                     if (response.data.total > 0) {
                         setTrainings(response.data.trainings);
                         setTotal(response.data.total);

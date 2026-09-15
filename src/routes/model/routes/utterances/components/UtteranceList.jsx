@@ -17,7 +17,7 @@ const UtteranceList = ({
             icon={<Quote />}
             title="Utterances"
             right={
-                <span className="text-muted" style={{ fontSize: "0.7rem" }}>
+                <span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>
                     {total} utterance{total === 1 ? "" : "s"}
                 </span>
             }
