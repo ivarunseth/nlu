@@ -278,7 +278,7 @@ const BatchResults = ({ results, running, progress, colorOf }) => {
                                         }}
                                         aria-expanded={expanded}
                                     >
-                                        <span className="text-muted font-monospace flex-shrink-0" style={{ fontSize: "0.7rem", minWidth: "32px" }}>
+                                        <span className="text-muted font-monospace flex-shrink-0" style={{ fontSize: "var(--app-text-xs)", minWidth: "32px" }}>
                                             {row.index + 1}
                                         </span>
                                         <span className="small text-truncate flex-grow-1" title={row.input}>
@@ -295,7 +295,7 @@ const BatchResults = ({ results, running, progress, colorOf }) => {
                                                     <SectionLabel>Input</SectionLabel>
                                                     <div className="small text-break">{row.input}</div>
                                                     {row.meta && Object.keys(row.meta).length > 0 && (
-                                                        <div className="text-muted mt-1" style={{ fontSize: "0.7rem" }}>
+                                                        <div className="text-muted mt-1" style={{ fontSize: "var(--app-text-xs)" }}>
                                                             {Object.entries(row.meta).map(([name, value]) => (
                                                                 <span key={name} className="me-3">
                                                                     <span className="fw-bold">{name}:</span> {String(value)}

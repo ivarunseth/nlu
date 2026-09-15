@@ -1,14 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Badge, Button, Form, Spinner } from "react-bootstrap";
-import {
-    ExclamationTriangle,
-    FileEarmarkSpreadsheet,
-    Play,
-    Upload,
-    X
-} from "react-bootstrap-icons";
+import { ExclamationTriangle, Play, Upload } from "react-bootstrap-icons";
 import Papa from "papaparse";
 import { SectionLabel } from "../../../../../shared/components/SectionCard";
+import FileDropzone from "../../../../../shared/components/FileDropzone";
 
 // Names that mark a column as the model input when auto-picking.
 const INPUT_COLUMN_NAMES = /^(text|query|input|utterance|sentence|review)$/i;
@@ -37,14 +32,11 @@ const BatchPanel = ({
     const [columnIndex, setColumnIndex] = useState(0);
     const [parseError, setParseError] = useState(null);
     const [parsing, setParsing] = useState(false);
-    const [dragOver, setDragOver] = useState(false);
-    const inputRef = useRef(null);
 
     const disabled = busy || running || !isDeployed;
 
     const handleFile = (selected) => {
         setParseError(null);
-        setDragOver(false);
         if (!selected) return;
         if (!/\.(csv|tsv)$/i.test(selected.name)) {
             setParseError("Only .csv and .tsv files are supported.");
@@ -78,7 +70,6 @@ const BatchPanel = ({
         setFile(null);
         setRawRows([]);
         setParseError(null);
-        if (inputRef.current) inputRef.current.value = "";
     };
 
     const columns = useMemo(() => {
@@ -124,84 +115,32 @@ const BatchPanel = ({
         return { rows: parsed, skipped: blank };
     }, [dataRows, columns, columnIndex]);
 
-    const openBrowse = () => {
-        if (!disabled) inputRef.current?.click();
-    };
-
     return (
         <div className="d-flex flex-column flex-grow-1">
             <Form.Label className="mb-1"><SectionLabel>Input file</SectionLabel></Form.Label>
-            <input
-                ref={inputRef}
-                type="file"
+            <FileDropzone
+                file={file}
+                onSelect={handleFile}
+                onClear={handleClear}
                 accept=".csv,.tsv"
-                className="d-none"
-                onChange={(event) => handleFile(event.target.files?.[0])}
+                disabled={disabled}
+                busy={parsing}
+                clearDisabled={running}
+                minHeight="140px"
+                icon={<Upload className="fs-3 mb-2 text-muted" />}
+                prompt={isDeployed
+                    ? "Drag and drop a .csv or .tsv file here, or click to browse."
+                    : "Deploy a version first to start batch testing."}
+                hint="One prediction per row · up to 10 MB"
+                detail={(
+                    <Badge bg="secondary-subtle" text="body-emphasis" className="border font-monospace fw-normal flex-shrink-0">
+                        {rows.length} input{rows.length === 1 ? "" : "s"}
+                    </Badge>
+                )}
             />
-
-            {!file ? (
-                <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={openBrowse}
-                    onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            openBrowse();
-                        }
-                    }}
-                    onDragOver={(event) => {
-                        event.preventDefault();
-                        if (!disabled) setDragOver(true);
-                    }}
-                    onDragLeave={() => setDragOver(false)}
-                    onDrop={(event) => {
-                        event.preventDefault();
-                        if (!disabled) handleFile(event.dataTransfer.files?.[0]);
-                    }}
-                    className={`d-flex flex-column align-items-center justify-content-center text-center p-4 mb-3 rounded ${dragOver ? "bg-body-tertiary" : ""} ${disabled ? "opacity-50" : ""}`}
-                    style={{
-                        border: `2px dashed ${dragOver ? "var(--bs-primary)" : "var(--bs-border-color)"}`,
-                        cursor: disabled ? "not-allowed" : "pointer",
-                        minHeight: "140px"
-                    }}
-                >
-                    {parsing ? (
-                        <Spinner animation="border" size="sm" variant="secondary" />
-                    ) : (
-                        <>
-                            <Upload className="fs-3 mb-2 text-muted" />
-                            <span className="small fw-bold text-body-emphasis">
-                                {isDeployed
-                                    ? "Drag and drop a .csv or .tsv file here, or click to browse."
-                                    : "Deploy a version first to start batch testing."}
-                            </span>
-                            <span className="text-muted mt-1" style={{ fontSize: "0.7rem" }}>
-                                One prediction per row · up to 10 MB
-                            </span>
-                        </>
-                    )}
-                </div>
-            ) : (
+            {file && (
                 <>
-                    <div className="d-flex align-items-center gap-2 border rounded p-2 mb-2 bg-body">
-                        <FileEarmarkSpreadsheet className="text-primary flex-shrink-0" />
-                        <span className="small fw-medium text-truncate flex-grow-1" title={file.name}>{file.name}</span>
-                        <Badge bg="secondary-subtle" text="body-emphasis" className="border font-monospace fw-normal flex-shrink-0">
-                            {rows.length} input{rows.length === 1 ? "" : "s"}
-                        </Badge>
-                        <Button
-                            variant="link"
-                            size="sm"
-                            className="p-0 text-muted flex-shrink-0"
-                            onClick={handleClear}
-                            disabled={running}
-                            title="Remove file"
-                        >
-                            <X className="fs-5" />
-                        </Button>
-                    </div>
-
+                    <div className="mb-2" />
                     <Form.Group className="mb-2">
                         <Form.Check
                             type="checkbox"
@@ -212,7 +151,7 @@ const BatchPanel = ({
                             onChange={(event) => setHasHeader(event.target.checked)}
                             disabled={running}
                         />
-                        <Form.Text className="text-muted d-block" style={{ fontSize: "0.7rem" }}>
+                        <Form.Text className="text-muted d-block" style={{ fontSize: "var(--app-text-xs)" }}>
                             Check only if the file contains a header with column names.
                         </Form.Text>
                     </Form.Group>
@@ -230,7 +169,7 @@ const BatchPanel = ({
                                     <option key={index} value={index}>{name}</option>
                                 ))}
                             </Form.Select>
-                            <Form.Text className="text-muted d-block" style={{ fontSize: "0.7rem" }}>
+                            <Form.Text className="text-muted d-block" style={{ fontSize: "var(--app-text-xs)" }}>
                                 The remaining columns are kept alongside each result and included in the export.
                             </Form.Text>
                         </Form.Group>
@@ -245,7 +184,7 @@ const BatchPanel = ({
                                     className={`px-2 py-1 small text-truncate ${index > 0 ? "border-top" : ""}`}
                                     title={row.input}
                                 >
-                                    <span className="text-muted font-monospace me-2" style={{ fontSize: "0.7rem" }}>{index + 1}</span>
+                                    <span className="text-muted font-monospace me-2" style={{ fontSize: "var(--app-text-xs)" }}>{index + 1}</span>
                                     {row.input}
                                 </div>
                             ))}
@@ -253,7 +192,7 @@ const BatchPanel = ({
                                 <div className="px-2 py-1 small text-muted">No usable inputs in this column.</div>
                             )}
                         </div>
-                        <div className="text-muted mt-1" style={{ fontSize: "0.7rem" }}>
+                        <div className="text-muted mt-1" style={{ fontSize: "var(--app-text-xs)" }}>
                             {rows.length > PREVIEW_ROWS && `Showing ${PREVIEW_ROWS} of ${rows.length} inputs. `}
                             {skipped > 0 && `${skipped} row${skipped === 1 ? "" : "s"} with a blank input skipped.`}
                         </div>
@@ -285,7 +224,7 @@ const BatchPanel = ({
             )}
 
             <div className="d-flex align-items-center justify-content-between mt-auto">
-                <span className="text-muted" style={{ fontSize: "0.7rem" }}>
+                <span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>
                     {running && progress
                         ? `Running ${progress.done} / ${progress.total}…`
                         : "Inputs are submitted in batches and every row gets a result."}
