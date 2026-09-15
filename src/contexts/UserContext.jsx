@@ -1,6 +1,6 @@
 import { createContext, useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import axios from "axios";
+import * as tokens from "../api/tokens";
 import { getTokenExpiry } from "../shared/utils/token";
 import SessionExpiredModal from "../shared/components/SessionExpiredModal";
 
@@ -10,24 +10,6 @@ export const UserContext = createContext();
 // component state so it survives a reload of the sign-in page, and rather than
 // localStorage so it neither leaks into other tabs nor outlives the browser.
 const REDIRECT_KEY = "redirectAfterSignIn";
-
-// A 401 only means "the session expired" when the request actually carried the
-// session token. Sign-in sends Basic auth, sign-up and forgot-password send no
-// Authorization header at all, and the Test page's /api/infer calls carry the
-// deployment's *model API key* as a bearer token — a 401 there means a stale
-// key and is handled on that page.
-const isSessionRequest = (config) => {
-    if (!config) return false;
-    if ((config.url || "").startsWith("/api/infer/")) return false;
-    const headers = config.headers;
-    if (!headers) return false;
-    // axios 1.x normalises request headers into an AxiosHeaders instance, but
-    // rejected configs can still surface a plain object.
-    const authorization = typeof headers.get === "function"
-        ? headers.get("Authorization")
-        : (headers.Authorization ?? headers.authorization);
-    return typeof authorization === "string" && authorization.startsWith("Bearer ");
-};
 
 export const UserProvider = ({ children }) => {
 
@@ -40,8 +22,11 @@ export const UserProvider = ({ children }) => {
     // several requests in flight raises one modal, not one per 401 — state
     // updates would not have landed yet when the second rejection arrives.
     const expiring = useRef(false);
-    // The interceptor is registered once but needs the live location to record
-    // where to return to; a ref keeps it out of the effect's dependencies.
+    // expireSession has to record where to return to, but must stay
+    // referentially stable — ApiProvider memoizes the API client on it, so a
+    // new identity every render would rebuild the client and its interceptor
+    // on every navigation. A ref gives it the live location without becoming
+    // a dependency.
     const locationRef = useRef(location);
     locationRef.current = location;
 
@@ -77,29 +62,31 @@ export const UserProvider = ({ children }) => {
     useEffect(() => {
         const storedUser = JSON.parse(localStorage.getItem("user"));
         const anonymous = ["/signin", "/signup", "/forgot-password"];
-        if (!user && !storedUser && !anonymous.includes(location.pathname)) {
+        // Read the pathname from the DOM, not from useLocation(). navigate()
+        // updates window.location synchronously, but the router's location can
+        // lag it by a commit — so when signOut() nulls the user and navigates
+        // in the same breath, this effect runs seeing "no session" together
+        // with the pathname of the page we just left. It then pushed /signin a
+        // second time, and that stateless push wiped the alert the explicit
+        // navigate() had attached. Same for the session-expiry hand-off.
+        const pathname = window.location.pathname;
+        if (!user && !storedUser && !anonymous.includes(pathname)) {
             navigate('/signin');
         } else if (!user && storedUser) {
+            // Restoring a session from storage on reload. Only navigate when
+            // the current route is one a signed-in user has no business on —
+            // otherwise the URL is already correct, and sending them home threw
+            // away the page they reloaded (or the one they were returned to
+            // after their session expired).
             setUser(storedUser);
-            navigate('/');
+            if (anonymous.includes(pathname)) navigate('/');
         }
     }, [user, navigate, location.pathname]);
 
-    // Reactive detection: any 401 on a request that carried the session token.
-    // The error is re-rejected either way, so every existing catch block at the
-    // ~120 call sites keeps behaving exactly as it does today.
-    useEffect(() => {
-        const interceptor = axios.interceptors.response.use(
-            (response) => response,
-            (error) => {
-                if (error.response?.status === 401 && isSessionRequest(error.config)) {
-                    expireSession();
-                }
-                return Promise.reject(error);
-            }
-        );
-        return () => axios.interceptors.response.eject(interceptor);
-    }, [expireSession]);
+    // Reactive detection now lives on the API client (src/api/client.js): every
+    // request through it carries the session token by construction, so a 401
+    // there can only mean the session died — no need to inspect the request to
+    // tell a real expiry from a wrong password or a stale deployment API key.
 
     // Proactive detection: an idle user should not have to click something to
     // discover they were signed out, so fire on the token's own deadline.
@@ -150,33 +137,40 @@ export const UserProvider = ({ children }) => {
 
     const signIn = async (email, password) => {
         if (!user) {
-            const response = await axios.post('/api/tokens', {}, {auth: {username: email, password: password}});
+            const session = await tokens.create(email, password);
             // Consume the route captured when the session expired, if any; an
             // ordinary sign-in has no key and lands on the home page.
             const redirect = sessionStorage.getItem(REDIRECT_KEY);
             sessionStorage.removeItem(REDIRECT_KEY);
             expiring.current = false;
-            setUser(response.data);
-            localStorage.setItem("user", JSON.stringify(response.data));
+            setUser(session);
+            localStorage.setItem("user", JSON.stringify(session));
             navigate(redirect || "/");
         }
     }
 
     const signOut = async () => {
         if (user) {
-            axios.delete('/api/tokens', {headers: {Authorization : `Bearer ${user.token}`}});
+            tokens.revoke(user.token);
             // An explicit sign-out must never resurrect a route captured by an
             // earlier expiry.
             sessionStorage.removeItem(REDIRECT_KEY);
             expiring.current = false;
             localStorage.removeItem("user");
             setUser(null);
-            navigate("/signin");
+            navigate("/signin", {
+                state: {
+                    alert: {
+                        variant: "info",
+                        message: "You have been signed out."
+                    }
+                }
+            });
         }
     };
 
     return (
-        <UserContext.Provider value={{ user, setUser, signUp, signIn, signOut, sessionExpired }}>
+        <UserContext.Provider value={{ user, setUser, signUp, signIn, signOut, sessionExpired, expireSession }}>
             {children}
             <SessionExpiredModal show={sessionExpired} onSignIn={acknowledgeExpiry} />
         </UserContext.Provider>
