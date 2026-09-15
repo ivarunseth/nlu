@@ -14,8 +14,8 @@ from . import triton
 def model(self, model_id, path, model_type, **kwargs):
     """Serve ``model_id`` until idle or unpublished. See module docstring."""
 
-    from ..config import configs
-    config = configs[os.environ.get('FLASK_ENV', 'production')]
+    from ..config import config_for
+    config = config_for(os.environ.get('FLASK_ENV', 'production'))
     environment = kwargs.get('environment', os.environ.get('FLASK_ENV', 'production'))
     bucket = kwargs.get('bucket', config.STORAGE_BUCKET)
 

@@ -39,8 +39,7 @@ def create_instance(modelId):
     # request that would be rejected.
     config = data.pop('config', None)
     if config is not None:
-        environment = next((name for name, enabled in data.items() if enabled), None)
-        config = Instance.clean(config, environment)
+        config = Instance.clean(config)
     model.publish(training_id, data, params=config)
     db.session.commit()
     return {'instances': [instance.to_dict() for instance in model.instances.all()]}, 200
@@ -60,9 +59,6 @@ def update_instance(modelId, instanceId):
         # Keys are server-generated; submitting the field requests a rotation.
         instance.api_key = generate_api_key(instance.model_id, instance.environment.name)
     if 'config' in data:
-        if instance.environment.name == 'development':
-            # Development deployments always run the default configuration.
-            abort(400, 'Deployments in development are not configurable')
         instance.configure(data['config'])
     db.session.commit()
     return {'instance': instance.to_dict()}, 200

@@ -410,8 +410,12 @@ def _nlu_dataset_analytics(model):
 
     # Spans and distinct surface values per entity, through the slots that
     # map to it — the per-entity value-diversity read (AL-1).
+    # `list_type` rides along so the Analyse overview can compare how an entity
+    # is declared against how it actually behaves: an open list whose values
+    # barely vary is really a catalogue, and a closed list where almost every
+    # mention is unique is not enumerable at all.
     entity_counts = db.session.query(
-        Entity.id, Entity.name, Entity.color,
+        Entity.id, Entity.name, Entity.color, Entity.kind,
         db.func.count(Tag.id),
         db.func.count(db.func.distinct(Tag.value))
     ) \
@@ -419,8 +423,12 @@ def _nlu_dataset_analytics(model):
         .outerjoin(Tag, Tag.slot_id == Slot.id) \
         .filter(Entity.model_id == model.id) \
         .group_by(Entity.id).order_by(Entity.name.asc()).all()
-    entities = [{'id': id, 'name': name, 'color': color, 'count': count, 'values': values}
-                for id, name, color, count, values in entity_counts]
+    # `kind` is the stored column; `list_type` is its public name, and a NULL
+    # kind means open — same normalization Entity.to_dict applies, so the two
+    # surfaces cannot disagree.
+    entities = [{'id': id, 'name': name, 'color': color, 'list_type': kind or 'open',
+                 'count': count, 'values': values}
+                for id, name, color, kind, count, values in entity_counts]
 
     pairs = db.session.query(Utterance.id, Utterance.text, Intent.name) \
         .outerjoin(Intent, Utterance.intent_id == Intent.id) \
