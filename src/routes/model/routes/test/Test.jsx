@@ -1,9 +1,7 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Badge, Button, ButtonGroup, Card, Col, Form, Nav, Row, Spinner, Tab } from "react-bootstrap";
 import {
-    ExclamationTriangle,
     InfoCircle,
-    Play,
     Braces,
     CardText,
     Cpu,
@@ -18,8 +16,6 @@ import {
     Reply,
     FolderCheck,
     Folder,
-    ArrowClockwise,
-    Stop,
     FilterLeft,
     Hash,
     Files,
@@ -36,18 +32,20 @@ import { ModelContext } from "../../../../contexts/ModelContext";
 import { useSocket } from "../../../../contexts/SocketContext";
 import { SectionLabel, CardHeading, EmptyState } from "../../../../shared/components/SectionCard";
 import { entityColor } from "../../../../shared/components/entityColors";
-import { parseApiDate } from "../../../../shared/utils/training";
 import { isErrorPrediction, getLabels, getEntities, getIntents, getSlotEntities, scoresClose, PredictionView, JsonView } from "./components/Prediction";
 import BatchPanel from "./components/BatchPanel";
 import BatchResults from "./components/BatchResults";
-import axios from "axios";
+import { useApi } from "../../../../contexts/ApiContext";
+import * as inference from "../../../../api/inference";
 
-const ENVIRONMENT = "development";
+// The environment this page queries. Deployments are made from the Publish
+// tab; here they are only queried, through the deployment's own endpoint and
+// API key. A version is validated here before it is promoted to production.
+const ENVIRONMENT = "testing";
 
-// Environments the development prediction can be compared against, in
-// pipeline order. Their deployments are managed from the Publish tab; here
-// they are only queried, each through its own endpoint and API key.
-const COMPARE_ENVIRONMENTS = ["testing", "production"];
+// Environments the testing prediction can be compared against, in pipeline
+// order. They are queried the same way, each on its own endpoint and key.
+const COMPARE_ENVIRONMENTS = ["production"];
 
 // Batch uploads are submitted as sequential chunks of this many inputs,
 // kept under the server's INFERENCE_MAX_BATCH cap so a large CSV streams
@@ -97,7 +95,7 @@ const compareEntitySets = (referenceEntities, entities) => {
     return scoresMatch ? "match" : "scores";
 };
 
-// How a comparison environment's prediction relates to development's:
+// How a comparison environment's prediction relates to testing's:
 // "differ" (labels/spans changed), "scores" (same labels/spans, different
 // confidence), "match", or null when either side is missing or an error.
 const comparePredictions = (reference, prediction) => {
@@ -276,7 +274,7 @@ const MetricStrip = ({
                         <Card.Body className="p-3 d-flex align-items-center">
                             <div className="text-primary me-3 fs-4 lh-1">{item.icon}</div>
                             <div className="flex-grow-1">
-                                <div className="text-muted small fw-bold" style={{ fontSize: "0.65rem" }}>{item.label}</div>
+                                <div className="text-muted small fw-bold" style={{ fontSize: "var(--app-text-xs)" }}>{item.label}</div>
                                 <div className="text-body-emphasis small fw-medium">{item.value ?? "-"}</div>
                             </div>
                         </Card.Body>
@@ -294,8 +292,8 @@ const StatusDot = ({ color }) => (
     />
 );
 
-// One environment's column in the side-by-side comparison. The development
-// column passes `isReference`; the others pass development's prediction as
+// One environment's column in the side-by-side comparison. The testing
+// column passes `isReference`; the others pass testing's prediction as
 // `reference` so the header can flag agreement and, in JSON view, show a diff.
 // `view` is "result" (rendered prediction) or "json" (raw / diff).
 const CompareColumn = ({ name, version, deployed, loading, entry, query, reference, isReference, view, colorOf }) => {
@@ -338,7 +336,7 @@ const CompareColumn = ({ name, version, deployed, loading, entry, query, referen
                 )}
                 <span className="ms-auto d-inline-flex align-items-center gap-2">
                     {entry?.latency != null && (
-                        <span className="text-muted font-monospace" style={{ fontSize: "0.7rem" }}>
+                        <span className="text-muted font-monospace" style={{ fontSize: "var(--app-text-xs)" }}>
                             {entry.latency} ms
                         </span>
                     )}
@@ -353,7 +351,7 @@ const CompareColumn = ({ name, version, deployed, loading, entry, query, referen
 };
 
 // Line-by-line diff of a comparison environment's raw response against
-// development's, so envelope and score differences are visible at a glance.
+// testing's, so envelope and score differences are visible at a glance.
 // const JsonDiffView = ({ data, reference }) => {
 //     const rows = useMemo(
 //         () => diffJsonLines(JSON.stringify(reference, null, 2), JSON.stringify(data, null, 2)),
@@ -387,6 +385,7 @@ const CompareColumn = ({ name, version, deployed, loading, entry, query, referen
 const Test = () => {
     const { modelId } = useParams();
     const { user } = useContext(UserContext);
+    const api = useApi();
     const { model } = useContext(ModelContext);
     const socket = useSocket();
     // Annotated model kinds keep a separate entity registry whose colours
@@ -397,12 +396,8 @@ const Test = () => {
     const [ready, setReady] = useState(false);
 
     const [trainings, setTrainings] = useState([]);
-    const [selectedTrainingId, setSelectedTrainingId] = useState("");
-    const [deployedTrainingId, setDeployedTrainingId] = useState(null);
-    const [deployedAt, setDeployedAt] = useState(null);
+    // Whatever the Publish tab currently has deployed in ENVIRONMENT, or null.
     const [deployedInstance, setDeployedInstance] = useState(null);
-    const [deploying, setDeploying] = useState(false);
-    const [stopping, setStopping] = useState(false);
 
     const [query, setQuery] = useState("");
     const [top, setTop] = useState(1);
@@ -499,12 +494,10 @@ const Test = () => {
         return (name) => byName.get(name) || entityColor(name);
     }, [labels]);
 
+    const deployedTrainingId = deployedInstance?.training_id ?? null;
     const deployedVersion = deployedTrainingId != null ? versionOf[String(deployedTrainingId)] : null;
-    const isDeployed = deployedTrainingId != null;
-    const busy = deploying || stopping;
-    // Whether the version chosen in the dropdown is the one currently serving.
-    const selectedIsDeployed = isDeployed && String(deployedTrainingId) === String(selectedTrainingId);
-    // Comparison only makes sense once something is published beyond development.
+    const isDeployed = deployedInstance != null;
+    // Comparison only makes sense once something is published beyond testing.
     const availableCompareEnvironments = COMPARE_ENVIRONMENTS.filter((name) => otherInstances[name]);
     const compareAvailable = availableCompareEnvironments.length > 0;
     // Selected targets, intersected with what is actually deployed right now.
@@ -515,61 +508,45 @@ const Test = () => {
         setCompareTargets(COMPARE_ENVIRONMENTS.filter((name) => otherInstances[name]));
     }, [otherInstances]);
 
-    // The running instance is stale if its version was retrained after it was deployed.
-    const deployedStale = useMemo(() => {
-        if (!isDeployed || deployedAt == null) return false;
-        const training = trainings.find((item) => String(item.id) === String(deployedTrainingId));
-        const trainedAt = parseApiDate(training?.date_done);
-        const receivedAt = parseApiDate(deployedAt);
-        return trainedAt != null && receivedAt != null && trainedAt.getTime() > receivedAt.getTime();
-    }, [isDeployed, deployedAt, deployedTrainingId, trainings]);
-
-    // Load the model's trained versions and whatever is currently in development.
+    // Load the model's trained versions and the deployments to query.
     useEffect(() => {
         if (!user || !modelId || !model) return;
-        const headers = { Authorization: `Bearer ${user.token}` };
-
         const load = async () => {
             try {
                 setReady(false);
-                const [trainingsResponse, instancesResponse, intentsResponse, entitiesResponse] = await Promise.all([
-                    axios.get(`/api/models/${modelId}/trainings`, { params: { per_page: 100 }, headers }),
-                    axios.get(`/api/models/${modelId}/instances`, { headers }),
+                const [trainingsData, instancesData, intentsData, entitiesData] = await Promise.all([
+                    api.trainings.list(modelId, { per_page: 100 }),
+                    api.instances.list(modelId),
                     // Pull the intents (and, on annotated kinds, the entities)
                     // with their assigned colours so a prediction paints each
                     // name in the colour it was given in Build.
-                    axios.get(`/api/models/${modelId}/intents`, { params: { per_page: 500 }, headers }),
+                    api.intents.list(modelId, { per_page: 500 }),
                     annotated
-                        ? axios.get(`/api/models/${modelId}/entities`, { params: { per_page: 500 }, headers })
-                        : Promise.resolve({ data: { entities: [], total: 0 } })
+                        ? api.entities.list(modelId, { per_page: 500 })
+                        : Promise.resolve({ entities: [], total: 0 })
                 ]);
 
-                const successful = (trainingsResponse.data.trainings || [])
+                const successful = (trainingsData.trainings || [])
                     .filter((training) => training.status === "SUCCESS")
                     .sort((a, b) => b.version - a.version);
                 setTrainings(successful);
 
-                setLabelCount((intentsResponse.data.total || 0) + (entitiesResponse.data.total || 0));
+                setLabelCount((intentsData.total || 0) + (entitiesData.total || 0));
                 setLabels([
-                    ...(intentsResponse.data.intents || []),
-                    ...(entitiesResponse.data.entities || [])
+                    ...(intentsData.intents || []),
+                    ...(entitiesData.entities || [])
                 ]);
 
-                const instances = instancesResponse.data.instances || [];
+                const instances = instancesData.instances || [];
                 setOtherInstances(Object.fromEntries(
                     COMPARE_ENVIRONMENTS
                         .map((name) => [name, instances.find((instance) => instance.environment === name)])
                         .filter(([, instance]) => instance)
                 ));
 
-                const deployed = instances
-                    .find((instance) => instance.environment === ENVIRONMENT);
-                if (deployed) {
-                    setDeployedInstance(deployed);
-                    setDeployedTrainingId(deployed.training_id);
-                    setDeployedAt(deployed.date_receive);
-                    setSelectedTrainingId(String(deployed.training_id));
-                }
+                setDeployedInstance(
+                    instances.find((instance) => instance.environment === ENVIRONMENT) || null
+                );
             } catch (error) {
                 setAlert({ variant: "danger", message: error.response?.data?.error || error.message });
             } finally {
@@ -610,77 +587,6 @@ const Test = () => {
         };
     }, [user, socket, deployedTaskId]);
 
-    const handleVersionChange = (event) => {
-        setSelectedTrainingId(event.target.value);
-        setResult(null);
-        setLatency(null);
-        setCompareResults(null);
-        setBatchResults(null);
-        setBatchProgress(null);
-
-        if (labelCount > 0) {
-            setTop(1);
-        }
-        setAlert(null);
-    };
-
-    // Deploy (or redeploy) the version currently selected in the dropdown.
-    const handleDeploy = async () => {
-        if (!selectedTrainingId || busy) return;
-        setResult(null);
-        setLatency(null);
-        setCompareResults(null);
-        setSendError(false);
-        setDeploying(true);
-        setAlert(null);
-        try {
-            // Development deployments always use the server defaults.
-            // The backend injects the environment's default configuration
-            // (lazy loading + response caching) and rejects configuration
-            // changes for development.
-            const response = await axios.post(
-                `/api/models/${modelId}/instances`,
-                { [ENVIRONMENT]: true },
-                {
-                    params: { training_id: selectedTrainingId },
-                    headers: { Authorization: `Bearer ${user.token}` }
-                }
-            );
-            const deployed = (response.data.instances || []).find((instance) => instance.environment === ENVIRONMENT);
-            setDeployedInstance(deployed);
-            setDeployedTrainingId(deployed ? deployed.training_id : selectedTrainingId);
-            setDeployedAt(deployed ? deployed.date_receive : null);
-            setResult(null);
-            setLatency(null);
-            setSendError(false);
-        } catch (error) {
-            setAlert({ variant: "danger", message: error.response?.data?.error || error.message });
-        } finally {
-            setDeploying(false);
-        }
-    };
-
-    // Stop and tear down whatever is deployed in the environment.
-    const handleStop = async () => {
-        if (!isDeployed || busy) return;
-        setStopping(true);
-        setAlert(null);
-        try {
-            await axios.post(
-                `/api/models/${modelId}/instances`,
-                { [ENVIRONMENT]: false },
-                { params: { training_id: deployedTrainingId }, headers: { Authorization: `Bearer ${user.token}` } }
-            );
-            setDeployedInstance(null);
-            setDeployedTrainingId(null);
-            setDeployedAt(null);
-        } catch (error) {
-            setAlert({ variant: "danger", message: error.response?.data?.error || error.message });
-        } finally {
-            setStopping(false);
-        }
-    };
-
     // Send the same query to every deployed comparison environment. Each one
     // is called on its own inference endpoint with its own API key, so a slow
     // or stopped environment only affects its own column.
@@ -695,12 +601,10 @@ const Test = () => {
         const entries = await Promise.all(targets.map(async ({ name, instance }) => {
             const startedAt = performance.now();
             try {
-                const response = await axios.post(
-                    instance.endpoint,
-                    { inputs: [query] },
-                    { params: { top }, headers: { Authorization: `Bearer ${instance.api_key}` } }
-                );
-                const prediction = response.data?.outputs?.[0]
+                const payload = await inference.predictAt(instance.endpoint, [query], {
+                    apiKey: instance.api_key, top
+                });
+                const prediction = payload?.outputs?.[0]
                     ?? { error: "No output was returned.", type: "Missing" };
                 return [name, { prediction, latency: Math.round(performance.now() - startedAt) }];
             } catch (error) {
@@ -736,18 +640,14 @@ const Test = () => {
         ));
         const startedAt = performance.now();
         try {
-            const response = await axios.post(
-                `/api/infer/${modelId}`,
-                // The endpoint is batch-only; a single query is a one-element
-                // batch whose sole output is unwrapped here. That output may
-                // itself be an { error, type } envelope, which PredictionView
-                // renders like any other failure.
-                { inputs: [query] },
-                // The inference plane authenticates with the deployment's own
-                // API key, not the user session token.
-                { params: { top }, headers: { Authorization: `Bearer ${deployedInstance?.api_key || ""}` } }
-            );
-            const prediction = response.data?.outputs?.[0]
+            // The endpoint is batch-only; a single query is a one-element batch
+            // whose sole output is unwrapped here. That output may itself be an
+            // { error, type } envelope, which PredictionView renders like any
+            // other failure.
+            const payload = await inference.predictAt(deployedInstance.endpoint, [query], {
+                apiKey: deployedInstance.api_key, top
+            });
+            const prediction = payload?.outputs?.[0]
                 ?? { error: "No output was returned.", type: "Missing" };
             setResult({ query, prediction, version: deployedVersion });
             setLatency(Math.round(performance.now() - startedAt));
@@ -758,7 +658,7 @@ const Test = () => {
             if (status === 404) {
                 setAlert({
                     variant: "warning",
-                    message: "The selected version isn't serving yet. Click reload to redeploy, then try again."
+                    message: `The deployed version isn't serving in ${ENVIRONMENT}. Redeploy it from the Publish tab, then try again.`
                 });
             } else if (data && (data.error || data.type)) {
                 setResult({ query, prediction: data, version: deployedVersion });
@@ -784,17 +684,14 @@ const Test = () => {
         const results = rows.map((row) => ({ ...row, prediction: null }));
         setBatchResults([...results]);
 
-        const headers = { Authorization: `Bearer ${deployedInstance?.api_key || ""}` };
         const startedAt = performance.now();
         for (let start = 0; start < rows.length; start += BATCH_CHUNK_SIZE) {
             const chunk = rows.slice(start, start + BATCH_CHUNK_SIZE);
             try {
-                const response = await axios.post(
-                    `/api/infer/${modelId}`,
-                    { inputs: chunk.map((row) => row.input) },
-                    { params: { top }, headers }
-                );
-                const outputs = response.data?.outputs || [];
+                const payload = await inference.predictAt(deployedInstance.endpoint, chunk.map((row) => row.input), {
+                    apiKey: deployedInstance.api_key, top
+                });
+                const outputs = payload?.outputs || [];
                 chunk.forEach((row, index) => {
                     results[start + index].prediction = outputs[index]
                         ?? { error: "No output was returned for this input.", type: "Missing" };
@@ -805,7 +702,7 @@ const Test = () => {
                     // rows instead of dropping them and stop submitting.
                     setAlert({
                         variant: "warning",
-                        message: "The selected version isn't serving yet. Click reload to redeploy, then run the batch again."
+                        message: `The deployed version isn't serving in ${ENVIRONMENT}. Redeploy it from the Publish tab, then run the batch again.`
                     });
                     for (let index = start; index < rows.length; index++) {
                         results[index].prediction = {
@@ -869,208 +766,156 @@ const Test = () => {
                             title="Request"
                         />
                         <Card.Body className="p-3 d-flex flex-column">
-                            {trainings.length && ready === 0 ? (
-                                <Alert variant="warning" className="d-flex align-items-start gap-2 small mb-0">
+                            {ready && !isDeployed && (
+                                <Alert variant="info" className="d-flex align-items-start gap-2 small">
                                     <InfoCircle className="mt-1 flex-shrink-0" />
-                                    <span>No successfully trained versions yet. Train one from the History tab, then come back to test it.</span>
+                                    <span>
+                                        Nothing is deployed in {ENVIRONMENT}. Deploy a trained version
+                                        from the Publish tab to test it here.
+                                    </span>
                                 </Alert>
-                            ) : (
-                                <>
-                                    <Form.Group className="mb-3">
-                                        <Form.Label className="mb-1"><SectionLabel>Version</SectionLabel></Form.Label>
-                                        <div className="d-flex align-items-center gap-2">
-                                            <Form.Select
-                                                value={selectedTrainingId}
-                                                onChange={handleVersionChange}
-                                                disabled={busy}
-                                                size="sm"
-                                            >
-                                                <option value="">Select a version…</option>
-                                                {trainings.map((training) => (
-                                                    <option key={training.id} value={training.id}>
-                                                        v{training.version}
-                                                    </option>
-                                                ))}
-                                            </Form.Select>
-                                            <Button
-                                                variant="light"
-                                                size="sm"
-                                                className={`border ${selectedIsDeployed ? "text-danger" : ""} d-inline-flex align-items-center flex-shrink-0`}
-                                                title={selectedIsDeployed ? "Stop deployed model" : "Load selected version"}
-                                                onClick={selectedIsDeployed ? handleStop : handleDeploy}
-                                                disabled={busy || !selectedTrainingId}
-                                            >
-                                                {selectedIsDeployed ? <Stop /> : <Play />}
-                                            </Button>
-                                            <Button
-                                                variant="light"
-                                                size="sm"
-                                                className="border d-inline-flex align-items-center flex-shrink-0"
-                                                title="Redeploy the latest trained artifact for this version"
-                                                onClick={handleDeploy}
-                                                disabled={busy || !selectedIsDeployed}
-                                            >
-                                                <ArrowClockwise />
-                                            </Button>
-                                        </div>
-                                        <div className="text-muted d-flex align-items-center gap-1 mt-1" style={{ fontSize: "0.7rem", minHeight: "16px" }}>
-                                            {busy ? (
-                                                <><Spinner animation="border" size="sm" />&nbsp;{stopping ? "Stopping" : "Deploying"} in {ENVIRONMENT}…</>
-                                            ) : (
-                                                <span>Deploy a version, then reload to push a freshly retrained model.</span>
-                                            )}
-                                        </div>
-                                        {deployedStale && !busy && (
-                                            <Alert variant="warning" className="d-flex align-items-start gap-2 small mb-0 mt-2 py-2">
-                                                <ExclamationTriangle className="mt-1 flex-shrink-0" />
-                                                <span>v{deployedVersion} was retrained after it was deployed. Click reload to serve the latest model.</span>
-                                            </Alert>
-                                        )}
-                                    </Form.Group>
+                            )}
+                            <ButtonGroup size="sm" className="mb-3 align-self-start">
+                                <Button
+                                    variant="light"
+                                    className="border d-inline-flex align-items-center gap-1"
+                                    active={mode === "single"}
+                                    onClick={() => {
+                                        setMode("single");
+                                        setActiveTab((previous) => (previous === "batch" ? "result" : previous));
+                                    }}
+                                >
+                                    <CardText />&nbsp;Single
+                                </Button>
+                                <Button
+                                    variant="light"
+                                    className="border d-inline-flex align-items-center gap-1"
+                                    active={mode === "batch"}
+                                    onClick={() => {
+                                        setMode("batch");
+                                        setActiveTab("batch");
+                                    }}
+                                >
+                                    <Files />&nbsp;Batch
+                                </Button>
+                            </ButtonGroup>
 
-                                    <ButtonGroup size="sm" className="mb-3 align-self-start">
-                                        <Button
-                                            variant="light"
-                                            className="border d-inline-flex align-items-center gap-1"
-                                            active={mode === "single"}
-                                            onClick={() => {
-                                                setMode("single");
-                                                setActiveTab((previous) => (previous === "batch" ? "result" : previous));
-                                            }}
-                                        >
-                                            <CardText />&nbsp;Single
-                                        </Button>
-                                        <Button
-                                            variant="light"
-                                            className="border d-inline-flex align-items-center gap-1"
-                                            active={mode === "batch"}
-                                            onClick={() => {
-                                                setMode("batch");
-                                                setActiveTab("batch");
-                                            }}
-                                        >
-                                            <Files />&nbsp;Batch
-                                        </Button>
-                                    </ButtonGroup>
-
-                                    {/* Both surfaces stay mounted (hidden via d-none) so the
-                                        parsed CSV survives toggling between the modes. */}
-                                    <Form onSubmit={handleSubmit} className={`${mode === "single" ? "d-flex" : "d-none"} flex-column flex-grow-1`}>
-                                        <Form.Label className="mb-1"><SectionLabel>Input</SectionLabel></Form.Label>
-                                        <Form.Control
-                                            as="textarea"
-                                            rows={6}
-                                            value={query}
-                                            placeholder={isDeployed ? "Type a sentence to send to the model…" : "Deploy a version first to start testing."}
-                                            onChange={(event) => { setQuery(event.target.value); setSendError(false); }}
-                                            onKeyDown={(event) => {
-                                                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                                                    handleSubmit(event);
-                                                }
-                                            }}
-                                            className="mb-3 flex-grow-1"
-                                            disabled={loading || busy || !isDeployed}
-                                        />
-                                        {labelCount > 1 && (
-                                            <div className="mb-3">
-                                                <div className="d-flex align-items-center justify-content-between mb-1">
-                                                    <SectionLabel>Top labels</SectionLabel>
-                                                    <span className="font-monospace small text-body-emphasis">{top} / {labelCount}</span>
-                                                </div>
-                                                <Form.Range
-                                                    min={1}
-                                                    max={labelCount}
-                                                    value={top}
-                                                    onChange={(event) => setTop(Number(event.target.value))}
-                                                    disabled={loading || busy || !isDeployed}
-                                                />
-                                            </div>
-                                        )}
-                                            <Form.Group  className="mb-3">
-                                                <Form.Check
-                                                    type="switch"
-                                                    id="compare-environments"
-                                                    className="small"
-                                                    label="Compare environments"
-                                                    checked={compareEnabled}
-                                                    onChange={(event) => {
-                                                        setCompareEnabled(event.target.checked);
-                                                        if (!event.target.checked) setCompareResults(null);
-                                                    }}
-                                                    disabled={loading || compareLoading || busy || !isDeployed || !compareAvailable}
-                                                />
-                                                
-                                                {compareAvailable ? (
-                                                    <Form.Text className="text-muted d-block" style={{ fontSize: "0.7rem" }}>
-                                                        Also send the query to the selected environments and compare
-                                                        their predictions with development.
-                                                    </Form.Text>
-                                                ) : (
-                                                    <Form.Text className="text-muted d-block" style={{ fontSize: "0.7rem" }}>
-                                                        No version are deployed in any environment for this model.
-                                                    </Form.Text>
-                                                )}
-                                                {compareEnabled && (
-                                                    <div className="d-flex flex-wrap gap-3 mt-2">
-                                                        {availableCompareEnvironments.map((name) => (
-                                                            <Form.Check
-                                                                key={name}
-                                                                type="checkbox"
-                                                                id={`compare-target-${name}`}
-                                                                className="small text-capitalize"
-                                                                label={name}
-                                                                checked={compareTargets.includes(name)}
-                                                                onChange={(event) => {
-                                                                    setCompareTargets((previous) => (
-                                                                        event.target.checked
-                                                                            ? [...previous, name]
-                                                                            : previous.filter((item) => item !== name)
-                                                                    ));
-                                                                    setCompareResults(null);
-                                                                }}
-                                                                disabled={loading || compareLoading || busy || !isDeployed}
-                                                            />
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </Form.Group>
-                                        <div className="d-flex align-items-center justify-content-between">
-                                            <span className="text-muted d-inline-flex align-items-center gap-1" style={{ fontSize: "0.7rem" }}>
-                                                <kbd className="bg-body-secondary text-muted border px-1 py-0" style={{ fontSize: "0.65rem" }}>⌘/Ctrl</kbd>
-                                                +
-                                                <kbd className="bg-body-secondary text-muted border px-1 py-0" style={{ fontSize: "0.65rem" }}>Enter</kbd>
-                                                to run
-                                            </span>
-                                            <Button type="submit" variant="primary" size="sm" disabled={loading || busy || !isDeployed || !query.trim()} className="d-inline-flex align-items-center gap-1 px-3">
-                                                {loading ? (
-                                                    <><Spinner animation="border" size="sm" />&nbsp;Sending</>
-                                                ) : !isDeployed ? (
-                                                    <><SendSlash />&nbsp;Send</>
-                                                ) : sendError ? (
-                                                    <><SendExclamation />&nbsp;Send</>
-                                                ) : !query.trim() ? (
-                                                    <><SendDash />&nbsp;Send</>
-                                                ) : (
-                                                    <><SendCheck />&nbsp;Send</>
-                                                )}
-                                            </Button>
+                            {/* Both surfaces stay mounted (hidden via d-none) so the
+                                parsed CSV survives toggling between the modes. */}
+                            <Form onSubmit={handleSubmit} className={`${mode === "single" ? "d-flex" : "d-none"} flex-column flex-grow-1`}>
+                                <Form.Label className="mb-1"><SectionLabel>Input</SectionLabel></Form.Label>
+                                <Form.Control
+                                    as="textarea"
+                                    rows={6}
+                                    value={query}
+                                    placeholder={isDeployed ? "Type a sentence to send to the model…" : `Deploy a version to ${ENVIRONMENT} first to start testing.`}
+                                    onChange={(event) => { setQuery(event.target.value); setSendError(false); }}
+                                    onKeyDown={(event) => {
+                                        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                                            handleSubmit(event);
+                                        }
+                                    }}
+                                    className="mb-3 flex-grow-1"
+                                    disabled={loading || !isDeployed}
+                                />
+                                {labelCount > 1 && (
+                                    <div className="mb-3">
+                                        <div className="d-flex align-items-center justify-content-between mb-1">
+                                            <SectionLabel>Top labels</SectionLabel>
+                                            <span className="font-monospace small text-body-emphasis">{top} / {labelCount}</span>
                                         </div>
-                                    </Form>
-
-                                    <div className={mode === "batch" ? "d-flex flex-column flex-grow-1" : "d-none"}>
-                                        <BatchPanel
-                                            isDeployed={isDeployed}
-                                            busy={busy || loading}
-                                            running={batchRunning}
-                                            progress={batchProgress}
-                                            top={top}
-                                            labelCount={labelCount}
-                                            onTopChange={setTop}
-                                            onRun={handleRunBatch}
+                                        <Form.Range
+                                            min={1}
+                                            max={labelCount}
+                                            value={top}
+                                            onChange={(event) => setTop(Number(event.target.value))}
+                                            disabled={loading || !isDeployed}
                                         />
                                     </div>
-                                </>
-                            )}
+                                )}
+                                <Form.Group className="mb-3">
+                                    <Form.Check
+                                        type="switch"
+                                        id="compare-environments"
+                                        className="small"
+                                        label="Compare environments"
+                                        checked={compareEnabled}
+                                        onChange={(event) => {
+                                            setCompareEnabled(event.target.checked);
+                                            if (!event.target.checked) setCompareResults(null);
+                                        }}
+                                        disabled={loading || compareLoading || !isDeployed || !compareAvailable}
+                                    />
+                                    
+                                    {compareAvailable ? (
+                                        <Form.Text className="text-muted d-block" style={{ fontSize: "var(--app-text-xs)" }}>
+                                            Also send the query to the selected environments and compare
+                                            their predictions with {ENVIRONMENT}.
+                                        </Form.Text>
+                                    ) : (
+                                        <Form.Text className="text-muted d-block" style={{ fontSize: "var(--app-text-xs)" }}>
+                                            No other environment has a deployment for this model.
+                                        </Form.Text>
+                                    )}
+                                    {compareEnabled && (
+                                        <div className="d-flex flex-wrap gap-3 mt-2">
+                                            {availableCompareEnvironments.map((name) => (
+                                                <Form.Check
+                                                    key={name}
+                                                    type="checkbox"
+                                                    id={`compare-target-${name}`}
+                                                    className="small text-capitalize"
+                                                    label={name}
+                                                    checked={compareTargets.includes(name)}
+                                                    onChange={(event) => {
+                                                        setCompareTargets((previous) => (
+                                                            event.target.checked
+                                                                ? [...previous, name]
+                                                                : previous.filter((item) => item !== name)
+                                                        ));
+                                                        setCompareResults(null);
+                                                    }}
+                                                    disabled={loading || compareLoading || !isDeployed}
+                                                />
+                                            ))}
+                                        </div>
+                                    )}
+                                </Form.Group>
+                                <div className="d-flex align-items-center justify-content-between">
+                                    <span className="text-muted d-inline-flex align-items-center gap-1" style={{ fontSize: "var(--app-text-xs)" }}>
+                                        <kbd className="bg-body-secondary text-muted border px-1 py-0" style={{ fontSize: "var(--app-text-xs)" }}>⌘/Ctrl</kbd>
+                                        +
+                                        <kbd className="bg-body-secondary text-muted border px-1 py-0" style={{ fontSize: "var(--app-text-xs)" }}>Enter</kbd>
+                                        to run
+                                    </span>
+                                    <Button type="submit" variant="primary" size="sm" disabled={loading || !isDeployed || !query.trim()} className="d-inline-flex align-items-center gap-1 px-3">
+                                        {loading ? (
+                                            <><Spinner animation="border" size="sm" />&nbsp;Sending</>
+                                        ) : !isDeployed ? (
+                                            <><SendSlash />&nbsp;Send</>
+                                        ) : sendError ? (
+                                            <><SendExclamation />&nbsp;Send</>
+                                        ) : !query.trim() ? (
+                                            <><SendDash />&nbsp;Send</>
+                                        ) : (
+                                            <><SendCheck />&nbsp;Send</>
+                                        )}
+                                    </Button>
+                                </div>
+                            </Form>
+
+                            <div className={mode === "batch" ? "d-flex flex-column flex-grow-1" : "d-none"}>
+                                <BatchPanel
+                                    isDeployed={isDeployed}
+                                    busy={loading}
+                                    running={batchRunning}
+                                    progress={batchProgress}
+                                    top={top}
+                                    labelCount={labelCount}
+                                    onTopChange={setTop}
+                                    onRun={handleRunBatch}
+                                />
+                            </div>
                         </Card.Body>
                     </Card>
                 </div>
@@ -1159,8 +1004,8 @@ const Test = () => {
                                                     <div className="d-flex align-items-center justify-content-between gap-2 mb-3 flex-shrink-0">
                                                         <span className="text-muted small">
                                                             {compareView === "json"
-                                                                ? "Lines added or removed versus development are highlighted."
-                                                                : "Compared on the predicted output versus development."}
+                                                                ? `Lines added or removed versus ${ENVIRONMENT} are highlighted.`
+                                                                : `Compared on the predicted output versus ${ENVIRONMENT}.`}
                                                         </span>
                                                         <ButtonGroup size="sm">
                                                             <Button
