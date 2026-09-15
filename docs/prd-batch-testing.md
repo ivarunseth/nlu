@@ -13,7 +13,7 @@
 
 ## 1. Summary
 
-Today the Test page sends **one** query at a time: the user deploys a version to `development`, types a sentence, and reads a single prediction. Evaluating a model against a set of realistic inputs means retyping and re-sending one by one, with no way to load a file, run everything, and scan the outcomes together.
+Today the Test page sends **one** query at a time: the user deploys a version to `testing` from the Publish tab, types a sentence, and reads a single prediction. Evaluating a model against a set of realistic inputs means retyping and re-sending one by one, with no way to load a file, run everything, and scan the outcomes together.
 
 This document specifies **batch testing**: a single request that accepts a *list* of inputs, runs them all through the deployed model, and returns one output per input. On the API this is a batch mode of `POST /infer/<model_id>`; in the UI it is a **drag-and-drop CSV upload** on the Test page that parses the file into inputs, submits the batch, and renders **all** predictions in a results view where each one can be inspected individually.
 

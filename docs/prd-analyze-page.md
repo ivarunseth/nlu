@@ -31,7 +31,7 @@ Today that lifecycle is covered by four pages, each intentionally narrow:
 |---|---|---|---|
 | **Build** | `build` | Authors the dataset: labels, utterances, CSV/TSV import & export; starts a training run. | No metrics; no view of dataset *health* (balance, duplicates, coverage). |
 | **History** | `history`, `history/:trainingId` | Deep-dives **one** training run: metric strip, loss/accuracy plots, per-label precision/recall/F1 reports, confusion matrix, model summary, parameters, version-to-version data diff, traceback. The list view (`HistoryMetricStrip`) already shows aggregate totals — best accuracy + its version, latest version, succeeded count — and per-version accuracy in the versions table. | No cross-version **trend charts**, per-label F1 movement, aggregated confusions, or objective-ranked best-version pick; nothing about live traffic. |
-| **Test** | `test` | Deploys a version to `development`, sends ad-hoc queries, compares predictions across environments. | Measures latency **client-side only** (`performance.now()`); nothing is stored or aggregated. |
+| **Test** | `test` | Queries the version deployed in `testing`, sends ad-hoc queries, compares predictions across environments. | Measures latency **client-side only** (`performance.now()`); nothing is stored or aggregated. |
 | **Publish** | `publish` | Promotes versions across environments; manages API keys, inference endpoints, `curl` snippets, and deployment config. | Shows deployment *state*, not deployment *behaviour* (volume, latency, errors, confidence over time). |
 
 The gaps between these pages are exactly the questions users ask most:
@@ -163,7 +163,7 @@ History inspects one run; this tab aggregates across runs. It reads each success
 
 ### 7.4 Production tab — live telemetry (P2, P3) — Phase 2
 
-Requires prediction capture (§8). All panels are filterable by environment (read dynamically from the environments API, which today serves the canonical set `development`, `testing`, `production` — see §11 open question 1) and time range.
+Requires prediction capture (§8). All panels are filterable by environment (read dynamically from the environments API, which today serves the canonical set `testing`, `production` — see §11 open question 1) and time range.
 
 | # | Requirement | Source |
 |---|---|---|
@@ -312,7 +312,7 @@ Each phase is independently shippable and independently valuable; a user with no
 - *Low-traffic models* make Production/Review sparse — mitigated by clear empty states and by Phase 1 standing alone.
 
 **Open questions.**
-1. Environment set is already settled: `server/config.py` → `ALLOWED_ENVIRONMENTS` defines exactly `development`, `testing`, `production`, and `Environment.update()` syncs the DB table to that set (there is no `staging` anywhere in the repo, and worker queues are named per this set). Analyse must still read the environment list dynamically from the environments API rather than hard-code it, so it tracks any future config change automatically.
+1. Environment set is already settled: `server/config.py` → `ALLOWED_ENVIRONMENTS` defines exactly `testing`, `production`, and `Environment.update()` syncs the DB table to that set (there is no `staging` anywhere in the repo, and worker queues are named per this set). Analyse must still read the environment list dynamically from the environments API rather than hard-code it, so it tracks any future config change automatically.
 2. Default thresholds (imbalance ratio, min examples/label, low-confidence cutoff, F1 "weak" cutoff) — global defaults vs per-model overrides?
 3. Retention windows and whether raw-input capture defaults to off.
 4. Best-version objective: fixed (test accuracy → macro-F1) or user-selectable?
