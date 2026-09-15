@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Alert, Button, Form, Modal, Spinner } from "react-bootstrap";
 import { CheckCircle, ExclamationTriangle } from "react-bootstrap-icons";
+import FileDropzone from "../../../../../shared/components/FileDropzone";
 
 export const DATASET_FORMATS = [
     { value: "inline", label: "Inline — {entity: value} per line" },
@@ -40,7 +41,16 @@ const ImportDatasetModal = ({ show, submitting, summary, formats = DATASET_FORMA
     };
 
     return (
-        <Modal centered show={show} onHide={handleHide}>
+        <Modal
+            centered
+            show={show}
+            onHide={handleHide}
+            // Empty, this is a two-field form and stays narrow. Once the import
+            // reports back it can list ten "Line 42: ..." errors, which need the
+            // width to stay on one line each — and the height to scroll.
+            size={summary ? "lg" : undefined}
+            scrollable
+        >
             <Modal.Header closeButton>
                 <Modal.Title>Import dataset</Modal.Title>
             </Modal.Header>
@@ -57,12 +67,16 @@ const ImportDatasetModal = ({ show, submitting, summary, formats = DATASET_FORMA
                         </Form.Floating>
                     </Form.Group>
                     <Form.Group className="mb-3">
-                        <Form.Label>Dataset</Form.Label>
-                        <Form.Control type="file" onChange={(e) => setFile(e.target.files[0])} />
-                        <Form.Text muted>
-                            One annotated utterance per line (or per blank-line block for CoNLL).
-                            Entities that don't exist yet are created automatically.
-                        </Form.Text>
+                        <Form.Label htmlFor="import-dataset">Dataset</Form.Label>
+                        <FileDropzone
+                            id="import-dataset"
+                            file={file}
+                            onSelect={setFile}
+                            disabled={submitting}
+                            clearDisabled={submitting}
+                            prompt="Drag and drop an annotated dataset here, or click to browse."
+                            hint="One utterance per line (or per blank-line block for CoNLL) · unknown entities are created automatically"
+                        />
                     </Form.Group>
                     {summary && (
                         <Alert variant={summary.errors.length > 0 ? "warning" : "success"} className="small">

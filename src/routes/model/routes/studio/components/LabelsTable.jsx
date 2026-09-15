@@ -27,7 +27,7 @@ const LabelsTable = ({
                 icon={<Bookmarks />}
                 title={`${noun.charAt(0).toUpperCase()}${noun.slice(1)}s`}
                 right={
-                    <span className="text-muted" style={{ fontSize: "0.7rem" }}>
+                    <span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>
                         {total} {noun}{total === 1 ? "" : "s"}
                     </span>
                 }

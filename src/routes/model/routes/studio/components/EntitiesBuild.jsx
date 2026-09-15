@@ -1,4 +1,4 @@
-import axios from "axios";
+import { useApi } from "../../../../../contexts/ApiContext";
 import { useContext, useEffect, useState } from "react";
 import { Alert, Badge, Button, Card, Col, Form, Row, Spinner, Table } from "react-bootstrap";
 import { BookmarkStar, Diagram2, InfoCircle, Option, Pen, PlusLg, Search, Tag, Tags, Trash } from "react-bootstrap-icons";
@@ -67,7 +67,7 @@ const EntitiesBuild = ({ entityLink, onMutate }) => {
 
     const debouncedQuery = useDebounce(query, 500);
     const controlsKey = JSON.stringify(controls.params);
-    const headers = { Authorization: `Bearer ${user?.token}` };
+    const api = useApi();
 
     const showError = (error, fallback = "Something went wrong.") => {
         setAlert({ variant: "danger", message: error?.response?.data?.error || fallback });
@@ -118,10 +118,10 @@ const EntitiesBuild = ({ entityLink, onMutate }) => {
         try {
             setSubmitting(true);
             if (current) {
-                await axios.put(`/api/models/${modelId}/entities/${current.id}`, data, { headers });
+                await api.entities.update(modelId, current.id, data);
                 setRefresh((n) => n + 1);
             } else {
-                await axios.post(`/api/models/${modelId}/entities`, data, { headers });
+                await api.entities.create(modelId, data);
                 // Jump to the first page to reveal the newly created entity.
                 if (page !== 1) setPage(1); else setRefresh((n) => n + 1);
             }
@@ -136,7 +136,7 @@ const EntitiesBuild = ({ entityLink, onMutate }) => {
     const handleDelete = async () => {
         try {
             setSubmitting(true);
-            await axios.delete(`/api/models/${modelId}/entities/${toDelete.id}`, { headers });
+            await api.entities.remove(modelId, toDelete.id);
             // Removing the last row on a trailing page steps back a page.
             if (entities.length === 1 && page > 1) setPage(page - 1);
             else setRefresh((n) => n + 1);
@@ -160,9 +160,9 @@ const EntitiesBuild = ({ entityLink, onMutate }) => {
                     setLoading(true);
                     const params = { page, per_page: PER_PAGE, ...controls.params };
                     if (debouncedQuery !== "") params.query = debouncedQuery;
-                    const response = await axios.get(`/api/models/${modelId}/entities`, { params, headers });
-                    setEntities(response.data.entities);
-                    setTotal(response.data.total);
+                    const { entities, total } = await api.entities.list(modelId, params);
+                    setEntities(entities);
+                    setTotal(total);
                 } catch (error) {
                     showError(error);
                 } finally {
@@ -207,7 +207,7 @@ const EntitiesBuild = ({ entityLink, onMutate }) => {
                     icon={<Tags />}
                     title="Entities"
                     right={
-                        <span className="text-muted" style={{ fontSize: "0.7rem" }}>
+                        <span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>
                             {total} entit{total === 1 ? "y" : "ies"}
                         </span>
                     }

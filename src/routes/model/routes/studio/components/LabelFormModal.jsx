@@ -1,5 +1,6 @@
 import { Form, InputGroup } from "react-bootstrap";
 import FormModal from "../../../../../shared/components/FormModal";
+import FileDropzone from "../../../../../shared/components/FileDropzone";
 
 const LabelFormModal = ({
     show,
@@ -46,14 +47,15 @@ const LabelFormModal = ({
             </Form.Text>
         </Form.Group>
         <Form.Group className="mb-3">
-            <Form.Label>Dataset</Form.Label>
-            <Form.Control
-                type="file"
-                onChange={(e) => onDatasetChange(e.target.files[0])}
+            <Form.Label htmlFor="label-dataset">Dataset</Form.Label>
+            <FileDropzone
+                id="label-dataset"
+                file={dataset}
+                onSelect={onDatasetChange}
+                accept=".csv,.tsv"
+                prompt="Drag and drop a dataset here, or click to browse."
+                hint="Comma or tab separated text and labels · optional"
             />
-            <Form.Text muted>
-                You can optionally upload a dataset containing comma or tab separated text and labels.
-            </Form.Text>
         </Form.Group>
         <Form.Group>
             <Form.Check

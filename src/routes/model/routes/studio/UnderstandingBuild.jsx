@@ -1,4 +1,4 @@
-import axios from "axios";
+import { useApi } from "../../../../contexts/ApiContext";
 import { useContext, useEffect, useState } from "react";
 import { Button, Dropdown, Nav } from "react-bootstrap";
 import { Bookmarks, BracesAsterisk, PencilSquare, Diagram2, Download, Quote, Tags, Upload } from "react-bootstrap-icons";
@@ -50,14 +50,13 @@ const UnderstandingBuild = () => {
     const [stats, setStats] = useState({ intents: 0, entities: 0, slots: 0, utterances: 0, annotated: 0, spans: 0, values: 0 });
     const [statsRefresh, setStatsRefresh] = useState(0);
 
-    const headers = { Authorization: `Bearer ${user?.token}` };
+    const api = useApi();
 
     useEffect(() => {
         if (user && modelId && !drilledIn) {
             const getStats = async () => {
                 try {
-                    const response = await axios.get(`/api/models/${modelId}/tags/stats`, { headers });
-                    setStats(response.data);
+                    setStats(await api.tags.stats(modelId));
                 } catch (error) {
                     // The strip is an overview nicety; the tables surface errors.
                     console.error(error);
@@ -74,8 +73,7 @@ const UnderstandingBuild = () => {
         data.append("dataset", file);
         try {
             setImporting(true);
-            const response = await axios.post(`/api/models/${modelId}/tags/import`, data, { headers });
-            setImportSummary(response.data);
+            setImportSummary(await api.tags.importDataset(modelId, data));
             setImported((n) => n + 1);
         } catch (error) {
             setImportSummary({ imported: 0, created: [], errors: [{ line: 0, error: error?.response?.data?.error || "Import failed." }] });
@@ -92,13 +90,9 @@ const UnderstandingBuild = () => {
     const handleExport = async (format) => {
         try {
             setExporting(true);
-            const response = await axios.get(`/api/models/${modelId}/tags/export`, {
-                params: { format },
-                responseType: "blob",
-                headers
-            });
+            const blob = await api.tags.exportDataset(modelId, format);
             const extension = { json: "jsonl", csv: "csv" }[format] || "txt";
-            downloadBlob(response.data, `${modelId}-${format}.${extension}`);
+            downloadBlob(blob, `${modelId}-${format}.${extension}`);
         } catch (error) {
             // The export endpoint only fails on auth/404; nothing to surface inline.
             console.error(error);

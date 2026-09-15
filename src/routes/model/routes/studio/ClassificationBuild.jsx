@@ -1,4 +1,4 @@
-import axios from "axios";
+import { useApi } from "../../../../contexts/ApiContext";
 import { useContext, useEffect, useState } from "react";
 import { Alert, Button, ButtonGroup, ButtonToolbar, Col, Form, Row } from "react-bootstrap";
 import { PlusLg } from "react-bootstrap-icons";
@@ -24,6 +24,7 @@ const MAX_VISIBLE_PAGES = 5;
 const ClassificationBuild = ({ noun = "label", labelLink, onMutate }) => {
     const { modelId } = useParams();
     const { user } = useContext(UserContext);
+    const api = useApi();
     const [alert, setAlert] = useState(null);
     const [query, setQuery] = useState("");
     const [labels, setLabels] = useState([]);
@@ -89,14 +90,13 @@ const ClassificationBuild = ({ noun = "label", labelLink, onMutate }) => {
 
         try {
             setSubmitting(true);
-            const headers = { Authorization: `Bearer ${user.token}` };
-            const response = await axios.post(`/api/models/${modelId}/intents`, buildFormData(), { headers });
+            const created = await api.intents.create(modelId, buildFormData());
 
             if (page === 1) {
                 setLabels((prevLabels) => (
                     prevLabels.length + 1 > PER_PAGE
-                        ? [response.data, ...prevLabels.slice(0, -1)]
-                        : [response.data, ...prevLabels]
+                        ? [created, ...prevLabels.slice(0, -1)]
+                        : [created, ...prevLabels]
                 ));
                 setTotal((prevTotal) => prevTotal + 1);
             } else {
@@ -112,12 +112,7 @@ const ClassificationBuild = ({ noun = "label", labelLink, onMutate }) => {
 
     const handleDownload = async (label) => {
         try {
-            const headers = { Authorization: `Bearer ${user.token}` };
-            const response = await axios.get(`/api/models/${modelId}/intents/${label.id}?format=csv`, {
-                responseType: "blob",
-                headers
-            });
-            downloadBlob(response.data, `${label.name}-utterances.csv`);
+            downloadBlob(await api.intents.exportCsv(modelId, label.id), `${label.name}-utterances.csv`);
         } catch (error) {
             setAlert({ variant: "danger", message: error.response.data.error });
         }
@@ -140,13 +135,8 @@ const ClassificationBuild = ({ noun = "label", labelLink, onMutate }) => {
 
         try {
             setSubmitting(true);
-            const headers = { Authorization: `Bearer ${user.token}` };
-            const response = await axios.put(
-                `/api/models/${modelId}/intents/${currentLabel.id}`,
-                buildFormData(),
-                { headers }
-            );
-            setLabels((prevLabels) => prevLabels.map((l) => (l.id === currentLabel.id ? response.data : l)));
+            const updated = await api.intents.update(modelId, currentLabel.id, buildFormData());
+            setLabels((prevLabels) => prevLabels.map((l) => (l.id === currentLabel.id ? updated : l)));
         } catch (error) {
             setAlert({ variant: "danger", message: error.response.data.error });
         } finally {
@@ -168,18 +158,17 @@ const ClassificationBuild = ({ noun = "label", labelLink, onMutate }) => {
     const handleDelete = async () => {
         try {
             setSubmitting(true);
-            const headers = { Authorization: `Bearer ${user.token}` };
             const idsToDelete = labelsToDelete.map((label) => label.id);
-            await Promise.all(idsToDelete.map((id) => axios.delete(`/api/models/${modelId}/intents/${id}`, { headers })));
+            await Promise.all(idsToDelete.map((id) => api.intents.remove(modelId, id)));
 
             const remainingOnPage = labels.length - idsToDelete.length;
             if (remainingOnPage > 0) {
                 setLoading(true);
                 const params = { page, per_page: PER_PAGE };
                 if (debouncedQuery !== "") params.query = debouncedQuery;
-                const response = await axios.get(`/api/models/${modelId}/intents`, { params, headers });
-                setLabels(response.data.intents);
-                setTotal(response.data.total);
+                const { intents, total } = await api.intents.list(modelId, params);
+                setLabels(intents);
+                setTotal(total);
             } else if (page > 1) {
                 setPage(page - 1);
             } else {
@@ -204,12 +193,11 @@ const ClassificationBuild = ({ noun = "label", labelLink, onMutate }) => {
             const getLabels = async () => {
                 try {
                     setLoading(true);
-                    const headers = { Authorization: `Bearer ${user.token}` };
                     const params = { page, per_page: PER_PAGE, ...controls.params };
                     if (debouncedQuery !== "") params.query = debouncedQuery;
-                    const response = await axios.get(`/api/models/${modelId}/intents`, { params, headers });
-                    setLabels(response.data.intents);
-                    setTotal(response.data.total);
+                    const { intents, total } = await api.intents.list(modelId, params);
+                    setLabels(intents);
+                    setTotal(total);
                 } catch (error) {
                     setAlert({ variant: "danger", message: error.response.data.message });
                 } finally {

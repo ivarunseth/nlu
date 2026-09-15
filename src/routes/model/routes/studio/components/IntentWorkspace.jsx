@@ -1,4 +1,4 @@
-import axios from "axios";
+import { useApi } from "../../../../../contexts/ApiContext";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { Alert, Button, Form, InputGroup } from "react-bootstrap";
 import { BracesAsterisk, Diagram2, PencilSquare, PlusLg, Quote } from "react-bootstrap-icons";
@@ -53,7 +53,7 @@ const IntentWorkspace = ({ intentId }) => {
     const [utterancesRefresh, setUtterancesRefresh] = useState(0);
 
     const debouncedQuery = useDebounce(query, 500);
-    const headers = { Authorization: `Bearer ${user?.token}` };
+    const api = useApi();
 
     // The picker/highlight registry: this intent's slots, shaped like the
     // entity rows AnnotationWorkspace expects, plus each slot's entity so
@@ -133,16 +133,16 @@ const IntentWorkspace = ({ intentId }) => {
                 // point the slot at it.
                 const data = new FormData();
                 data.append("name", newEntityName.trim());
-                const response = await axios.post(`/api/models/${modelId}/entities`, data, { headers });
-                entityId = String(response.data.id);
+                const entity = await api.entities.create(modelId, data);
+                entityId = String(entity.id);
             }
             const payload = { name: slotName.trim(), entity_id: Number(entityId) };
             if (currentSlot) {
-                await axios.put(`/api/models/${modelId}/slots/${currentSlot.id}`, payload, { headers });
+                await api.slots.update(modelId, currentSlot.id, payload);
                 // Annotations embed the slot name and colour; refresh them.
                 setUtterancesRefresh((n) => n + 1);
             } else {
-                await axios.post(`/api/models/${modelId}/slots`, { ...payload, intent_id: Number(intentId) }, { headers });
+                await api.slots.create(modelId, { ...payload, intent_id: Number(intentId) });
             }
             setSlotsRefresh((n) => n + 1);
         } catch (error) {
@@ -155,7 +155,7 @@ const IntentWorkspace = ({ intentId }) => {
     const handleDeleteSlot = async () => {
         try {
             setSubmitting(true);
-            await axios.delete(`/api/models/${modelId}/slots/${slotToDelete.id}`, { headers });
+            await api.slots.remove(modelId, slotToDelete.id);
             setSlotsRefresh((n) => n + 1);
             setUtterancesRefresh((n) => n + 1);
         } catch (error) {
@@ -190,20 +190,12 @@ const IntentWorkspace = ({ intentId }) => {
         }
 
         try {
-            let response = await axios.post(
-                `/api/models/${modelId}/utterances`,
-                { text, intent_id: Number(intentId) },
-                { headers }
-            );
-            let created = response.data;
+            let created = await api.utterances.create(modelId, { text, intent_id: Number(intentId) });
             for (const span of spans) {
                 const slot = slots.find((candidate) => candidate.name === span.entity);
-                response = await axios.post(
-                    `/api/models/${modelId}/utterances/${created.id}/tags`,
-                    { slot_id: slot.id, start: span.start, end: span.end },
-                    { headers }
-                );
-                created = response.data;
+                created = await api.utterances.addTag(modelId, created.id, {
+                    slot_id: slot.id, start: span.start, end: span.end
+                });
             }
             setUtterances((previous) => [created, ...previous]);
             setTotal((previous) => previous + 1);
@@ -218,12 +210,9 @@ const IntentWorkspace = ({ intentId }) => {
         try {
             // The picker hands back its row id as entity_id; here the rows
             // are this intent's slots, so it is the slot id.
-            const response = await axios.post(
-                `/api/models/${modelId}/utterances/${utteranceId}/tags`,
-                { slot_id: span.entity_id, start: span.start, end: span.end },
-                { headers }
-            );
-            replaceUtterance(response.data);
+            replaceUtterance(await api.utterances.addTag(modelId, utteranceId, {
+                slot_id: span.entity_id, start: span.start, end: span.end
+            }));
             setSlotsRefresh((n) => n + 1);
         } catch (error) {
             showError(error);
@@ -251,12 +240,7 @@ const IntentWorkspace = ({ intentId }) => {
 
         try {
             const annotations = spans.map((span) => ({ label: span.entity, start: span.start, end: span.end }));
-            const response = await axios.put(
-                `/api/models/${modelId}/utterances/${utteranceId}`,
-                { text, annotations },
-                { headers }
-            );
-            replaceUtterance(response.data);
+            replaceUtterance(await api.utterances.update(modelId, utteranceId, { text, annotations }));
             setSlotsRefresh((n) => n + 1);
             return true;
         } catch (error) {
@@ -267,7 +251,7 @@ const IntentWorkspace = ({ intentId }) => {
 
     const handleDeleteUtterance = async (utteranceId) => {
         try {
-            await axios.delete(`/api/models/${modelId}/utterances/${utteranceId}`, { headers });
+            await api.utterances.remove(modelId, utteranceId);
             setUtterances((previous) => previous.filter((utterance) => utterance.id !== utteranceId));
             setTotal((previous) => previous - 1);
             setSlotsRefresh((n) => n + 1);
@@ -285,10 +269,7 @@ const IntentWorkspace = ({ intentId }) => {
         if (user && modelId && intentId) {
             const getStats = async () => {
                 try {
-                    const response = await axios.get(`/api/models/${modelId}/tags/stats`, {
-                        params: { intent: intentId }, headers
-                    });
-                    setStats(response.data);
+                    setStats(await api.tags.stats(modelId, { intent: intentId }));
                 } catch (error) {
                     showError(error);
                 }
@@ -303,10 +284,8 @@ const IntentWorkspace = ({ intentId }) => {
             const getSlots = async () => {
                 try {
                     setSlotsLoading(slots.length === 0);
-                    const response = await axios.get(`/api/models/${modelId}/slots`, {
-                        params: { intent: intentId }, headers
-                    });
-                    setSlots(response.data.slots);
+                    const { slots: rows } = await api.slots.list(modelId, { intent: intentId });
+                    setSlots(rows);
                 } catch (error) {
                     showError(error);
                 } finally {
@@ -315,10 +294,8 @@ const IntentWorkspace = ({ intentId }) => {
             };
             const getEntities = async () => {
                 try {
-                    const response = await axios.get(`/api/models/${modelId}/entities`, {
-                        params: { per_page: 100 }, headers
-                    });
-                    setEntities(response.data.entities);
+                    const { entities: rows } = await api.entities.list(modelId, { per_page: 100 });
+                    setEntities(rows);
                 } catch (error) {
                     showError(error);
                 }
@@ -336,9 +313,9 @@ const IntentWorkspace = ({ intentId }) => {
                     setLoading(true);
                     const params = { page: 1, per_page: PER_PAGE, intent: intentId };
                     if (debouncedQuery !== "") params.query = debouncedQuery;
-                    const response = await axios.get(`/api/models/${modelId}/utterances`, { params, headers });
-                    setUtterances(response.data.utterances);
-                    setTotal(response.data.total);
+                    const { utterances: rows, total: count } = await api.utterances.list(modelId, params);
+                    setUtterances(rows);
+                    setTotal(count);
                     setPage(1);
                 } catch (error) {
                     showError(error);
@@ -358,9 +335,9 @@ const IntentWorkspace = ({ intentId }) => {
             setLoadingMore(true);
             const params = { page: nextPage, per_page: PER_PAGE, intent: intentId };
             if (debouncedQuery !== "") params.query = debouncedQuery;
-            const response = await axios.get(`/api/models/${modelId}/utterances`, { params, headers });
-            setUtterances((previous) => [...previous, ...response.data.utterances]);
-            setTotal(response.data.total);
+            const { utterances: rows, total: count } = await api.utterances.list(modelId, params);
+            setUtterances((previous) => [...previous, ...rows]);
+            setTotal(count);
             setPage(nextPage);
         } catch (error) {
             showError(error);

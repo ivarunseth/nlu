@@ -1,4 +1,4 @@
-import axios from "axios";
+import { useApi } from "../../../../contexts/ApiContext";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { Alert, Button, Col, Dropdown, Form, InputGroup, Row } from "react-bootstrap";
 import { Bookmarks  , BracesAsterisk, PencilSquare, Download, PlusLg, Quote, Tags, Upload, Diagram2 } from "react-bootstrap-icons";
@@ -86,7 +86,7 @@ const AnnotationBuild = () => {
     const [stats, setStats] = useState({ entities: 0, utterances: 0, annotated: 0, spans: 0 });
 
     const debouncedQuery = useDebounce(query, 500);
-    const headers = { Authorization: `Bearer ${user?.token}` };
+    const api = useApi();
 
     // Cheap dictionary assist (AN-8): the entity each surface string was most
     // recently labelled as, over the loaded utterances. Lets the picker offer a
@@ -161,11 +161,11 @@ const AnnotationBuild = () => {
         try {
             setSubmitting(true);
             if (currentEntity) {
-                await axios.put(`/api/models/${modelId}/entities/${currentEntity.id}`, data, { headers });
+                await api.entities.update(modelId, currentEntity.id, data);
                 // Annotations embed the entity name and colour; refresh them.
                 setUtterancesRefresh((n) => n + 1);
             } else {
-                await axios.post(`/api/models/${modelId}/entities`, data, { headers });
+                await api.entities.create(modelId, data);
             }
             setEntitiesRefresh((n) => n + 1);
         } catch (error) {
@@ -178,7 +178,7 @@ const AnnotationBuild = () => {
     const handleDeleteEntity = async () => {
         try {
             setSubmitting(true);
-            await axios.delete(`/api/models/${modelId}/entities/${entityToDelete.id}`, { headers });
+            await api.entities.remove(modelId, entityToDelete.id);
             setEntitiesRefresh((n) => n + 1);
             setUtterancesRefresh((n) => n + 1);
         } catch (error) {
@@ -219,16 +219,12 @@ const AnnotationBuild = () => {
         }
 
         try {
-            let response = await axios.post(`/api/models/${modelId}/utterances`, { text }, { headers });
-            let created = response.data;
+            let created = await api.utterances.create(modelId, { text });
             for (const span of spans) {
                 const entity = entities.find((candidate) => candidate.name === span.entity);
-                response = await axios.post(
-                    `/api/models/${modelId}/utterances/${created.id}/tags`,
-                    { entity_id: entity.id, start: span.start, end: span.end },
-                    { headers }
-                );
-                created = response.data;
+                created = await api.utterances.addTag(modelId, created.id, {
+                    entity_id: entity.id, start: span.start, end: span.end
+                });
             }
 
             setUtterances((previous) => [created, ...previous]);
@@ -242,12 +238,7 @@ const AnnotationBuild = () => {
 
     const handleAnnotate = async (utteranceId, span) => {
         try {
-            const response = await axios.post(
-                `/api/models/${modelId}/utterances/${utteranceId}/tags`,
-                span,
-                { headers }
-            );
-            replaceUtterance(response.data);
+            replaceUtterance(await api.utterances.addTag(modelId, utteranceId, span));
             setEntitiesRefresh((n) => n + 1);
         } catch (error) {
             showError(error);
@@ -281,12 +272,7 @@ const AnnotationBuild = () => {
 
         try {
             const annotations = spans.map((span) => ({ label: span.entity, start: span.start, end: span.end }));
-            const response = await axios.put(
-                `/api/models/${modelId}/utterances/${utteranceId}`,
-                { text, annotations },
-                { headers }
-            );
-            replaceUtterance(response.data);
+            replaceUtterance(await api.utterances.update(modelId, utteranceId, { text, annotations }));
             // An edit can move spans and change per-entity counts.
             setEntitiesRefresh((n) => n + 1);
             return true;
@@ -298,7 +284,7 @@ const AnnotationBuild = () => {
 
     const handleDeleteUtterance = async (utteranceId) => {
         try {
-            await axios.delete(`/api/models/${modelId}/utterances/${utteranceId}`, { headers });
+            await api.utterances.remove(modelId, utteranceId);
             setUtterances((previous) => previous.filter((utterance) => utterance.id !== utteranceId));
             setTotal((previous) => previous - 1);
             setEntitiesRefresh((n) => n + 1);
@@ -315,8 +301,7 @@ const AnnotationBuild = () => {
         data.append("dataset", file);
         try {
             setImporting(true);
-            const response = await axios.post(`/api/models/${modelId}/tags/import`, data, { headers });
-            setImportSummary(response.data);
+            setImportSummary(await api.tags.importDataset(modelId, data));
             // Pull in the new utterances and any auto-created entities.
             setUtterancesRefresh((n) => n + 1);
             setEntitiesRefresh((n) => n + 1);
@@ -335,13 +320,9 @@ const AnnotationBuild = () => {
     const handleExport = async (format) => {
         try {
             setExporting(true);
-            const response = await axios.get(`/api/models/${modelId}/tags/export`, {
-                params: { format },
-                responseType: "blob",
-                headers
-            });
+            const blob = await api.tags.exportDataset(modelId, format);
             const extension = { json: "jsonl", conll: "conll", csv: "csv" }[format] || "txt";
-            downloadBlob(response.data, `${modelId}-${format}.${extension}`);
+            downloadBlob(blob, `${modelId}-${format}.${extension}`);
         } catch (error) {
             showError(error);
         } finally {
@@ -354,9 +335,8 @@ const AnnotationBuild = () => {
             const getEntities = async () => {
                 try {
                     setEntitiesLoading(entities.length === 0);
-                    const params = { per_page: 100 };
-                    const response = await axios.get(`/api/models/${modelId}/entities`, { params, headers });
-                    setEntities(response.data.entities);
+                    const { entities: rows } = await api.entities.list(modelId, { per_page: 100 });
+                    setEntities(rows);
                 } catch (error) {
                     showError(error);
                 } finally {
@@ -377,9 +357,9 @@ const AnnotationBuild = () => {
                     setLoading(true);
                     const params = { page: 1, per_page: PER_PAGE };
                     if (debouncedQuery !== "") params.query = debouncedQuery;
-                    const response = await axios.get(`/api/models/${modelId}/utterances`, { params, headers });
-                    setUtterances(response.data.utterances);
-                    setTotal(response.data.total);
+                    const { utterances: rows, total: count } = await api.utterances.list(modelId, params);
+                    setUtterances(rows);
+                    setTotal(count);
                     setPage(1);
                 } catch (error) {
                     showError(error);
@@ -399,8 +379,7 @@ const AnnotationBuild = () => {
         if (user && modelId) {
             const getStats = async () => {
                 try {
-                    const response = await axios.get(`/api/models/${modelId}/tags/stats`, { headers });
-                    setStats(response.data);
+                    setStats(await api.tags.stats(modelId));
                 } catch (error) {
                     showError(error);
                 }
@@ -418,9 +397,9 @@ const AnnotationBuild = () => {
             setLoadingMore(true);
             const params = { page: nextPage, per_page: PER_PAGE };
             if (debouncedQuery !== "") params.query = debouncedQuery;
-            const response = await axios.get(`/api/models/${modelId}/utterances`, { params, headers });
-            setUtterances((previous) => [...previous, ...response.data.utterances]);
-            setTotal(response.data.total);
+            const { utterances: rows, total: count } = await api.utterances.list(modelId, params);
+            setUtterances((previous) => [...previous, ...rows]);
+            setTotal(count);
             setPage(nextPage);
         } catch (error) {
             showError(error);

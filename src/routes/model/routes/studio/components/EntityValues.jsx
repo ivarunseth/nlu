@@ -1,5 +1,5 @@
-import axios from "axios";
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useApi } from "../../../../../contexts/ApiContext";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Alert, Badge, Button, Card, Form, Modal, Spinner, Table } from "react-bootstrap";
 import { BookmarkStar, InfoCircle, Option, PlusLg, Quote, Tags, Trash, XLg } from "react-bootstrap-icons";
 import { useParams } from "react-router-dom";
@@ -64,7 +64,7 @@ const EntityValues = ({ entityId }) => {
     // The "add synonym" input text, per value id.
     const [synonymDrafts, setSynonymDrafts] = useState({});
 
-    const headers = useMemo(() => ({ Authorization: `Bearer ${user?.token}` }), [user]);
+    const api = useApi();
 
     const showError = (error, fallback = "Something went wrong.") => {
         setAlert({ variant: "danger", message: error?.response?.data?.error || fallback });
@@ -76,18 +76,15 @@ const EntityValues = ({ entityId }) => {
     const getValues = useCallback(async (quiet = false) => {
         try {
             if (!quiet) setLoading(true);
-            const response = await axios.get(
-                `/api/models/${modelId}/entities/${entityId}/values`,
-                { headers }
-            );
-            setEntity(response.data.entity);
-            setValues(response.data.values);
+            const { entity, values } = await api.values.list(modelId, entityId);
+            setEntity(entity);
+            setValues(values);
         } catch (error) {
             showError(error);
         } finally {
             if (!quiet) setLoading(false);
         }
-    }, [modelId, entityId, headers]);
+    }, [modelId, entityId, api]);
 
     useEffect(() => {
         if (user && modelId && entityId) getValues();
@@ -135,10 +132,7 @@ const EntityValues = ({ entityId }) => {
             return;
         }
         try {
-            await axios.put(
-                `/api/models/${modelId}/entities/${entityId}/values/${value.id}`,
-                { value: trimmed }, { headers }
-            );
+            await api.values.update(modelId, entityId, value.id, { value: trimmed });
             // Refetch before dropping the draft: clearing it first would flash
             // the old stored name back into the cell until the refetch lands.
             await getValues(true);
@@ -178,10 +172,7 @@ const EntityValues = ({ entityId }) => {
     const saveSynonyms = async (value, terms) => {
         setPending(value.id, true);
         try {
-            await axios.put(
-                `/api/models/${modelId}/entities/${entityId}/values/${value.id}`,
-                { synonyms: terms }, { headers }
-            );
+            await api.values.update(modelId, entityId, value.id, { synonyms: terms });
             await getValues(true);
             return true;
         } catch (error) {
@@ -234,10 +225,7 @@ const EntityValues = ({ entityId }) => {
         if (!payload.value) return;
         try {
             setSubmitting(true);
-            await axios.post(
-                `/api/models/${modelId}/entities/${entityId}/values`,
-                payload, { headers }
-            );
+            await api.values.create(modelId, entityId, payload);
             closeForm();
             getValues();
         } catch (error) {
@@ -249,10 +237,7 @@ const EntityValues = ({ entityId }) => {
     const handleDelete = async () => {
         try {
             setSubmitting(true);
-            await axios.delete(
-                `/api/models/${modelId}/entities/${entityId}/values/${toDelete.id}`,
-                { headers }
-            );
+            await api.values.remove(modelId, entityId, toDelete.id);
             // Removing the last row on a trailing page steps back a page.
             const remaining = values.length - 1;
             if (page > 1 && remaining <= (page - 1) * PER_PAGE) setPage(page - 1);
@@ -301,7 +286,7 @@ const EntityValues = ({ entityId }) => {
                     icon={<Quote />}
                     title="Values"
                     right={
-                        <span className="text-muted" style={{ fontSize: "0.7rem" }}>
+                        <span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>
                             {values.length} value{values.length === 1 ? "" : "s"} · {synonymsTotal} synonym{synonymsTotal === 1 ? "" : "s"}
                         </span>
                     }

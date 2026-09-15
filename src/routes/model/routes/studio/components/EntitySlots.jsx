@@ -10,7 +10,7 @@ import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Alert, Badge, Card, Spinner, Table } from "react-bootstrap";
 import { Diagram3 } from "react-bootstrap-icons";
 import { useParams } from "react-router-dom";
-import axios from "axios";
+import { useApi } from "../../../../../contexts/ApiContext";
 
 import { UserContext } from "../../../../../contexts/UserContext";
 import AppPagination from "../../../../../shared/components/AppPagination";
@@ -28,23 +28,20 @@ const EntitySlots = ({ entityId }) => {
     const [error, setError] = useState(null);
     const [page, setPage] = useState(1);
 
-    const headers = useMemo(() => ({ Authorization: `Bearer ${user?.token}` }), [user]);
+    const api = useApi();
 
     const getSlots = useCallback(async () => {
         try {
             setLoading(true);
-            const response = await axios.get(
-                `/api/models/${modelId}/slots`,
-                { headers, params: { entity: entityId } }
-            );
-            setSlots(response.data.slots || []);
+            const { slots: entitySlots } = await api.slots.list(modelId, { entity: entityId });
+            setSlots(entitySlots || []);
             setError(null);
         } catch (failure) {
             setError(failure?.response?.data?.error || "Could not load slots.");
         } finally {
             setLoading(false);
         }
-    }, [modelId, entityId, headers]);
+    }, [api, modelId, entityId]);
 
     useEffect(() => {
         if (user && modelId && entityId) getSlots();
@@ -71,7 +68,7 @@ const EntitySlots = ({ entityId }) => {
                     icon={<Diagram3 />}
                     title="Slots"
                     right={
-                        <span className="text-muted" style={{ fontSize: "0.7rem" }}>
+                        <span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>
                             {rows.length} slot{rows.length === 1 ? "" : "s"} across {intents} intent{intents === 1 ? "" : "s"}
                         </span>
                     }

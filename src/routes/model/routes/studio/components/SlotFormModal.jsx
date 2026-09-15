@@ -29,6 +29,11 @@ const SlotFormModal = ({
         title={title}
         validated={validated}
         submitting={submitting}
+        // Choosing "New entity…" splits the row into two floating-label
+        // controls. At the default width they get ~215px each, which truncates
+        // both the entity names and the floating labels, so the dialog widens
+        // for exactly that case.
+        size={entityId === NEW_ENTITY ? "lg" : undefined}
         onHide={onHide}
         onSubmit={onSubmit}
     >

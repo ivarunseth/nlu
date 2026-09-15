@@ -449,7 +449,7 @@ const AnnotatedUtterance = ({
                 </Button>
             </div>
             {/* Revealed by CSS on focus, so it costs no render mid-edit. */}
-            <div className="utterance-hint text-muted mt-1" style={{ marginLeft: "2.5rem", fontSize: "0.7rem" }}>
+            <div className="utterance-hint text-muted mt-1" style={{ marginLeft: "2.5rem", fontSize: "var(--app-text-xs)" }}>
                 select a phrase to tag it · editing a tagged phrase clears its tag · Enter saves, Esc reverts
             </div>
             {showTags && (

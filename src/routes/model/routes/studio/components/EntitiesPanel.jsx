@@ -37,7 +37,7 @@ const EntitiesPanel = ({
                 icon={<Tags />}
                 title={`${plural.charAt(0).toUpperCase()}${plural.slice(1)}`}
                 right={
-                    <span className="text-muted" style={{ fontSize: "0.7rem" }}>
+                    <span className="text-muted" style={{ fontSize: "var(--app-text-xs)" }}>
                         {entities.length} {entities.length === 1 ? noun : plural}
                     </span>
                 }
@@ -68,7 +68,7 @@ const EntitiesPanel = ({
                                 ) : (
                                     <span className="fw-medium small text-break text-truncate" style={{maxWidth:"120px"}}>{entity.name}</span>
                                 )}
-                                <span className="text-muted font-monospace" style={{ fontSize: "0.7rem" }}>
+                                <span className="text-muted font-monospace" style={{ fontSize: "var(--app-text-xs)" }}>
                                     {entity.annotations_count}
                                 </span>
                                 <Pen
