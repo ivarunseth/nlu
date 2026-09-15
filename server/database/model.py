@@ -511,11 +511,9 @@ class Model(db.Model):
                     db.session.delete(instance)
                     db.session.flush()
 
-                # Development always runs the defaults; elsewhere an explicit
-                # config from the request wins over the carried one.
-                if environment.name == 'development':
-                    carried = None
-                elif params is not None:
+                # An explicit config from the request wins over the one
+                # carried across from the deployment being replaced.
+                if params is not None:
                     carried = params
 
                 instance = Instance.create(environment, self, training, api_key=api_key, config=carried)
@@ -547,9 +545,9 @@ class Model(db.Model):
         """
         The furthest environment this model has been promoted to, or ``None``
         when nothing is deployed. Ranking follows the deployment pipeline's
-        order as declared in ``ALLOWED_ENVIRONMENTS`` (development → testing →
-        production), so a model live in several environments reports the
-        highest one it has reached.
+        order as declared in ``ALLOWED_ENVIRONMENTS`` (testing → production),
+        so a model live in several environments reports the highest one it
+        has reached.
         """
         order = list(current_app.config['ALLOWED_ENVIRONMENTS'])
         rank = {name: index for index, name in enumerate(order)}

@@ -28,7 +28,7 @@ class Instance(db.Model):
 
     task_id = db.Column(db.String(155), unique=True, nullable=True)
     # Deployment configuration, always complete: instances are created with
-    # environment-aware defaults filled in under whatever the user chose.
+    # the serving defaults filled in under whatever the user chose.
     config = db.Column(db.JSON, nullable=False)
 
     # Wide enough for a signed JWT rather than an opaque secret.
@@ -74,16 +74,18 @@ class Instance(db.Model):
     )
 
     @staticmethod
-    def default_options(environment=None):
-        """The default deployment configuration for an environment.
+    def default_options():
+        """The default deployment configuration for a new deployment.
 
-        Development deployments load lazily: models come and go there at
-        unpredictable times and only a few reach the higher environments,
-        so a model should occupy a worker only while actually being tested.
+        The same in every environment: a deployment that wants to differ
+        (loading lazily, a different batch size) says so through its config,
+        which the publish UI edits per deployment.
         """
         heartbeat_interval = current_app.config['INFERENCE_HEARTBEAT_INTERVAL']
         return {
-            'lazy': environment == 'development',
+            # Eager by default: a published deployment should be serving
+            # before its first request, not loading during it.
+            'lazy': False,
             'cache': True,
             'top': 1,
             # 0 means off: an existing deployment keeps returning everything
@@ -102,7 +104,7 @@ class Instance(db.Model):
 
     @property
     def _config(self):
-        return {**Instance.default_options(self.environment.name), **(self.config or {})}
+        return {**Instance.default_options(), **(self.config or {})}
 
     def options(self):
         """The serving options carried into this deployment's route."""
@@ -113,11 +115,11 @@ class Instance(db.Model):
         )}
 
     @staticmethod
-    def clean(data, environment=None):
+    def clean(data):
         """Validate a config payload and normalize it over the defaults."""
         if not isinstance(data, dict):
             abort(400, 'config must be an object')
-        defaults = Instance.default_options(environment)
+        defaults = Instance.default_options()
         unknown = set(data) - set(defaults)
         if unknown:
             abort(400, 'Unknown config fields: %s' % ', '.join(sorted(unknown)))
@@ -147,7 +149,7 @@ class Instance(db.Model):
 
     def configure(self, data):
         """Apply a new deployment config and push it into the live route."""
-        config = Instance.clean(data, self.environment.name)
+        config = Instance.clean(data)
         previous = self.options()
         self.config = config
         cache_disabled = previous["cache"] and not config["cache"]
@@ -183,8 +185,8 @@ class Instance(db.Model):
             # task_id is minted fresh by start() on every (re)start.
             api_key=api_key or generate_api_key(model.id, environment.name),
             # Instances always carry a complete config, so partial or absent
-            # input is normalized over the environment's defaults here.
-            config=Instance.clean(config or {}, environment.name),
+            # input is normalized over the serving defaults here.
+            config=Instance.clean(config or {}),
         )
 
     def _get_task(self):
