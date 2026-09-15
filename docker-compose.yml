@@ -1,0 +1,177 @@
+# Single-host deployment: every process the platform is made of runs in its
+# own container, all built from the one image in docker/Dockerfile. Compose
+# is the process manager here; the image's default CMD (supervisord) is only
+# used when the image is run on its own as a single container.
+#
+#   docker compose up -d --build
+#
+# UI on http://localhost/ (nginx, proxies /api and /socket.io to `api`).
+# Inference endpoints are absolute URLs the browser calls directly, so the
+# two data planes publish 5002 (testing) and 5004 (production). Set
+# INFERENCE_HOST in .env to the host's public name on a real deployment.
+#
+# Host-specific values in .env (localhost Redis, sqlite) are overridden per
+# service below; python-dotenv never overrides a variable that is already
+# set, so the compose values win inside the containers.
+
+x-postgres-env: &postgres-env
+  POSTGRES_USER: ${POSTGRES_USER:-indicnlu}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-indicnlu}
+  POSTGRES_DB: ${POSTGRES_DB:-indicnlu}
+
+x-backend-env: &backend-env
+  FLASK_DEBUG: "false"
+  SQLALCHEMY_DATABASE_URI: postgresql://${POSTGRES_USER:-indicnlu}:${POSTGRES_PASSWORD:-indicnlu}@postgres:5432/${POSTGRES_DB:-indicnlu}
+  CELERY_RESULT_BACKEND: db+postgresql://${POSTGRES_USER:-indicnlu}:${POSTGRES_PASSWORD:-indicnlu}@postgres:5432/${POSTGRES_DB:-indicnlu}
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  CELERY_BROKER_URL: redis://redis:6379/0
+  SOCKETIO_MESSAGE_QUEUE: redis://redis:6379/0
+  # config.py defaults these to localhost (never empty), so registry_for()
+  # never falls back to the shared client — they must point at the service.
+  REDIS_URL_TESTING: redis://redis:6379/0
+  REDIS_URL_PRODUCTION: redis://redis:6379/0
+  STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+  STORAGE_BUCKET: ${STORAGE_BUCKET:-data}
+  INFERENCE_HOST: ${INFERENCE_HOST:-http://localhost}
+
+# Only `api` carries the build section: several services building and
+# tagging the same image in parallel race on the export step and fail with
+# "image already exists". The rest run the tag that build produces.
+x-backend: &backend
+  image: indic-nlu:latest
+  env_file: .env
+  volumes:
+    # The `local` storage provider resolves STORAGE_BUCKET against the
+    # working directory (/app), so every service shares one bucket.
+    - data:/app/data
+  restart: unless-stopped
+  depends_on:
+    redis:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save 60 1 --appendonly yes
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment: *postgres-env
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-indicnlu} -d ${POSTGRES_DB:-indicnlu}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # One-shot: applies migrations, then exits. Every backend service waits for
+  # it to finish, so a fresh volume is fully migrated before anything starts.
+  migrate:
+    <<: *backend
+    command: flask db upgrade
+    environment:
+      <<: *backend-env
+      FLASK_ENV: testing
+    restart: "no"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  # Control plane: /api + Socket.IO. One is enough for both environments —
+  # publishing picks the registry from the instance's own environment and
+  # the telemetry consumer drains every environment's queue. FLASK_ENV here
+  # only selects the port.
+  api:
+    <<: *backend
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: main
+    command: python app.py
+    environment:
+      <<: *backend-env
+      FLASK_ENV: testing
+    ports:
+      - "5001:5001"
+
+  # Data planes: one per environment, each serving its own registry.
+  triton-testing:
+    <<: *backend
+    command: python app.py triton
+    environment:
+      <<: *backend-env
+      FLASK_ENV: testing
+    ports:
+      - "5002:5002"
+
+  triton-production:
+    <<: *backend
+    command: python app.py triton
+    environment:
+      <<: *backend-env
+      FLASK_ENV: production
+    ports:
+      - "5004:5004"
+
+  # Training worker. Prefork with max_tasks_per_child=1 (WorkerConfig) gives
+  # every training run a fresh process; one at a time keeps a single host
+  # from oversubscribing its CPUs/GPU.
+  sage:
+    <<: *backend
+    command: celery -A server.tasks:sage worker -E -Q training -P prefork -c 1 -l INFO -Ofair -n sage@%h
+    environment:
+      <<: *backend-env
+      FLASK_ENV: testing
+
+  # Serving workers: one per environment queue. Each serving task holds one
+  # model for the life of its process, so the pool size is the number of
+  # models that can be live at once in that environment.
+  worker-testing:
+    <<: *backend
+    command: celery -A server.tasks:triton worker -E -Q testing -P prefork -l INFO -Ofair -n triton-testing@%h
+    environment:
+      <<: *backend-env
+      FLASK_ENV: testing
+
+  worker-production:
+    <<: *backend
+    command: celery -A server.tasks:triton worker -E -Q production -P prefork -l INFO -Ofair -n triton-production@%h
+    environment:
+      <<: *backend-env
+      FLASK_ENV: production
+
+  # Static frontend + reverse proxy to the control plane.
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: web
+    image: indic-nlu-web:latest
+    ports:
+      - "${WEB_PORT:-80}:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  data:
+  redis:
+  postgres:

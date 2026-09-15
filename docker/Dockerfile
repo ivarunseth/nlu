@@ -25,6 +25,10 @@ RUN npm run build
 
 # -----------------------------------------------------------------------------
 # Stage 2: Build the Python backend
+#
+# The default CMD runs every process under supervisord, so the image works as
+# a single-container deployment on its own. docker-compose.yml builds this
+# same stage and overrides `command` per service to run one process each.
 # -----------------------------------------------------------------------------
 FROM python:3.11-slim AS main
 
@@ -45,26 +49,45 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create application user
 RUN useradd -m -s /bin/bash appuser
 
-# Create logs directory
-RUN mkdir -p /app/logs && chown -R appuser:appuser /app
-
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend
-COPY server/ ./server/
-COPY migrations/ ./migrations/
-COPY app.py .
+COPY --chown=appuser:appuser server/ ./server/
+COPY --chown=appuser:appuser migrations/ ./migrations/
+COPY --chown=appuser:appuser app.py .
+# server/utils/dataset.py reads the label palette from public/colors.txt
+COPY --chown=appuser:appuser public/colors.txt ./public/colors.txt
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Copy frontend build
-COPY --from=build /app/dist ./dist
+COPY --chown=appuser:appuser --from=build /app/dist ./dist
+
+# Writable directories for the non-root user: logs (supervisord), the local
+# storage provider's bucket (bind to a volume in compose; an empty named
+# volume inherits this ownership) and the filesystem session store.
+RUN mkdir -p /app/logs /app/data /app/instance /app/flask_session \
+    && chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser
 
-EXPOSE 5001 5002 5003 5004 5005 5006
+EXPOSE 5001 5002 5003 5004
 
 CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+
+
+# -----------------------------------------------------------------------------
+# Stage 3: Serve the frontend
+#
+# Static SPA behind nginx, proxying the control plane the way the Vite dev
+# server does (vite.config.js). Only used by docker-compose.yml.
+# -----------------------------------------------------------------------------
+FROM nginx:1.27-alpine AS web
+
+COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+
+EXPOSE 80
