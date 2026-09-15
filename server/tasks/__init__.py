@@ -245,7 +245,6 @@ triton = create_worker(
     'triton',
     include=['server.tasks.inference'],
     queues=(
-        'development', 
         'testing', 
         'production',
     ),
