@@ -1,0 +1,45 @@
+# Celery workers: training (`sage`, the default CMD) and model serving
+# (`triton`, one worker per environment queue; docker-compose.yml overrides
+# `command`). This is the only image that carries TensorFlow and friends.
+#
+# DEVICE=cpu (default) installs requirements/worker.txt and builds for
+# linux/amd64 and linux/arm64. DEVICE=cuda adds requirements/worker-cuda.txt
+# (TensorFlow's [and-cuda] wheels) and is linux/amd64 only; run it with
+# docker-compose.gpu.yml, which grants the GPUs.
+
+FROM python:3.11-slim
+
+ARG DEVICE=cpu
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+RUN useradd -m -s /bin/bash appuser
+
+COPY requirements/base.txt requirements/worker.txt requirements/worker-cuda.txt requirements/
+RUN if [ "$DEVICE" = "cuda" ]; then \
+      pip install -r requirements/worker-cuda.txt; \
+    elif [ "$DEVICE" = "cpu" ]; then \
+      pip install -r requirements/worker.txt; \
+    else \
+      echo "DEVICE must be cpu or cuda, got '$DEVICE'" >&2; exit 1; \
+    fi
+
+# No app.py or migrations: the worker builds its app context through
+# server.create_application_server (server/tasks/request.py).
+COPY --chown=appuser:appuser server/ ./server/
+# server/utils/dataset.py reads the label palette from public/colors.txt
+COPY --chown=appuser:appuser public/colors.txt ./public/colors.txt
+
+RUN mkdir -p /app/data /app/instance \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
+# Prefork is required: worker_max_tasks_per_child=1 gives every training
+# or serving task a fresh process, which only this pool provides.
+CMD ["celery", "-A", "server.tasks:sage", "worker", "-E", "-Q", "training", "-P", "prefork", "-c", "1", "-l", "INFO", "-Ofair", "-n", "sage@%h"]

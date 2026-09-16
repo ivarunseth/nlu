@@ -1,0 +1,7 @@
+# CUDA worker (docker/Dockerfile.worker with DEVICE=cuda). linux/x86_64 only.
+# The [and-cuda] extra installs the nvidia-* wheels TF 2.15 was built
+# against; the pin matches worker.txt's linux/x86_64 marker so the resolver
+# sees a single TensorFlow version.
+-r worker.txt
+
+tensorflow[and-cuda]==2.15.0.post1

@@ -1,0 +1,43 @@
+# Control plane and everything else that is Flask/Celery without the ML
+# stack: /api + Socket.IO (default CMD), the two inference data planes,
+# `flask db upgrade`, and flower. docker-compose.yml overrides `command`
+# per service. Servers run under gunicorn's gevent worker; the control
+# plane keeps one worker process because Socket.IO long-polling needs a
+# client's requests to reach the same process.
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+RUN useradd -m -s /bin/bash appuser
+
+# Every package here ships manylinux wheels for amd64 and arm64, so no
+# compiler is installed. If a build ever fails on a missing wheel, add
+# build-essential to this image only.
+COPY requirements/base.txt requirements/api.txt requirements/
+RUN pip install -r requirements/api.txt
+
+COPY --chown=appuser:appuser server/ ./server/
+COPY --chown=appuser:appuser migrations/ ./migrations/
+COPY --chown=appuser:appuser app.py .
+# server/utils/dataset.py reads the label palette from public/colors.txt
+COPY --chown=appuser:appuser public/colors.txt ./public/colors.txt
+
+# Writable for the non-root user: the local storage provider's bucket (a
+# volume in compose; an empty named volume inherits this ownership), the
+# sqlite instance folder and the filesystem session store.
+RUN mkdir -p /app/data /app/instance /app/flask_session \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
+EXPOSE 5001 5002 5003 5004
+
+# create_app() returns the Flask app with socketio.init_app applied, i.e.
+# the Socket.IO-wrapped WSGI app, so gunicorn can serve it directly.
+CMD ["gunicorn", "-k", "gevent", "-w", "1", "-b", "0.0.0.0:5001", "--timeout", "300", "app:create_app()"]

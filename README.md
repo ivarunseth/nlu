@@ -43,7 +43,7 @@ A version is validated in `testing` before it is promoted to `production`. See [
 - Python 3.11
 - Node.js 22 and npm
 - Redis 7
-- For containers: Docker Engine 24+ with the Compose plugin (`docker compose`)
+- For containers: Docker Engine 24+ with the Compose plugin (`docker compose`, v2.35+ for bake-backed builds); the NVIDIA Container Toolkit on the CUDA host
 - For GPU training in deployment: an NVIDIA driver + CUDA runtime matching TensorFlow 2.15
 
 ## Running locally
@@ -87,43 +87,26 @@ Local development runs each process on the host against SQLite and a local Redis
 
    The Vite dev server proxies `/api`, `/api/infer` and `/socket.io` to the `testing` stack (`FLASK_ENV=production npm run dev` targets the other one). `npm run build` writes a production bundle to `dist/`.
 
-## Running with Docker
-
-The single image in [docker/Dockerfile](docker/Dockerfile) contains the backend and the built frontend. Run on its own, it starts every process under supervisord ([supervisord.conf](supervisord.conf)) — a single-container deployment. It still needs Redis and a database reachable over the network:
-
-```bash
-docker build -f docker/Dockerfile -t indic-nlu .
-docker run -d --name indic-nlu --env-file .env \
-  -e REDIS_HOST=<redis-host> \
-  -e CELERY_BROKER_URL=redis://<redis-host>:6379/0 \
-  -e SOCKETIO_MESSAGE_QUEUE=redis://<redis-host>:6379/0 \
-  -e REDIS_URL_TESTING=redis://<redis-host>:6379/0 \
-  -e REDIS_URL_PRODUCTION=redis://<redis-host>:6379/0 \
-  -e SQLALCHEMY_DATABASE_URI=postgresql://user:pass@<db-host>:5432/indicnlu \
-  -e CELERY_RESULT_BACKEND=db+postgresql://user:pass@<db-host>:5432/indicnlu \
-  -e FLASK_DEBUG=false \
-  -v indic-nlu-data:/app/data \
-  -p 5001:5001 -p 5002:5002 -p 5004:5004 \
-  indic-nlu
-```
-
-Migrations run automatically before the control plane starts. The UI is not served by this container — either put the built `dist/` behind your own web server (proxy `/api` and `/socket.io` to `:5001`, see [docker/nginx.conf](docker/nginx.conf)) or use Compose below. Inspect the processes with:
-
-```bash
-docker exec indic-nlu supervisorctl -c /etc/supervisor/conf.d/supervisord.conf status
-```
-
 ## Running with Docker Compose
+
+Three images, each with only its own dependencies:
+
+| Image | Dockerfile | Runs |
+|---|---|---|
+| `indic-nlu-client` | [docker/Dockerfile.client](docker/Dockerfile.client) | nginx: built UI, proxies `/api` and `/socket.io` to `api` |
+| `indic-nlu-api` | [docker/Dockerfile.api](docker/Dockerfile.api) | control plane, the two data planes, `flask db upgrade`, flower |
+| `indic-nlu-worker:<tag>-cpu` / `-cuda` | [docker/Dockerfile.worker](docker/Dockerfile.worker) | training and serving Celery workers (the only image with TensorFlow) |
 
 [docker-compose.yml](docker-compose.yml) runs the whole stack on one host, one process per container:
 
-| Service | Role | Port |
+| Service | Role | Published port |
 |---|---|---|
-| `web` | nginx: built UI, proxies `/api` and `/socket.io` to `api` | `80` (`WEB_PORT`) |
-| `api` | control plane | `5001` |
-| `triton-testing` / `triton-production` | data planes | `5002` / `5004` |
-| `sage` | training worker | — |
-| `worker-testing` / `worker-production` | serving workers | — |
+| `client` | nginx: built UI, proxies `/api` and `/socket.io` to `api` | `80` (`CLIENT_PORT`) |
+| `api` | control plane (gunicorn, one gevent worker) | — (reached only through `client`) |
+| `triton-testing` / `triton-production` | data planes (gunicorn, `TRITON_WORKERS` gevent workers) | `5002` / `5004` (the browser calls them directly) |
+| `flower` | Celery monitoring for every queue | `127.0.0.1:5555` (`FLOWER_BIND`, `FLOWER_PORT`) |
+| `worker` | training worker (`sage` Celery app) | — |
+| `worker-testing` / `worker-production` | serving workers (`triton` Celery app) | — |
 | `migrate` | one-shot `flask db upgrade`, everything waits for it | — |
 | `redis`, `postgres` | with healthchecks and named volumes | — |
 
@@ -133,13 +116,21 @@ docker compose up -d --build
 open http://localhost/
 ```
 
+On the CUDA host (linux/amd64 with the NVIDIA Container Toolkit), the override switches the workers to the `cuda` image variant and grants the GPUs:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
 Compose reads `.env` and overrides the host-specific values (localhost Redis, SQLite) per service, so the same `.env` serves both ways of running the stack. Model artifacts live in the `data` volume, shared by the API and all workers.
+
+Python dependencies are split by role under [requirements/](requirements/) (`base`, `api`, `worker`, `worker-cuda`); the top-level `requirements.txt` includes `worker.txt` for a native install. [docker-bake.hcl](docker-bake.hcl) layers `linux/amd64` + `linux/arm64` platforms over the compose build definitions for when the images are published to a registry (`docker buildx bake -f docker-compose.yml -f docker-bake.hcl --print all` shows the plan). The flower service unsets an empty `FLOWER_BASIC_AUTH` before starting, because flower would otherwise treat the empty value as an (unmatchable) credential.
 
 Useful commands:
 
 ```bash
 docker compose ps
-docker compose logs -f api sage         # any service name
+docker compose logs -f api worker       # any service name
 docker compose restart worker-testing
 docker compose down                     # keep data
 docker compose down -v                  # wipe database, redis and artifacts

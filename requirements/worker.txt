@@ -1,0 +1,76 @@
+# Training and serving workers (docker/Dockerfile.worker, DEVICE=cpu) and the
+# native venv (requirements.txt). CPU on every platform; the CUDA image adds
+# requirements/worker-cuda.txt on top.
+-r base.txt
+
+# torch only converts PyTorch hub checkpoints to TF weights
+# (transformers' TFAutoModel.from_pretrained), a CPU job. The PyPI x86_64
+# wheel would drag in the nvidia-* CUDA 12 / cuDNN 9 libraries, which
+# clash with TF 2.15's own CUDA 12.2 / cuDNN 8.9 set, so Linux takes the
+# CPU wheel from PyTorch's index on both x86_64 and aarch64 (PyPI's
+# aarch64 wheels carry CUDA too); the macOS wheel is CPU-only.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.8.0+cpu; sys_platform == "linux"
+torch==2.8.0; sys_platform != "linux"
+
+# 2.15.0.post1 exists only for linux/x86_64: it fixes the 2.15.0 wheel not
+# finding CUDA libraries installed via the [and-cuda] extra. On macOS the
+# tensorflow wheel depends on tensorflow-macos; pip resolves that itself.
+# tensorflow-metal is intentionally not installed (see CLAUDE.md).
+tensorflow==2.15.0.post1; sys_platform == "linux" and platform_machine == "x86_64"
+tensorflow==2.15.0; sys_platform != "linux" or platform_machine != "x86_64"
+
+# ── direct ────────────────────────────────────────────────────
+h5py==3.16.0
+huggingface_hub==0.36.2
+joblib==1.5.3
+keras==2.15.0
+onnx==1.18.0
+onnxruntime==1.22.1
+safetensors==0.7.0
+scikit-learn==1.9.0
+scipy==1.17.1
+tensorflow-estimator==2.15.0
+tensorflow-io-gcs-filesystem==0.37.1
+# 0.8.0 sets TF_USE_LEGACY_KERAS=1 on import and needs the tf_keras package,
+# which would put a second Keras next to keras 2.15 (and rebind tf.keras
+# depending on import order). 0.7.5 is the last release that uses tf.keras
+# as-is; it covers everything server/models/base.py uses.
+tensorflow-model-optimization==0.7.5
+tf2onnx==1.17.0
+tokenizers==0.15.2
+transformers==4.37.2
+
+# ── transitive ────────────────────────────────────────────────
+absl-py==1.4.0
+astunparse==1.6.3
+attrs==26.1.0
+coloredlogs==15.0.1
+dm-tree==0.1.10
+filelock==3.29.1
+flatbuffers==25.12.19
+fsspec==2026.4.0
+gast==0.7.0
+google-auth-oauthlib==1.2.2
+google-pasta==0.2.0
+grpcio==1.81.0
+hf-xet==1.5.0
+humanfriendly==10.0
+libclang==18.1.1
+Markdown==3.10.2
+ml-dtypes==0.2.0
+mpmath==1.3.0
+narwhals==2.22.1
+networkx==3.6.1
+oauthlib==3.3.1
+opt_einsum==3.4.0
+PyYAML==6.0.3
+regex==2026.5.9
+requests-oauthlib==2.0.0
+sympy==1.14.0
+tensorboard==2.15.2
+tensorboard-data-server==0.7.2
+termcolor==3.3.0
+threadpoolctl==3.6.0
+tqdm==4.68.1
+wrapt==1.14.2

@@ -1,0 +1,8 @@
+# Control plane, data planes, migrations and flower (docker/Dockerfile.api).
+-r base.txt
+
+flower==2.0.1
+# flower's own
+humanize==4.12.3
+prometheus_client==0.22.1
+tornado==6.5.2
