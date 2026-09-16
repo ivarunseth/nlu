@@ -1,10 +1,11 @@
 import { useApi } from "../../../../contexts/ApiContext";
 import { useContext, useEffect, useState } from "react";
-import { Button, Dropdown, Nav } from "react-bootstrap";
+import { Button, Dropdown } from "react-bootstrap";
 import { Bookmarks, BracesAsterisk, PencilSquare, Diagram2, Download, Quote, Tags, Upload } from "react-bootstrap-icons";
 import { useParams, useSearchParams } from "react-router-dom";
 import { UserContext } from "../../../../contexts/UserContext";
 import MetricsStrip from "../../../../shared/components/MetricsStrip";
+import PageHeading from "../../../../shared/components/PageHeading";
 import downloadBlob from "../../../../shared/utils/downloadBlob";
 import ClassificationBuild from "./ClassificationBuild";
 import EntitiesBuild from "./components/EntitiesBuild";
@@ -23,18 +24,15 @@ import IntentWorkspace from "./components/IntentWorkspace";
 //   map to); drilling into an entity catalogues every distinct dataset
 //   value that filled it, across all intents and slots.
 //
-// The active tab and drill-ins live in search params (?tab=, ?intent=,
-// ?entity=) so both levels deep-link and the browser's back button walks
-// out of a drill-in naturally.
-//
-// The tab pills stay visible on a drill-in too, so switching between Intents
-// and Entities doesn't require backing out via the breadcrumb first; the
-// Import/Export actions and the overview metrics strip remain overview-only.
-const UnderstandingBuild = () => {
+// The active tab is Build's sidebar (?tab=intents | entities), passed in as
+// `tab`; the drill-ins live in search params too (?intent=, ?entity=) so both
+// levels deep-link and the browser's back button walks out of a drill-in
+// naturally. The Import/Export actions and the overview metrics strip are
+// overview-only.
+const UnderstandingBuild = ({ tab = "intents" }) => {
     const { modelId } = useParams();
     const { user } = useContext(UserContext);
-    const [searchParams, setSearchParams] = useSearchParams();
-    const tab = searchParams.get("tab") === "entities" ? "entities" : "intents";
+    const [searchParams] = useSearchParams();
     const intentId = searchParams.get("intent");
     const entityId = searchParams.get("entity");
     const drilledIn = tab === "intents" ? intentId != null : entityId != null;
@@ -105,63 +103,42 @@ const UnderstandingBuild = () => {
 
     return (
         <>
-            <div className="d-flex align-items-center mt-4">
-                <Nav
-                    variant="pills"
-                    className="small flex-grow-1"
-                    activeKey={tab}
-                    onSelect={(key) => setSearchParams(key === "entities" ? { tab: "entities" } : { tab: "intents" })}
-                >
-                    <Nav.Item>
-                        <Nav.Link eventKey="intents" className="d-inline-flex align-items-center gap-1">
-                            <Bookmarks />
-                            Intents
-                        </Nav.Link>
-                    </Nav.Item>
-                    <Nav.Item>
-                        <Nav.Link eventKey="entities" className="d-inline-flex align-items-center gap-1">
-                            <Tags />
-                            Entities
-                        </Nav.Link>
-                    </Nav.Item>
-                </Nav>
-                {!drilledIn && (
-                    <div className="d-flex gap-2">
-                        <Button
+            {!drilledIn && (
+                <PageHeading title={tab === "intents" ? "Intents" : "Entities"}>
+                    <Button
+                        variant="light"
+                        size="sm"
+                        className="border d-inline-flex align-items-center"
+                        onClick={() => setShowImport(true)}
+                        title="Import a pre-annotated dataset (intents, slots and entities are auto-created)"
+                    >
+                        <Upload className="me-1" />
+                        <span className="d-none d-sm-inline">Import</span>
+                    </Button>
+                    <Dropdown>
+                        <Dropdown.Toggle
                             variant="light"
                             size="sm"
                             className="border d-inline-flex align-items-center"
-                            onClick={() => setShowImport(true)}
-                            title="Import a pre-annotated dataset (intents, slots and entities are auto-created)"
+                            disabled={exporting}
+                            title="Export the dataset with its intents, slots and slot→entity mapping"
                         >
-                            <Upload className="me-1" />
-                            <span className="d-none d-sm-inline">Import</span>
-                        </Button>
-                        <Dropdown>
-                            <Dropdown.Toggle
-                                variant="light"
-                                size="sm"
-                                className="border d-inline-flex align-items-center"
-                                disabled={exporting}
-                                title="Export the dataset with its intents, slots and slot→entity mapping"
-                            >
-                                <Download className="me-1" />
-                                <span className="d-none d-sm-inline">Export</span>
-                            </Dropdown.Toggle>
-                            <Dropdown.Menu align="end">
-                                {NLU_DATASET_FORMATS.map((item) => (
-                                    <Dropdown.Item key={item.value} onClick={() => handleExport(item.value)}>
-                                        {item.label}
-                                    </Dropdown.Item>
-                                ))}
-                            </Dropdown.Menu>
-                        </Dropdown>
-                    </div>
-                )}
-            </div>
+                            <Download className="me-1" />
+                            <span className="d-none d-sm-inline">Export</span>
+                        </Dropdown.Toggle>
+                        <Dropdown.Menu align="end">
+                            {NLU_DATASET_FORMATS.map((item) => (
+                                <Dropdown.Item key={item.value} onClick={() => handleExport(item.value)}>
+                                    {item.label}
+                                </Dropdown.Item>
+                            ))}
+                        </Dropdown.Menu>
+                    </Dropdown>
+                </PageHeading>
+            )}
             {!drilledIn && (
                 <MetricsStrip
-                    className="mt-4"
+                    className="mt-3"
                     items={tab === "intents" ? [
                         { label: "Intents", value: stats.intents, icon: <Bookmarks /> },
                         { label: "Utterances", value: stats.utterances, icon: <Quote /> },

@@ -7,6 +7,7 @@ import { UserContext } from "../../../../../contexts/UserContext";
 import AppPagination from "../../../../../shared/components/AppPagination";
 import DeleteConfirmationModal from "../../../../../shared/components/DeleteConfirmationModal";
 import MetricsStrip from "../../../../../shared/components/MetricsStrip";
+import PageHeading from "../../../../../shared/components/PageHeading";
 import { CardHeading, EmptyMessage } from "../../../../../shared/components/SectionCard";
 
 const PER_PAGE = 10;
@@ -256,27 +257,29 @@ const EntityValues = ({ entityId }) => {
 
     return (
         <>
+            <PageHeading
+                title={entity?.name}
+                color={entity?.color}
+                beside={entity && (
+                    <Badge bg="light" text="dark" className="border fw-normal">
+                        {entity.list_type === "closed" ? "closed list" : "open list"}
+                    </Badge>
+                )}
+            />
             {alert && (
                 <Alert className="mt-4" variant={alert.variant} onClose={() => setAlert(null)} dismissible>
                     {alert.message}
                 </Alert>
             )}
             <MetricsStrip
-                className="mt-4"
+                className="mt-3"
                 items={[
                     { label: "Values", value: values.length, icon: <Quote /> },
                     { label: "Synonyms", value: synonymsTotal, icon: <Tags /> },
                     { label: "Covered spans", value: coveredSpans, icon: <BookmarkStar /> }
                 ]}
             />
-            <div className="d-flex align-items-center mt-4">
-                <div className="flex-grow-1">
-                    {entity && (
-                        <Badge bg="light" text="dark" className="border fw-normal">
-                            {entity.list_type === "closed" ? "closed list" : "open list"}
-                        </Badge>
-                    )}
-                </div>
+            <div className="d-flex align-items-center justify-content-end mt-4">
                 <Button variant="primary" onClick={handleOpenCreate}>
                     <PlusLg />&nbsp;add value
                 </Button>

@@ -4,6 +4,7 @@ import { Alert, Col, Form, Row } from "react-bootstrap";
 import { useParams } from "react-router-dom";
 import { UserContext } from "../../../../contexts/UserContext";
 import AppPagination from "../../../../shared/components/AppPagination";
+import PageHeading from "../../../../shared/components/PageHeading";
 import useDebounce from "../../../../shared/hooks/useDebounce";
 import UtteranceList from "./components/UtteranceList";
 
@@ -15,6 +16,9 @@ const Utterances = () => {
     const { user } = useContext(UserContext);
     const api = useApi();
     const [alert, setAlert] = useState(null);
+    // The label this page drills into; its name heads the page where the
+    // registry's "Labels" heading sits one level up.
+    const [label, setLabel] = useState(null);
     const [query, setQuery] = useState("");
     const [utterances, setUtterances] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -93,6 +97,14 @@ const Utterances = () => {
     }, [debouncedQuery]);
 
     useEffect(() => {
+        if (!user || !modelId || !labelId) return;
+        api.intents.get(modelId, labelId)
+            .then(setLabel)
+            .catch((error) => setAlert({ variant: "danger", message: error?.response?.data?.error || "The label could not be loaded." }));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user, modelId, labelId]);
+
+    useEffect(() => {
         if (user && modelId && labelId) {
             const getUtterances = async () => {
                 setLoading(true);
@@ -116,12 +128,9 @@ const Utterances = () => {
 
     return (
         <>
-            <Row className="mt-4">
-                <Col>
-                    {alert && <Alert variant={alert.variant} onClose={() => setAlert(null)} dismissible>{alert.message}</Alert>}
-                </Col>
-            </Row>
-            <Row className="mt-4">
+            <PageHeading title={label?.name} color={label?.color} />
+            {alert && <Alert className="mt-4" variant={alert.variant} onClose={() => setAlert(null)} dismissible>{alert.message}</Alert>}
+            <Row className="mt-3">
                 <Col>
                     <Form>
                         <Form.Control

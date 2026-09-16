@@ -6,6 +6,7 @@ import { useParams } from "react-router-dom";
 import { UserContext } from "../../../../../contexts/UserContext";
 import DeleteConfirmationModal from "../../../../../shared/components/DeleteConfirmationModal";
 import MetricsStrip from "../../../../../shared/components/MetricsStrip";
+import PageHeading from "../../../../../shared/components/PageHeading";
 import SplitPane from "../../../../../shared/components/SplitPane";
 import { parseInline, formatInline } from "../../../../../shared/utils/inline";
 import useDebounce from "../../../../../shared/hooks/useDebounce";
@@ -22,11 +23,13 @@ const PER_PAGE = 10;
 // components — with slots standing in for entities: the registry chips
 // (reusing EntitiesPanel) show each slot's mapped entity, and the "entities"
 // fed to the annotation picker are this intent's slots, each inheriting its
-// entity colour. The intent name shows in the page breadcrumb (Model.jsx).
+// entity colour. The intent's name heads the page, where the registry's
+// "Intents" heading sits one level up.
 const IntentWorkspace = ({ intentId }) => {
     const { modelId } = useParams();
     const { user } = useContext(UserContext);
     const [alert, setAlert] = useState(null);
+    const [intent, setIntent] = useState(null);
 
     const [slots, setSlots] = useState([]);
     const [slotsLoading, setSlotsLoading] = useState(false);
@@ -266,6 +269,12 @@ const IntentWorkspace = ({ intentId }) => {
     // whenever the utterance total or a slot/annotation change makes them
     // stale — covers create, delete, annotate, edit and slot changes.
     useEffect(() => {
+        if (!user || !modelId || !intentId) return;
+        api.intents.get(modelId, intentId).then(setIntent).catch(showError);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user, modelId, intentId]);
+
+    useEffect(() => {
         if (user && modelId && intentId) {
             const getStats = async () => {
                 try {
@@ -348,13 +357,14 @@ const IntentWorkspace = ({ intentId }) => {
 
     return (
         <>
+            <PageHeading title={intent?.name} color={intent?.color} />
             {alert && (
                 <Alert className="mt-4" variant={alert.variant} onClose={() => setAlert(null)} dismissible>
                     {alert.message}
                 </Alert>
             )}
             <MetricsStrip
-                className="mt-4"
+                className="mt-3"
                 items={[
                     { label: "Slots", value: stats.slots, icon: <Diagram2 /> },
                     { label: "Utterances", value: stats.utterances, icon: <Quote /> },
