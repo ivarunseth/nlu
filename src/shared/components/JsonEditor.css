@@ -1,0 +1,222 @@
+/* JsonEditor — colours come from the --app-json-* tokens in index.css (the
+   same palette the Test tab's JsonView uses) and Bootstrap's semantic tokens,
+   so the editor follows data-bs-theme with no dark-mode rules of its own.
+
+   The tree is virtualised: every line is exactly --je-line tall (the JS
+   LINE_HEIGHT mirrors it) and never wraps, so the scroll height is
+   lines × height and only the visible slice is in the DOM. */
+.je {
+  --je-line: 22px;
+  --je-indent: 1.35rem;
+  font-family: var(--app-font-mono);
+  font-size: var(--app-text-sm);
+  color: var(--bs-body-color);
+  background: var(--bs-body-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius);
+  padding: 0.5rem 1rem;
+  /* Scrolls on both axes inside whatever height the caller gives it; rows
+     never wrap, so a long utterance runs off to the right rather than
+     breaking the tree's indentation. */
+  overflow: auto;
+}
+
+.je-canvas {
+  position: relative;
+  min-width: max-content;
+}
+
+.je-line {
+  display: flex;
+  align-items: center;
+  height: var(--je-line);
+  line-height: var(--je-line);
+  white-space: nowrap;
+}
+
+/* Every line reserves a gutter on the left so an array item's × has somewhere
+   to sit; object rows leave it empty, which keeps siblings aligned. */
+.je-gutter {
+  flex: 0 0 1.1rem;
+  align-self: stretch;
+  position: relative;
+}
+
+/* One guide per depth: the indent, with the tree's hairline on its left. */
+.je-guide {
+  flex: 0 0 var(--je-indent);
+  align-self: stretch;
+  border-left: 1px solid var(--bs-border-color-translucent);
+}
+
+/* The caret slot — a toggle on container lines, empty on the rest. */
+.je-caret {
+  flex: 0 0 1rem;
+  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.6em;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--bs-secondary-color);
+}
+
+.je-key {
+  color: var(--app-json-key);
+  /* A flex line trims a trailing space, so the gap after the colon is a margin. */
+  margin-right: 0.5ch;
+}
+
+.je-punct {
+  color: var(--bs-secondary-color);
+}
+
+.je-hint {
+  color: var(--bs-secondary-color);
+  font-style: italic;
+}
+
+.je-summary {
+  cursor: pointer;
+  border-radius: 0.25rem;
+  padding: 0 0.25rem;
+  /* Pull the hover pad back so the trailing comma sits flush against `}`. */
+  margin: 0 -0.25rem;
+}
+.je-summary:hover,
+.je-summary:focus-visible {
+  background: var(--bs-secondary-bg);
+  outline: none;
+}
+
+/* Leaves */
+.je-leaf {
+  border-radius: 0.25rem;
+  padding: 0 0.25rem;
+  margin: 0 -0.25rem;
+  cursor: text;
+}
+.je-leaf:hover,
+.je-leaf:focus-visible {
+  background: var(--bs-secondary-bg);
+  box-shadow: 0 0 0 1px var(--bs-border-color);
+  outline: none;
+}
+.je-string { color: var(--app-json-string); }
+.je-number { color: var(--app-json-number); }
+.je-boolean { color: var(--app-json-boolean); cursor: pointer; }
+.je-null { color: var(--app-json-null); font-style: italic; }
+
+.je-readonly {
+  cursor: default;
+  opacity: 0.55;
+}
+.je-readonly:hover {
+  background: none;
+  box-shadow: none;
+}
+
+/* Inline editing */
+.je-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.je-input {
+  font: inherit;
+  line-height: inherit;
+  height: calc(var(--je-line) - 2px);
+  color: inherit;
+  background: var(--bs-body-bg);
+  border: 1px solid var(--bs-primary);
+  border-radius: 0.25rem;
+  padding: 0 0.3rem;
+  min-width: 3ch;
+  max-width: 80ch;
+  box-shadow: 0 0 0 0.2rem var(--bs-focus-ring-color);
+  outline: none;
+}
+.je-input.je-number {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.je-swatch,
+.je-swatch-input {
+  display: inline-block;
+  width: 0.85em;
+  height: 0.85em;
+  border-radius: 0.2rem;
+  border: 1px solid var(--bs-border-color);
+  vertical-align: -0.1em;
+  margin-right: 0.35rem;
+}
+.je-swatch-input {
+  padding: 0;
+  margin-right: 0;
+  cursor: pointer;
+  background: none;
+}
+.je-swatch-input::-webkit-color-swatch-wrapper { padding: 0; }
+.je-swatch-input::-webkit-color-swatch { border: none; border-radius: 0.15rem; }
+
+/* Toggle, remove and add affordances */
+.je-toggle,
+.je-remove,
+.je-add {
+  font: inherit;
+  line-height: 1;
+  border: 0;
+  background: none;
+  color: var(--bs-secondary-color);
+  padding: 0;
+  border-radius: 0.25rem;
+}
+.je-toggle {
+  cursor: pointer;
+}
+.je-toggle:hover,
+.je-remove:hover,
+.je-add:hover {
+  color: var(--bs-body-color);
+}
+.je-toggle:focus-visible,
+.je-remove:focus-visible,
+.je-add:focus-visible {
+  outline: 2px solid var(--bs-focus-ring-color);
+  outline-offset: 1px;
+}
+
+.je-remove {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.7em;
+  width: 1rem;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.je-line:hover .je-remove,
+.je-remove:focus-visible {
+  opacity: 1;
+}
+.je-remove:hover {
+  color: var(--bs-danger);
+}
+
+.je-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.9em;
+  height: calc(var(--je-line) - 4px);
+  padding: 0 0.4rem;
+  margin-left: -0.4rem;
+  border: 1px dashed var(--bs-border-color);
+}
+.je-add:hover {
+  border-color: var(--bs-primary);
+  color: var(--bs-primary);
+}

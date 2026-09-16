@@ -6,6 +6,7 @@ import values from "./values";
 import slots from "./slots";
 import utterances from "./utterances";
 import tags from "./tags";
+import dataset from "./dataset";
 import trainings from "./trainings";
 import instances from "./instances";
 import analytics from "./analytics";
@@ -23,6 +24,7 @@ const createApi = (token, onUnauthorized) => {
         slots: slots(client),
         utterances: utterances(client),
         tags: tags(client),
+        dataset: dataset(client),
         trainings: trainings(client),
         instances: instances(client),
         analytics: analytics(client),
