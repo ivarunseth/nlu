@@ -1,39 +1,67 @@
-import React from 'react';
-import { Container, Row, Col } from 'react-bootstrap';
-import { Github, Twitter, Linkedin } from 'react-bootstrap-icons';
+import { useNavigate } from "react-router-dom";
+import { useTrainings, trainingProgress } from "../contexts/TrainingContext";
+
+// The page's foot: a bare full-width strip that closes the layout, carrying
+// nothing — until a training runs. Then it hosts one row per run the user
+// has going, centred: model, version, where it is, and a bar filling left to
+// right along the row's bottom edge. Metrics stay on the History page, which
+// a row links to. Rows go when their runs finish (after lingering a few
+// seconds with the outcome), and the strip returns to bare.
+const STATUS_LABEL = {
+    PENDING: "queued",
+    RECEIVED: "starting",
+    SUCCESS: "completed",
+    FAILURE: "failed",
+    ABORTED: "stopped",
+    REVOKED: "cancelled"
+};
+
+const describe = (run) => {
+    if (run.status === "STARTED") {
+        const { epoch, epochs } = run.progress || {};
+        if (epoch && epochs) return `epoch ${epoch} / ${epochs}`;
+        return "training";
+    }
+    return STATUS_LABEL[run.status] || run.status.toLowerCase();
+};
 
 const Footer = () => {
+    const trainings = useTrainings();
+    const navigate = useNavigate();
+
     return (
-        <footer className="bg-body-tertiary border-top mt-auto py-4">
-            <Container fluid>
-                <Row className="align-items-center gy-3">
-                    <Col xs={12} md={4} className="text-center text-md-start">
-                        <span className="text-muted small">
-                            © {new Date().getFullYear()} classify.ai. All rights reserved.
+        <footer className="app-footer" role={trainings.length ? "status" : undefined} aria-live="polite">
+            {trainings.map((run) => {
+                const fraction = trainingProgress(run);
+                const done = ["SUCCESS", "FAILURE", "ABORTED", "REVOKED"].includes(run.status);
+                const tone = run.status === "SUCCESS" ? "success" : run.status === "FAILURE" ? "danger" : done ? "muted" : "primary";
+                return (
+                    <button
+                        key={run.taskId}
+                        type="button"
+                        className={`training-strip-row training-strip-${tone}`}
+                        onClick={() => navigate(`/models/${run.modelId}/history/${run.trainingId}`)}
+                        title="Open this run in History"
+                    >
+                        <span className="training-strip-dot" aria-hidden="true" />
+                        <span className="training-strip-text">
+                            <span className="fw-medium">{run.modelName}</span>
+                            <span className="training-strip-sep">·</span>
+                            <span className="font-monospace">v{Number(run.version).toFixed(1)}</span>
+                            <span className="training-strip-sep">·</span>
+                            <span>{describe(run)}</span>
                         </span>
-                    </Col>
-                    <Col xs={12} md={4} className="text-center">
-                        <div className="d-flex justify-content-center gap-3">
-                            <a href="/" className="text-muted text-decoration-none small">Privacy Policy</a>
-                            <a href="/" className="text-muted text-decoration-none small">Terms of Service</a>
-                            <a href="/" className="text-muted text-decoration-none small">Contact</a>
-                        </div>
-                    </Col>
-                    <Col xs={12} md={4} className="text-center text-md-end">
-                        <div className="d-flex justify-content-center justify-content-md-end gap-3">
-                            <a href="https://github.com" className="text-muted" aria-label="Github">
-                                <Github size={18} />
-                            </a>
-                            <a href="https://twitter.com" className="text-muted" aria-label="Twitter">
-                                <Twitter size={18} />
-                            </a>
-                            <a href="https://linkedin.com" className="text-muted" aria-label="Linkedin">
-                                <Linkedin size={18} />
-                            </a>
-                        </div>
-                    </Col>
-                </Row>
-            </Container>
+                        <span className="training-strip-pct font-monospace">
+                            {fraction === null ? "" : `${Math.round(fraction * 100)}%`}
+                        </span>
+                        <span
+                            className={`training-strip-bar${fraction === null ? " training-strip-bar-indeterminate" : ""}`}
+                            style={fraction === null ? undefined : { width: `${fraction * 100}%` }}
+                            aria-hidden="true"
+                        />
+                    </button>
+                );
+            })}
         </footer>
     );
 };

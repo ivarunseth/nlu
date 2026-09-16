@@ -58,7 +58,7 @@ const ForgotPassword = () => {
     }, [location.state]);
 
     return (
-        <Container fluid className="d-flex flex-column justify-content-center align-items-center vh-100">
+        <Container fluid className="d-flex flex-column justify-content-center align-items-center app-fill">
             <Row style={{ width: "25rem" }}>
                 <Col>
                     {alert && <Alert variant={alert.variant} onClose={() => setAlert(null)} dismissible>{alert.message}</Alert>}

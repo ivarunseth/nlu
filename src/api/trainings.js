@@ -1,6 +1,9 @@
 import { data } from "./client";
 
 export default (client) => ({
+    // Every run of the caller's still pending or in progress, across models —
+    // what the app-wide training strip seeds itself from.
+    active: () => client.get("/api/trainings/active").then(data),
     list: (modelId, params) => client.get(`/api/models/${modelId}/trainings`, { params }).then(data),
     get: (modelId, trainingId, params) =>
         client.get(`/api/models/${modelId}/trainings/${trainingId}`, { params }).then(data),
