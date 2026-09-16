@@ -211,9 +211,11 @@ const ClassificationBuild = ({ noun = "label", labelLink, onMutate }) => {
     return (
         <>
             {alert && <Alert className="mt-4" variant={alert.variant} onClose={() => setAlert(null)} dismissible>{alert.message}</Alert>}
+            {/* Create, filters and search share one row at every width, as
+                on the Entities tab; the search box takes what is left. */}
             <Row className="mt-4 g-2 align-items-center">
-                <Col xs={12} md="auto">
-                    <ButtonToolbar>
+                <Col xs="auto">
+                    <ButtonToolbar className="flex-nowrap">
                         <ButtonGroup className="me-2">
                             <Button
                                 variant="primary"

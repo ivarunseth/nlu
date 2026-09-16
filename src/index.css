@@ -281,10 +281,199 @@ code {
 .page-context-bar {
   min-height: 48px;
 }
+/* The model pages' bar carries a hairline under the breadcrumb and section
+   nav. It bleeds to the page edges like the header above it: the row's
+   negative margin swallows the container's padding, and its own padding
+   hands the columns back exactly what they lost, so content stays put. */
+.page-context-bar-ruled {
+  --bs-gutter-x: 1rem;
+  margin-left: -0.75rem;
+  margin-right: -0.75rem;
+  padding-left: 0.25rem;
+  padding-right: 0.25rem;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+
+/* Build's rail: the tab column beside the workspace. A hairline separates it
+   from the content on md+, where it is sticky; below md it becomes a
+   segmented strip above the workspace. Every colour is a Bootstrap 5.3
+   semantic token, so it follows data-bs-theme with no dark-mode rules. */
+.build-rail {
+  --rail-radius: 0.5rem;
+}
+.build-rail-nav {
+  display: flex;
+  gap: 0.125rem;
+}
+.build-rail-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 0.45rem 0.75rem;
+  border: 0;
+  border-radius: var(--rail-radius);
+  background: transparent;
+  color: var(--bs-secondary-color);
+  font-size: var(--bs-body-font-size);
+  font-weight: 500;
+  line-height: 1.25;
+  text-align: left;
+  white-space: nowrap;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.build-rail-item svg {
+  flex: 0 0 auto;
+  font-size: 1em;
+  opacity: 0.85;
+}
+/* The label carries its own gap and folds away on collapse, so the icon
+   before it never moves or resizes — only the label and the rail's width
+   animate. */
+.build-rail-label {
+  display: inline-block;
+  max-width: 8rem;
+  margin-left: 0.6rem;
+  overflow: hidden;
+  white-space: nowrap;
+  opacity: 1;
+  transition: max-width 0.15s ease, margin-left 0.15s ease, opacity 0.1s ease;
+}
+.build-rail-item:hover {
+  background: var(--bs-tertiary-bg);
+  color: var(--bs-body-color);
+}
+.build-rail-item:focus-visible {
+  outline: 2px solid var(--bs-focus-ring-color);
+  outline-offset: 1px;
+}
+.build-rail-item[aria-current="page"] {
+  background: var(--bs-primary-bg-subtle);
+  color: var(--bs-primary-text-emphasis);
+}
+.build-rail-item[aria-current="page"] svg {
+  opacity: 1;
+}
+/* The collapse control: an item-shaped button pinned to the rail's foot,
+   md+ only. Sticky to the viewport bottom while the page runs past it. */
+.build-rail-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  align-self: flex-start;
+  /* auto above pins it to the foot; the rem below keeps it off the footer. */
+  margin: auto 0 1rem;
+  padding: 0.45rem 0;
+  border: 0;
+  border-radius: var(--rail-radius);
+  background: transparent;
+  color: var(--bs-secondary-color);
+  font-size: var(--bs-body-font-size);
+  line-height: 1.25;
+  text-align: left;
+  white-space: nowrap;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.build-rail-toggle svg {
+  flex: 0 0 auto;
+  font-size: 1em;
+}
+.build-rail-toggle:hover {
+  background: var(--bs-tertiary-bg);
+  color: var(--bs-body-color);
+}
+.build-rail-toggle:focus-visible {
+  outline: 2px solid var(--bs-focus-ring-color);
+  outline-offset: 1px;
+}
+
+@media (min-width: 768px) {
+  /* .row > * sets the column width; the rail is a fixed 10.5rem so every
+     kind's tab list lines up the same, whatever its longest label. */
+  .row > .build-rail {
+    display: flex;
+    flex-direction: column;
+    width: 10.5rem;
+    padding-right: 1rem;
+    border-right: 1px solid var(--bs-border-color-translucent);
+    align-self: stretch;
+    transition: width 0.15s ease;
+  }
+  .build-rail-toggle {
+    display: flex;
+    position: sticky;
+    bottom: 1rem;
+  }
+  /* Collapsed: an icon strip sized from the item outward — the column's
+     own left gutter (g-md-4: 0.75rem), one item (0.75rem + 1rem icon +
+     0.75rem), the rail's right padding (1rem) and its hairline. Icons keep
+     their size and x position; only the labels fold and the width shrinks,
+     so the transition reads as the rail sliding shut. */
+  .row > .build-rail.build-rail-collapsed {
+    width: calc(4.25rem + 1px);
+  }
+  .build-rail-collapsed .build-rail-label {
+    max-width: 0;
+    margin-left: 0;
+    opacity: 0;
+  }
+
+  /* The workspaces open with an mt-4 heading row; this offset centres the
+     first tab on that heading. */
+  .build-rail-sticky {
+    position: sticky;
+    top: 1.5rem;
+    margin-top: 1.25rem;
+  }
+  .build-rail-nav {
+    flex-direction: column;
+  }
+  /* The active row carries a slim accent bar in its left inset. */
+  .build-rail-item {
+    position: relative;
+  }
+  .build-rail-item[aria-current="page"]::before {
+    content: "";
+    position: absolute;
+    left: 0.25rem;
+    top: 0.55rem;
+    bottom: 0.55rem;
+    width: 3px;
+    border-radius: 3px;
+    background: var(--bs-primary);
+  }
+}
 
 @media (max-width: 767.98px) {
-  .page-context-bar {
-    min-height: 92px;
+  /* The strip sits directly above the workspace: the row's vertical gutter
+     would stack with the workspace's own mt-4, so the strip's column drops it. */
+  .row > .build-rail + * {
+    margin-top: 0;
+  }
+  /* Segmented control: a tinted track with the active tab lifted out of it. */
+  .build-rail-nav {
+    flex-direction: row;
+    gap: 0.25rem;
+    padding: 0.25rem;
+    border-radius: calc(var(--rail-radius) + 0.25rem);
+    background: var(--bs-tertiary-bg);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .build-rail-nav::-webkit-scrollbar {
+    display: none;
+  }
+  .build-rail-item {
+    width: auto;
+    flex: 1 1 auto;
+    justify-content: center;
+    padding: 0.4rem 0.9rem;
+  }
+  .build-rail-item[aria-current="page"] {
+    background: var(--bs-body-bg);
+    color: var(--bs-body-color);
+    box-shadow: var(--bs-box-shadow-sm);
   }
 }
 

@@ -1,14 +1,15 @@
 import { lazy, Suspense, useContext, useEffect, useState } from 'react';
-import { Row, Col, Nav, Navbar } from 'react-bootstrap';
+import { Row, Col, Dropdown, Nav } from 'react-bootstrap';
 import { Translate, ClockHistory, ClipboardCheck, RocketTakeoff, Activity, Gear } from 'react-bootstrap-icons';
 import { Routes, Route, Link, useLocation, useParams } from 'react-router-dom';
-import { SocketProvider } from '../../contexts/SocketContext';
 import { ModelContext, ModelProvider } from '../../contexts/ModelContext';
 import RouteFallback from '../../shared/components/RouteFallback';
 import RouteErrorBoundary from '../../shared/components/RouteErrorBoundary';
 import PageShell from '../../shared/components/PageShell';
 import { UserContext } from '../../contexts/UserContext';
 import { useApi } from '../../contexts/ApiContext';
+
+import { buildTabFor } from './routes/studio/buildTabs';
 
 const Build = lazy(() => import('./routes/studio/Build'));
 const Utterances = lazy(() => import('./routes/utterances/Utterances'));
@@ -23,7 +24,6 @@ const TrainingVersion = lazy(() => import('./routes/history/History').then((modu
 
 // Crumbs derived from route params arrive lower case; the rest of the
 // navigation is Title Case, so bring them onto the same convention.
-const capitalise = (value) => (value ? value.charAt(0).toUpperCase() + value.slice(1) : value);
 
 const SECTIONS = {
     build: { icon: <Translate />, label: 'Build' },
@@ -54,13 +54,18 @@ const ModelContent = () => {
     // other detail (a classification label or an intent) is an intent row.
     const detailLabelId = labelId || intentId || entityId;
     const detailResource = !labelId && !intentId && entityId ? 'entities' : 'intents';
-    // A language understanding Build breadcrumb names the active registry as a
-    // plain-text suffix: build / intents (or entities), and on a drill-in
-    // build / intents / <name> — `build` is the only link, and it carries the
-    // tab so walking back out lands on the same registry.
-    const buildTab = activeSection === 'build' && model?.kind === 'natural_language_understanding'
-        ? (entityId || searchParams.get('tab') === 'entities' ? 'entities' : 'intents')
+    // The Build breadcrumb names the sidebar tab as a plain-text suffix:
+    // build / intents (or labels, annotations, entities, json), and on a
+    // drill-in build / intents / <name> — `build` is the only link, and it
+    // carries the tab so walking back out lands on the same registry. An
+    // entity drill-in on a named entity recognition model sits under its
+    // Annotations tab, which is where its registry lives.
+    const buildTab = activeSection === 'build' && model
+        ? (entityId && model.kind === 'natural_language_understanding'
+            ? 'entities'
+            : buildTabFor(model.kind, searchParams.get('tab')).key)
         : null;
+    const buildTabLabel = buildTab ? buildTabFor(model.kind, buildTab).label : null;
     const detailParentLink = buildTab
         ? `${modelBasePath}/build?tab=${buildTab}`
         : `${modelBasePath}/${activeSection}`;
@@ -104,8 +109,11 @@ const ModelContent = () => {
 
     return (
         <PageShell contextBar={(
-            <Row className='page-context-bar align-items-center gx-3 row-gap-2'>
-                <Col xs={12} lg={4} xl={5} className='d-flex align-items-center'>
+            <Row className='page-context-bar page-context-bar-ruled align-items-center row-gap-2 py-2'>
+                {/* One row at every width: breadcrumb left, section switcher
+                    right. Below lg the switcher is a single button, so it
+                    shares the breadcrumb's line instead of taking its own. */}
+                <Col xs lg={4} xl={5} className='d-flex align-items-center'>
                     <nav
                         aria-label='breadcrumb'
                         className='d-flex align-items-center flex-wrap gap-1 lh-sm'
@@ -128,7 +136,7 @@ const ModelContent = () => {
                                 {buildTab && (
                                     <>
                                         <span className='text-body'>
-                                            {capitalise(buildTab)}
+                                            {buildTabLabel}
                                         </span>
                                         <span className='text-muted px-1'>/</span>
                                     </>
@@ -146,7 +154,7 @@ const ModelContent = () => {
                                     <>
                                         <span className='text-muted px-1'>/</span>
                                         <span className='text-body'>
-                                            {capitalise(buildTab)}
+                                            {buildTabLabel}
                                         </span>
                                     </>
                                 )}
@@ -154,36 +162,55 @@ const ModelContent = () => {
                         )}
                     </nav>
                 </Col>
-                <Col xs={12} lg={8} xl={7} className='d-flex align-items-center'>
-                    <Navbar expand='lg' collapseOnSelect className='p-0 w-100'>
-                        <Navbar.Toggle aria-controls='model-subnav-collapse' className='border-0 ms-auto'>
-                            <span className='navbar-toggler-icon' />
-                            {' '}
+                <Col xs='auto' lg={8} xl={7} className='d-flex align-items-center justify-content-end'>
+                    {/* Section switcher. On lg+ the six sections are an
+                        underline tab strip; below that they fold into one
+                        compact button naming the current section, which
+                        opens an overlay menu — no stacked tabs pushing the
+                        page down. */}
+                    <Dropdown className='d-lg-none' align='end'>
+                        <Dropdown.Toggle
+                            variant='light'
+                            size='sm'
+                            className='border d-inline-flex align-items-center gap-2'
+                            id='model-section-switcher'
+                        >
                             {SECTIONS[activeSection]?.icon}
-                            {' '}
-                            {SECTIONS[activeSection]?.label}
-                        </Navbar.Toggle>
-                        <Navbar.Collapse id='model-subnav-collapse'>
-                            <Nav
-                                fill
-                                variant='underline'
-                                activeKey={activeSection}
-                                className='justify-content-lg-end flex-nowrap overflow-auto w-100'
-                            >
-                                {Object.entries(SECTIONS).map(([key, { icon, label }]) => (
-                                    <Nav.Item key={key}>
-                                        <Nav.Link
-                                            eventKey={key}
-                                            as={Link}
-                                            to={`${modelBasePath}/${key}`}
-                                        >
-                                            {icon}&nbsp;{label}
-                                        </Nav.Link>
-                                    </Nav.Item>
-                                ))}
-                            </Nav>
-                        </Navbar.Collapse>
-                    </Navbar>
+                            {SECTIONS[activeSection]?.label || activeSection}
+                        </Dropdown.Toggle>
+                        <Dropdown.Menu className='shadow-sm'>
+                            {Object.entries(SECTIONS).map(([key, { icon, label }]) => (
+                                <Dropdown.Item
+                                    key={key}
+                                    as={Link}
+                                    to={`${modelBasePath}/${key}`}
+                                    active={key === activeSection}
+                                    className='d-flex align-items-center gap-2'
+                                >
+                                    {icon}
+                                    {label}
+                                </Dropdown.Item>
+                            ))}
+                        </Dropdown.Menu>
+                    </Dropdown>
+                    <Nav
+                        fill
+                        variant='underline'
+                        activeKey={activeSection}
+                        className='d-none d-lg-flex justify-content-lg-end flex-nowrap overflow-auto w-100'
+                    >
+                        {Object.entries(SECTIONS).map(([key, { icon, label }]) => (
+                            <Nav.Item key={key}>
+                                <Nav.Link
+                                    eventKey={key}
+                                    as={Link}
+                                    to={`${modelBasePath}/${key}`}
+                                >
+                                    {icon}&nbsp;{label}
+                                </Nav.Link>
+                            </Nav.Item>
+                        ))}
+                    </Nav>
                 </Col>
             </Row>
         )}>
@@ -192,14 +219,15 @@ const ModelContent = () => {
             <RouteErrorBoundary>
             <Suspense fallback={<RouteFallback />}>
                 <Routes>
-                    <Route path="build" element={<Build />} />
+                    <Route path="build" element={<Build />}>
+                        <Route path=":labelId/utterances" element={<Utterances />} />
+                    </Route>
                     <Route path="history" element={<History />} />
                     <Route path="history/:trainingId" element={<TrainingVersion />} />
                     <Route path="test" element={<Test />} />
                     <Route path="publish" element={<Publish />} />
                     <Route path="analyse" element={<Analyse />} />
                     <Route path="settings" element={<Settings />} />
-                    <Route path="build/:labelId/utterances" element={<Utterances />} />
                 </Routes>
             </Suspense>
             </RouteErrorBoundary>
@@ -211,9 +239,7 @@ const Model = () => {
 
     return (
         <ModelProvider>
-            <SocketProvider>
-                <ModelContent />
-            </SocketProvider>
+            <ModelContent />
         </ModelProvider>
     );
 }
