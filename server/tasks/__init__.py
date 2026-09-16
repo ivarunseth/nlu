@@ -131,6 +131,9 @@ class WorkerTask(Task):
     
     abstract = True
     lock_key = 'celery-task-lock-{}'
+    # Tasks that also report into their model's room (see push_status); the
+    # training task opts in, serving tasks stay on their task room only.
+    broadcast_model_room = False
 
     def AsyncResult(self, task_id):
         return WorkerResult(task_id, backend=self.backend)
@@ -151,12 +154,24 @@ class WorkerTask(Task):
         return True
 
     def push_status(self, extended=False):
-        self.socketio.emit(
-            'status', 
-            self.AsyncResult(self.request.id).to_dict(extended), 
-            room=self.request.id, 
-            namespace='/'
-        )
+        payload = self.AsyncResult(self.request.id).to_dict(extended)
+        # The task room feeds the page that owns this run (History, Publish);
+        # the model room feeds the app-wide training strip, which must keep
+        # receiving after such a page leaves the task room on unmount — both
+        # share one browser socket, and rooms are per socket.
+        rooms = [self.request.id]
+        model_room = self.model_room() if self.broadcast_model_room else None
+        if model_room:
+            rooms.append(model_room)
+        for room in rooms:
+            self.socketio.emit('status', payload, room=room, namespace='/')
+
+    def model_room(self):
+        """The ``model:<id>`` room, for tasks whose first argument is a ``<model_id>/<version>`` path."""
+        args = self.request.args or ()
+        if args and isinstance(args[0], str) and args[0]:
+            return f'model:{args[0].split("/")[0]}'
+        return None
     
     def before_start(self, *args, **kwargs):
         super().before_start(*args, **kwargs)

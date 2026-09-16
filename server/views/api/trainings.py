@@ -10,7 +10,7 @@ from ...tasks import training as training_tasks
 from ...utils.query import (apply_sort, apply_date_range, sort_arguments,
                             list_argument, sort_position)
 
-from ... import db, store
+from ... import db, store, socketio
 from . import api
 
 
@@ -95,6 +95,57 @@ def to_epoch_from_display(value):
     except (ValueError, TypeError):
         return None
     return int(moment.timestamp())
+
+
+def user_room(user):
+    """The per-user Socket.IO room the app-wide training strip listens on."""
+    return f'user:{user.id}'
+
+
+def announce_training(training, event, **extra):
+    """
+    Tell the owner's open tabs that a run started or stopped, so the training
+    strip can (un)subscribe to the model's room without polling. Progress
+    travels on that model room (see WorkerTask.push_status) — but a stop does
+    not: it is written into the result backend here, and the worker then
+    drops the run with ``Ignore``, which pushes nothing. So ``stopped``
+    carries the final status itself.
+    """
+    socketio.emit('training', {
+        'event': event,
+        'model_id': training.model_id,
+        'model_name': training.model.name,
+        'training_id': training.id,
+        'task_id': training.task_id,
+        'version': float(training.version),
+        **extra
+    }, room=user_room(g.current_user), namespace='/')
+
+
+@api.get('/trainings/active')
+@token_auth.login_required
+def get_active_trainings():
+    """
+    Every run of the caller's that is still pending or in progress, across
+    models, with the task's kwargs (for ``epochs``) and current result (the
+    live history and progress) so the training strip can draw the bar on a
+    fresh page load without waiting for the next status push.
+    """
+    active = []
+    for training in Training.query \
+            .filter(Training.model.has(user_id=g.current_user.id)) \
+            .filter(Training.task_id.isnot(None)).all():
+        task = training._get_task()
+        if task is None or task.state not in TRAINING_ACTIVE_STATES:
+            continue
+        # A result row the backend no longer holds also reads as PENDING; a
+        # genuinely queued run has its name stamped by start_training.
+        if task.state == states.PENDING and not task.name:
+            continue
+        item = training.to_dict(extended=True)
+        item['model_name'] = training.model.name
+        active.append(item)
+    return {'trainings': active}, 200
 
 
 @api.get('/models/<modelId>/trainings')
@@ -223,6 +274,7 @@ def start_training(modelId, trainingId):
         retries=0,
         queue='training'
     )
+    announce_training(training, 'started', epochs=kwargs.get('epochs'))
     return training.to_dict(extended=True), 200
 
 
@@ -240,6 +292,7 @@ def stop_training(modelId, trainingId):
         abort(400, 'Training has already finished')
     training.stop(task)
     db.session.commit()
+    announce_training(training, 'stopped', status=task.state)
     return training.to_dict(extended=True), 200
 
 

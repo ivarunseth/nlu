@@ -49,6 +49,9 @@ class StatusCallback(tf.keras.callbacks.Callback):
 
         self.history = {}
         self.summary = None
+        # Where the run is inside the current epoch, for the live progress
+        # bar: batches advance it between the per-epoch history points.
+        self.progress = None
         self.last_update = 0
 
     def _push(self):
@@ -57,6 +60,7 @@ class StatusCallback(tf.keras.callbacks.Callback):
             meta={
                 "history": self.history,
                 "summary": self.summary,
+                "progress": self.progress,
             },
         )
 
@@ -121,11 +125,31 @@ class StatusCallback(tf.keras.callbacks.Callback):
             return type(data)(StatusCallback._slice(value, start, stop) for value in data)
         return data[start:stop]
 
+    def on_epoch_begin(self, epoch, logs=None):
+        self.progress = {
+            "epoch": epoch + 1,
+            "epochs": self.params.get("epochs"),
+            "batch": 0,
+            "batches": self.params.get("steps"),
+        }
+
+    def on_train_batch_end(self, batch, logs=None):
+        if self.progress is None:
+            return
+        self.progress["batch"] = batch + 1
+        now = time.time()
+        if now - self.last_update >= self.min_update_interval:
+            self._push()
+            self.last_update = now
+
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
 
         for key, value in logs.items():
             self.history.setdefault(key, []).append(float(value))
+
+        if self.progress is not None:
+            self.progress["batch"] = self.progress.get("batches") or self.progress["batch"]
 
         now = time.time()
         epochs = self.params.get("epochs")

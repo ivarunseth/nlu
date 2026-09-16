@@ -6,7 +6,7 @@ from .. import store
 from . import sage
 
 
-@sage.task(bind=True)
+@sage.task(bind=True, broadcast_model_room=True)
 def train(self, path, model_type, architecture='deep_neural_network', random_state=42, \
           test_split=0.2, validation_split=0.1, epochs=200, batch_size=32, \
           early_stopping=True, monitor='val_loss', patience=10, \
