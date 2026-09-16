@@ -12,7 +12,7 @@ from flask_socketio import SocketIO
 api = Blueprint('api', __name__)
 
 
-from . import instances, users, tokens, models, intents, entities, slots, values, utterances, tags, trainings, analytics  # noqa: E402,F401
+from . import instances, users, tokens, models, intents, entities, slots, values, utterances, tags, dataset, trainings, analytics  # noqa: E402,F401
 
 from ...utils.common import add_request, requests_per_second  # noqa: E402
 

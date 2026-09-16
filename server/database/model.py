@@ -2,6 +2,8 @@ import io
 import csv
 import uuid
 
+from collections import defaultdict
+
 from datetime import timezone
 
 import pandas as pd
@@ -24,6 +26,8 @@ from .entity import Entity
 from .utterance import Utterance
 from .tag import Tag
 from .slot import Slot
+from .value import Value
+from .synonym import Synonym
 from .training import Training
 from .environment import Environment
 from .instance import Instance
@@ -559,6 +563,111 @@ class Model(db.Model):
         if not deployed:
             return None
         return max(deployed, key=lambda name: rank[name])
+
+    def dataset_to_dict(self):
+        """
+        The whole authored dataset as one document — what the Build page's
+        JSON view edits and ``apply_dataset`` (views/api/dataset.py) writes
+        back. Only authored fields travel: ``id`` (read-only in the editor,
+        so a save can tell edited from new), names, colours, descriptions,
+        the value catalogues, and each utterance's text with its spans
+        rendered as the Build page's ``{name: value}`` markup — offsets are
+        how spans are stored, not how they are authored, so they never
+        appear. Bookkeeping (``model_id``, links, timestamps, counts, the
+        derived IOB tags) is left out, and rows reference each other by
+        *name* (``entity``) like the export formats do.
+
+        Classification and language understanding nest utterances under
+        their label / intent; named entity recognition lists them under the
+        model. Ordering is deterministic (registries by name, utterances
+        newest first as the tables show them) so an unedited round trip is
+        a no-op.
+        """
+        nlu = self.kind == 'natural_language_understanding'
+        annotated = nlu or self.kind == 'named_entity_recognition'
+
+        def registry(row):
+            return {'id': row.id, 'name': row.name, 'color': row.color,
+                    'description': row.description}
+
+        if not annotated:
+            return {
+                'labels': [
+                    {**registry(label), 'utterances': [
+                        {'id': utterance.id, 'text': utterance.text}
+                        for utterance in label.utterances.order_by(Utterance.id.desc()).all()
+                    ]}
+                    for label in self.intents.order_by(Intent.name.asc(), Intent.id.asc()).all()
+                ]
+            }
+
+        # One query per collection rather than one per row, and plain column
+        # rows rather than ORM instances: a whole-dataset read materialises
+        # tens of thousands of utterances and spans, and building mapped
+        # objects for each was most of the request's time.
+        spans = defaultdict(list)
+        span_rows = db.session.execute(
+            select(Tag.utterance_id, Tag.start, Tag.end, Slot.name, Entity.name)
+            .join(Utterance, Tag.utterance_id == Utterance.id)
+            .outerjoin(Slot, Tag.slot_id == Slot.id)
+            .outerjoin(Entity, Tag.entity_id == Entity.id)
+            .where(Utterance.model_id == self.id)
+            .order_by(Tag.start.asc(), Tag.id.asc())
+        ).all()
+        for utterance_id, start, end, slot_name, entity_name in span_rows:
+            spans[utterance_id].append((start, end, slot_name or entity_name))
+
+        def record(utterance_id, text):
+            return {'id': utterance_id,
+                    'text': dataset.format_inline(text, spans[utterance_id])}
+
+        utterance_rows = db.session.execute(
+            select(Utterance.id, Utterance.text, Utterance.intent_id)
+            .where(Utterance.model_id == self.id)
+            .order_by(Utterance.id.desc())
+        ).all()
+
+        document = {}
+        if nlu:
+            by_intent = defaultdict(list)
+            for utterance_id, text, intent_id in utterance_rows:
+                if intent_id is not None:
+                    by_intent[intent_id].append(record(utterance_id, text))
+            document['intents'] = [
+                {**registry(intent), 'slots': [
+                    {'id': slot.id, 'name': slot.name,
+                     'entity': slot.entity.name if slot.entity else None,
+                     # Only an explicit override travels; the entity's colour
+                     # is the default and would otherwise round-trip as one.
+                     'color': slot.color if slot.color != (slot.entity.color if slot.entity else None) else None}
+                    for slot in intent.slots.order_by(Slot.name.asc(), Slot.id.asc()).all()
+                ], 'utterances': by_intent[intent.id]}
+                for intent in self.intents.order_by(Intent.name.asc(), Intent.id.asc()).all()
+            ]
+
+        synonyms = defaultdict(list)
+        for value_id, text in db.session.execute(
+                select(Synonym.value_id, Synonym.text)
+                .join(Value, Synonym.value_id == Value.id)
+                .join(Entity, Value.entity_id == Entity.id)
+                .where(Entity.model_id == self.id)
+                .order_by(Synonym.id.asc())).all():
+            synonyms[value_id].append(text)
+        values = defaultdict(list)
+        for value_id, entity_id, text in db.session.execute(
+                select(Value.id, Value.entity_id, Value.value)
+                .join(Entity, Value.entity_id == Entity.id)
+                .where(Entity.model_id == self.id)
+                .order_by(Value.id.asc())).all():
+            values[entity_id].append({'id': value_id, 'value': text, 'synonyms': synonyms[value_id]})
+        document['entities'] = [
+            {**registry(entity), 'list_type': entity.kind or 'open', 'values': values[entity.id]}
+            for entity in self.entities.order_by(Entity.name.asc(), Entity.id.asc()).all()
+        ]
+
+        if not nlu:
+            document['utterances'] = [record(utterance_id, text) for utterance_id, text, _ in utterance_rows]
+        return document
 
     def to_dict(self):
         """Export model to a dictionary."""
