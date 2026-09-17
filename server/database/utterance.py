@@ -17,7 +17,10 @@ class Utterance(db.Model):
     # workspace.
     intent_id = db.Column(db.Integer, db.ForeignKey('intents.id'))
     model_id = db.Column(db.String, db.ForeignKey('models.id'))
-    text = db.Column(db.Text, nullable=False, index=True)
+    # Deliberately unindexed: search is ILIKE '%q%', which a btree cannot
+    # serve, and Postgres refuses btree entries over ~2.7 KB — one long
+    # review in an upload would fail the whole COPY (migration 7a3e1d4c0f92).
+    text = db.Column(db.Text, nullable=False)
 
     intent = db.relationship('Intent', back_populates='utterances')
     model = db.relationship('Model', back_populates='utterances')
