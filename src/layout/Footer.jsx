@@ -4,7 +4,7 @@ import { useTrainings, trainingProgress } from "../contexts/TrainingContext";
 // The page's foot: a bare full-width strip that closes the layout, carrying
 // nothing — until a training runs. Then it hosts one row per run the user
 // has going, centred: model, version, where it is, and a bar filling left to
-// right along the row's bottom edge. Metrics stay on the History page, which
+// right along the row's top edge. Metrics stay on the History page, which
 // a row links to. Rows go when their runs finish (after lingering a few
 // seconds with the outcome), and the strip returns to bare.
 const STATUS_LABEL = {

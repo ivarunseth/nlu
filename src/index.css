@@ -172,10 +172,14 @@ code,
 
 /* The footer: a bare strip closing the page, which hosts the live training
    rows while runs are going — one centred row per run, a 2px bar filling
-   along each row's bottom edge. Tone follows the run's state. */
+   along each row's top edge, on the footer's rule. Tone follows the run's
+   state. */
 .app-footer {
+  --app-footer-row: 2rem;
   flex: 0 0 auto;
-  min-height: 1.5rem;
+  /* Bare or hosting a row, the strip is the same height: a row is exactly
+     one footer tall, so the page does not shift when a run starts. */
+  min-height: var(--app-footer-row);
   background: var(--bs-tertiary-bg);
   border-top: 1px solid var(--bs-border-color);
 }
@@ -187,7 +191,8 @@ code,
   justify-content: center;
   gap: 0.75rem;
   width: 100%;
-  padding: 0.45rem 1rem 0.55rem;
+  height: var(--app-footer-row);
+  padding: 2px 1rem 0;
   border: 0;
   background: transparent;
   color: var(--bs-body-color);
@@ -242,7 +247,7 @@ code,
 .training-strip-bar {
   position: absolute;
   left: 0;
-  bottom: 0;
+  top: 0;
   height: 2px;
   background: var(--strip-color);
   transition: width 0.4s ease;
