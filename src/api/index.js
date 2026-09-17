@@ -14,8 +14,10 @@ import users from "./users";
 
 // Assemble the resource namespaces over one authenticated client. Adding an
 // endpoint means editing the resource module it belongs to and nothing else.
-const createApi = (token, onUnauthorized) => {
-    const client = createClient(token, onUnauthorized);
+// `subscribe` (from ApiContext) lets the client wait on long-running requests
+// over Socket.IO instead of polling; see client.js.
+const createApi = (token, onUnauthorized, subscribe) => {
+    const client = createClient(token, onUnauthorized, subscribe);
     return {
         models: models(client),
         intents: intents(client),

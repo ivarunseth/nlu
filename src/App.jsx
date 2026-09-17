@@ -24,8 +24,8 @@ const AccountSettings = lazy(() => import("./routes/settings/AccountSettings"));
 // to it). The footer doubles as the training strip while runs are going.
 const Shell = () => (
     <UserProvider>
-    <ApiProvider>
     <SocketProvider>
+    <ApiProvider>
     <TrainingProvider>
         <div className="d-flex flex-column min-vh-100">
             <Header />
@@ -39,8 +39,8 @@ const Shell = () => (
             <Footer />
         </div>
     </TrainingProvider>
-    </SocketProvider>
     </ApiProvider>
+    </SocketProvider>
     </UserProvider>
 );
 
