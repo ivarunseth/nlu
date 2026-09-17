@@ -18,7 +18,7 @@ from importlib import import_module
 from uuid import uuid4
 
 from celery import states
-from flask import abort, g, make_response, request, url_for
+from flask import abort, current_app, g, make_response, request, url_for
 
 NAMES = ('auth', 'dataset', 'training', 'publishing', 'analytics', 'inference', 'events')
 
@@ -66,6 +66,12 @@ def apply_async(f):
     API process then rejects bad tokens before dispatching, and the worker
     re-runs the same check on the replayed request.
 
+    The body rides in the Celery message only while it is small
+    (``REQUEST_INLINE_BODY_LIMIT``). A dataset upload is streamed to blob
+    storage under ``requests/<task_id>`` instead — never held whole in this
+    process, never pushed through the broker — and the worker streams it
+    back and deletes it once the replay is done.
+
     Inside the worker ``g.sync`` is false and the view simply runs.
     """
     @wraps(f)
@@ -73,16 +79,21 @@ def apply_async(f):
         if not getattr(g, 'sync', True):
             return f(*args, **kwargs)
 
+        from server.tasks.request import dispatch, spool_object
+        task_id = str(uuid4())
         environ = {k: v for k, v in request.environ.items() if isinstance(v, str)}
         environ['_blueprint'] = request.blueprint
         if 'wsgi.input' in request.environ:
-            environ['_wsgi.input'] = b64encode(request.get_data()).decode('ascii')
+            if (request.content_length or 0) > current_app.config['REQUEST_INLINE_BODY_LIMIT']:
+                from server import store
+                store.put(current_app.config['STORAGE_BUCKET'], spool_object(task_id), request.stream)
+                environ['_wsgi.input_object'] = spool_object(task_id)
+            else:
+                environ['_wsgi.input'] = b64encode(request.get_data()).decode('ascii')
 
-        from server.tasks.request import dispatch
         # Celery writes no state until the worker picks the task up, so a
         # queued task would be indistinguishable from an unknown id. Record
         # RECEIVED before sending — after would race a fast worker's SUCCESS.
-        task_id = str(uuid4())
         dispatch.backend.store_result(task_id, None, states.RECEIVED)
         dispatch.apply_async(args=(environ,), task_id=task_id)
         location = url_for(f'{request.blueprint}.get_status', taskId=task_id)

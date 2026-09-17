@@ -78,3 +78,7 @@ class Config(object):
     # The request worker holds no TensorFlow, so its children can be reused
     # (the training/serving workers must not: one task per process there).
     REQUEST_MAX_TASKS_PER_CHILD = int(os.environ.get('REQUEST_MAX_TASKS_PER_CHILD', 50))
+    # A replayed request's body rides in the Celery message only up to this
+    # many bytes; larger bodies (dataset uploads) are spooled to blob storage
+    # under requests/<task_id> and the message carries the reference.
+    REQUEST_INLINE_BODY_LIMIT = int(os.environ.get('REQUEST_INLINE_BODY_LIMIT', 256 * 1024))

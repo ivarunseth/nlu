@@ -88,6 +88,7 @@ def get_model(modelId):
 
 @blueprint.post('/models')
 @token_auth.login_required
+@apply_async
 def create_model():
     model = Model.create(request.form)
     db.session.add(model)
@@ -105,6 +106,7 @@ def create_model():
 
 @blueprint.put('/models/<modelId>')
 @token_auth.login_required
+@apply_async
 def edit_model(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
     if model is None:

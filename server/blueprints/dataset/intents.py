@@ -76,6 +76,7 @@ def get_intent(modelId, intentId):
 
 @blueprint.post('/models/<modelId>/intents')
 @token_auth.login_required
+@apply_async
 def create_intent(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
     if model is None:
@@ -91,6 +92,7 @@ def create_intent(modelId):
 
 @blueprint.put('/models/<modelId>/intents/<intentId>')
 @token_auth.login_required
+@apply_async
 def edit_intent(modelId, intentId):
     model = g.current_user.models.filter_by(id=modelId).first()
     if model is None:

@@ -78,7 +78,9 @@ class Storage:
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
             with open(filepath, 'wb') as f:
                 if hasattr(data, 'read'):
-                    f.write(data.read())
+                    # Stream: a spooled upload can be far larger than one
+                    # would want to hold in memory.
+                    shutil.copyfileobj(data, f, 1024 * 1024)
                 elif hasattr(data, 'getbuffer'):
                     f.write(data.getbuffer())
                 else:
