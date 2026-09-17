@@ -35,3 +35,5 @@ yarn-error.log*
 
 /graphify-out
 CLAUDE.md
+# design notes and plans, kept local
+/docs
