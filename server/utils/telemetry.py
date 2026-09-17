@@ -72,8 +72,12 @@ def watch(environment: str, size: int):
             continue
 
     if rows:
-        db.session.bulk_save_objects(rows)
-        db.session.commit()
+        try:
+            db.session.bulk_save_objects(rows)
+            db.session.commit()
+        except Exception:
+            registry.redis.lpush(registry._telemetry(), *reversed(raw))
+            raise
     return len(rows)
 
 

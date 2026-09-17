@@ -48,6 +48,8 @@ def validate_token(token):
     except (ExpiredSignatureError, InvalidTokenError):
         _invalidate_token(token)
         return False
+    if 'id' not in data:
+        return False
     user = User.query.filter_by(id=data['id'], token=token).first()
     if user is None:
         return False

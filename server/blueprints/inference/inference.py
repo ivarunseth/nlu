@@ -118,8 +118,10 @@ def infer(environment, model_id):
         
         registry.push(registry._inputs(model_id), items)
 
-        timeout = current_app.config['INFERENCE_BATCH_TIMEOUT'] \
-            or route.timeout or current_app.config['INFERENCE_REQUEST_TIMEOUT']
+        # The deployment's own timeout first: it is a per-request option the
+        # publish UI edits, so it must win over the process-wide fallbacks.
+        timeout = route.timeout or current_app.config['INFERENCE_BATCH_TIMEOUT'] \
+            or current_app.config['INFERENCE_REQUEST_TIMEOUT']
         interval = route.interval or current_app.config['INFERENCE_POLL_INTERVAL']
 
         raw = registry.wait(list(pending), timeout, interval, pull=not route.cache)

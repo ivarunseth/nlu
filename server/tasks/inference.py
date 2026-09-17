@@ -147,25 +147,39 @@ def serve(self, model_id, path, model_type, **kwargs):
             owned = lock.owned()
         except Exception:
             owned = False
-        # Clean up only while still holding the serving lock: a superseded
-        # task that lost it must not wipe the alive flag, start claim or
-        # cached outputs of the replacement that already took over.
-        if owned:
+        # Superseded means the route is gone (unpublish already revoked and
+        # purged) or names another task id (a restart already published its
+        # replacement and claimed the start slot). Holding the lock does not
+        # make that state this run's to clean up: offline() would delete the
+        # replacement's start claim while it is still loading, and the infer
+        # view would then launch a duplicate serve under the same task id.
+        try:
+            current = registry.route(model_id)
+            superseded = current is None or \
+                (current.task_id and current.task_id != self.request.id)
+        except Exception:
+            superseded = True
+
+        # Clean up only while still holding the serving lock and still the
+        # deployment's owner: a superseded task must not wipe the alive
+        # flag, start claim or cached outputs of the replacement.
+        if owned and not superseded:
             if online:
                 registry.offline(model_id)
                 registry.purge(model_id)
 
+        elif online:
+            # Either the lock is gone (expired under a stall) or a restart /
+            # unpublish handed serving over. Retire this run's own alive flag
+            # so the infer view stops pushing requests into a queue nobody is
+            # reading; the flag is only cleared while it still names this run,
+            # so a replacement that already came online keeps its own.
+            registry.retire(model_id, run)
+
+        if owned:
             try:
                 lock.release()
             except LockError:
                 pass
-
-        elif online:
-            # The lock is gone: either it expired under a stall, or a restart
-            # handed serving over. Retire this run's own alive flag so the
-            # infer view stops pushing requests into a queue nobody is
-            # reading; the flag is only cleared while it still names this run,
-            # so a replacement that already came online keeps its own.
-            registry.retire(model_id, run)
 
         shutil.rmtree(directory, ignore_errors=True)
