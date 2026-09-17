@@ -11,12 +11,11 @@ from celery.exceptions import Ignore, Reject
 from celery.result import AsyncResult
 from celery.signals import worker_shutting_down
 
-from flask_socketio import SocketIO
-
 from redis.lock import Lock
 from redis.exceptions import LockError
 
 from .. import redis
+from ..config import Config
 
 
 shutting_down = False
@@ -35,8 +34,11 @@ class WorkerConfig(object):
 
     broker_url = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
     broker_connection_retry_on_startup = True
+    # Deliberately not CELERY_RESULT_BACKEND: Celery lets that environment
+    # variable override every app's configured backend, and the request
+    # worker (`api`) needs a different one from training/serving.
     result_backend = os.environ.get(
-        'CELERY_RESULT_BACKEND',
+        'TASK_RESULT_BACKEND',
         f"db+{os.environ.get('SQLALCHEMY_DATABASE_URI', 'sqlite:///instance/indicnlu.db')}"
     )
     database_table_names = {
@@ -175,16 +177,8 @@ class WorkerTask(Task):
     
     def before_start(self, *args, **kwargs):
         super().before_start(*args, **kwargs)
-        
-        self.socketio = SocketIO(
-            app=None,
-            cors_allowed_origins='*',
-            channel='socketio',
-            message_queue=os.environ.get('SOCKETIO_MESSAGE_QUEUE', 'redis://'),
-            async_mode='threading',
-            logger=False,  
-            engineio_logger=False)
-        
+        from ..utils.socket import emitter
+        self.socketio = emitter()
         self.push_status(extended=True)
     
     def on_success(self, *args, **kwargs):
@@ -218,6 +212,20 @@ class WorkerTask(Task):
                 lock.release()
 
 
+class RequestTask(WorkerTask):
+    """
+    Base for ``dispatch``: the same status pushes to the task room, minus
+    the payload. The stored result is the HTTP response itself and is
+    fetched once over ``/api/<blueprint>/status/<task_id>``; the socket
+    only tells the browser when to fetch.
+    """
+
+    def push_status(self, extended=False):
+        payload = self.AsyncResult(self.request.id).to_dict()
+        payload['result'] = None
+        self.socketio.emit('status', payload, room=self.request.id, namespace='/')
+
+
 def _queues(*names):
     return tuple(Queue(name, Exchange('default', type='direct'), routing_key=name, durable=True) for name in names)
 
@@ -237,30 +245,38 @@ def create_worker(name, include, queues, task_class=None, **kwargs):
     return worker
 
 
+# Replays long-running HTTP requests (server.blueprints.apply_async). No ML
+# stack, so it runs from the api image. JSON like every other app (bodies
+# travel base64-encoded) — control replies use the task serializer, and
+# flower, on the training app, only accepts json. Results live in Redis and
+# expire: the status route fetches each once.
 api = create_worker(
     'api',
     include=['server.tasks.request'],
     queues=('default',),
-    task_class=None,
-    task_serializer='pickle',
-    result_serializer='pickle',
-    accept_content=['pickle'],
+    task_class=RequestTask,
+    # The task argument is the whole request, Authorization header included;
+    # never copy it into the result store the way the extended meta would.
+    result_extended=False,
+    worker_max_tasks_per_child=Config.REQUEST_MAX_TASKS_PER_CHILD,
+    result_backend=Config.REQUEST_RESULT_BACKEND,
+    result_expires=Config.REQUEST_RESULT_TTL,
 )
 
 
-sage = create_worker(
-    'sage',
-    include=['server.tasks.training'],
+training = create_worker(
+    'training',
+    include=['server.tasks.train'],
     queues=('training',),
     task_class=WorkerTask,
 )
 
 
-triton = create_worker(
-    'triton',
+serving = create_worker(
+    'serving',
     include=['server.tasks.inference'],
     queues=(
-        'testing', 
+        'testing',
         'production',
     ),
     task_class=WorkerTask,

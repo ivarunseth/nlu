@@ -1,9 +1,7 @@
-# Control plane and everything else that is Flask/Celery without the ML
-# stack: /api + Socket.IO (default CMD), the two inference data planes,
-# `flask db upgrade`, and flower. docker-compose.yml overrides `command`
-# per service. Servers run under gunicorn's gevent worker; the control
-# plane keeps one worker process because Socket.IO long-polling needs a
-# client's requests to reach the same process.
+# Everything that is Flask/Celery without the ML stack: the seven
+# blueprints (docker-compose.yml runs one per container via
+# `app:create_app('<name>')`), `flask db upgrade`, and flower. Servers run
+# under gunicorn's gevent worker on 5000.
 
 FROM python:3.11-slim
 
@@ -36,8 +34,7 @@ RUN mkdir -p /app/data /app/instance /app/flask_session \
 
 USER appuser
 
-EXPOSE 5001 5002 5003 5004
+EXPOSE 5000
 
-# create_app() returns the Flask app with socketio.init_app applied, i.e.
-# the Socket.IO-wrapped WSGI app, so gunicorn can serve it directly.
-CMD ["gunicorn", "-k", "gevent", "-w", "1", "-b", "0.0.0.0:5001", "--timeout", "300", "app:create_app()"]
+# Default: every blueprint in one process (compose overrides per service).
+CMD ["gunicorn", "-k", "gevent", "-w", "1", "-b", "0.0.0.0:5000", "--timeout", "300", "app:create_app()"]

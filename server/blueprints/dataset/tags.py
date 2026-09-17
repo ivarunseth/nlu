@@ -1,12 +1,13 @@
 from flask import request, g, abort
 
-from ...auth import token_auth
-from ...database import Entity, Tag
-from ...utils.dataset import FORMATS, NLU_FORMATS
-from ...utils import io as dataset_io
+from server.auth import token_auth
+from server.database import Entity, Tag
+from server.utils.dataset import FORMATS, NLU_FORMATS
+from server.utils import io as dataset_io
 
-from ... import db
-from . import api
+from server import db
+from server.blueprints import apply_async
+from . import blueprint
 
 
 # File extension and MIME type used when exporting each dataset format.
@@ -33,7 +34,7 @@ def _get_utterance(modelId, utteranceId):
     return model, utterance
 
 
-@api.post('/models/<modelId>/utterances/<utteranceId>/tags')
+@blueprint.post('/models/<modelId>/utterances/<utteranceId>/tags')
 @token_auth.login_required
 def create_tag(modelId, utteranceId):
     if not request.is_json:
@@ -64,7 +65,7 @@ def create_tag(modelId, utteranceId):
     return utterance.to_dict(), 201
 
 
-@api.delete('/models/<modelId>/utterances/<utteranceId>/tags/<tagId>')
+@blueprint.delete('/models/<modelId>/utterances/<utteranceId>/tags/<tagId>')
 @token_auth.login_required
 def delete_tag(modelId, utteranceId, tagId):
     model, utterance = _get_utterance(modelId, utteranceId)
@@ -76,7 +77,7 @@ def delete_tag(modelId, utteranceId, tagId):
     return utterance.to_dict(), 200
 
 
-@api.get('/models/<modelId>/tags/stats')
+@blueprint.get('/models/<modelId>/tags/stats')
 @token_auth.login_required
 def get_tag_stats(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
@@ -99,8 +100,9 @@ def _require_format(model=None):
     return fmt
 
 
-@api.get('/models/<modelId>/tags/export')
+@blueprint.get('/models/<modelId>/tags/export')
 @token_auth.login_required
+@apply_async
 def export_tags(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
     if model is None:
@@ -115,8 +117,9 @@ def export_tags(modelId):
     )
 
 
-@api.post('/models/<modelId>/tags/import')
+@blueprint.post('/models/<modelId>/tags/import')
 @token_auth.login_required
+@apply_async
 def import_tags(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
     if model is None:

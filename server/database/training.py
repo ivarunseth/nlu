@@ -1,11 +1,13 @@
+# Owned by the `training` blueprint. `publishing` and `analytics` read only.
 import io
 import json
 
-from flask import abort, url_for, current_app
+from flask import abort, current_app
 from celery import states
 
 from .. import db, store
-from ..tasks import sage, WorkerResult, training
+from ..tasks import training, WorkerResult
+from ..tasks.train import train
 from ..utils.common import timestamp, format_timestamp
 
 
@@ -22,7 +24,7 @@ class Training(db.Model):
     instances = db.relationship('Instance', cascade="all,delete", back_populates='training', lazy='dynamic')
 
     def _get_task(self):
-        return WorkerResult(self.task_id, app=sage) if self.task_id else None
+        return WorkerResult(self.task_id, app=training) if self.task_id else None
 
     def start(self, **kwargs):
         task = self._get_task()
@@ -34,7 +36,7 @@ class Training(db.Model):
         # per-run override of the AUGMENT_ENABLED config. Popped so it never
         # reaches the training task's kwargs. Augmentation itself now runs
         # inside the model's preprocessing (server/models/augmentation.py),
-        # driven by the files written below — the control plane only ships the
+        # driven by the files written below — the training blueprint only ships the
         # authored dataset and the ingredients.
         augment = kwargs.pop('augment', None)
 
@@ -52,7 +54,7 @@ class Training(db.Model):
             self.model.write(fmt='training', object_name=self._data_object('utterances.csv'))
 
         args = (self.path, self.model.kind,)
-        task = training.train.apply_async(
+        task = train.apply_async(
             args=args,
             kwargs=kwargs,
             queue='training',
@@ -153,11 +155,7 @@ class Training(db.Model):
             'task_id': self.task_id,
             'version': float(self.version),
             'created_at': format_timestamp(self.created_at),
-            'updated_at': format_timestamp(self.updated_at),
-            '_links': {
-                'self': url_for('api.get_training', modelId=self.model_id, trainingId=self.id),
-                'model': url_for('api.get_model', modelId=self.model_id)
-            }
+            'updated_at': format_timestamp(self.updated_at)
         }
         task = self._get_task()
         if task:

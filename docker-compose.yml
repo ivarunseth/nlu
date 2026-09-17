@@ -1,72 +1,87 @@
-# Single-host deployment: every process the platform is made of runs in its
-# own container. Three images (docker/Dockerfile.client, .api, .worker) —
-# only one service per image carries `build:`, and it is named after its
-# Dockerfile (`client`, `api`, `worker`); the rest run the tag it produces,
-# because parallel builds of one tag race on the export step.
+# Single-host deployment: one container per process. Three images
+# (docker/Dockerfile.client, .api, .worker); one service per image carries
+# `build:` and the rest run the tag it produces, because parallel builds
+# of one tag race on the export step:
+#
+#   client           -> client image (nginx + built UI)
+#   migrate          -> api image    (runs the migrations, then exits)
+#   training-worker  -> worker image (the only one with TensorFlow)
 #
 #   docker compose up -d --build                              # CPU workers
 #   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build   # CUDA host
 #
-# UI on http://localhost/ (nginx, proxies /api and /socket.io to `api` over
-# the compose network — 5001 is not published). Inference endpoints are
-# absolute URLs the browser calls directly, so the two data planes do
-# publish 5002 (testing) and 5004 (production). Set INFERENCE_HOST in .env
-# to the host's public name on a real deployment.
+# UI on http://localhost/. nginx proxies /api/<blueprint>/ to the
+# `<blueprint>-api` service (inference is split per environment:
+# /api/inference/<environment>/ -> inference-api-<environment>) and
+# /socket.io/ to `events-api`; only `client` (and flower, on loopback)
+# publishes a host port. Deployment endpoints are
+# PUBLIC_URL/api/inference/<environment>/<model_id>, so PUBLIC_URL must be
+# the name users reach the UI on.
 #
 # Host-specific values in .env (localhost Redis, sqlite) are overridden per
 # service below; python-dotenv never overrides a variable that is already
-# set, so the compose values win inside the containers.
+# set, so the compose values win inside the containers. PUBLIC_URL is taken
+# from .env as-is, so set it to the address users reach nginx on before `up`.
 
 x-postgres-env: &postgres-env
   POSTGRES_USER: ${POSTGRES_USER:-indicnlu}
   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-indicnlu}
   POSTGRES_DB: ${POSTGRES_DB:-indicnlu}
 
-x-backend-env: &backend-env
+x-env: &env
   FLASK_DEBUG: "false"
   SQLALCHEMY_DATABASE_URI: postgresql://${POSTGRES_USER:-indicnlu}:${POSTGRES_PASSWORD:-indicnlu}@postgres:5432/${POSTGRES_DB:-indicnlu}
-  CELERY_RESULT_BACKEND: db+postgresql://${POSTGRES_USER:-indicnlu}:${POSTGRES_PASSWORD:-indicnlu}@postgres:5432/${POSTGRES_DB:-indicnlu}
+  TASK_RESULT_BACKEND: db+postgresql://${POSTGRES_USER:-indicnlu}:${POSTGRES_PASSWORD:-indicnlu}@postgres:5432/${POSTGRES_DB:-indicnlu}
+  REQUEST_RESULT_BACKEND: redis://redis:6379/1
   REDIS_HOST: redis
   REDIS_PORT: "6379"
   REDIS_DB: "0"
   CELERY_BROKER_URL: redis://redis:6379/0
   SOCKETIO_MESSAGE_QUEUE: redis://redis:6379/0
-  # config.py defaults these to localhost (never empty), so registry_for()
-  # never falls back to the shared client — they must point at the service.
+  # Per-environment inference registries. One Redis is enough for a single
+  # host; point these at separate instances to isolate the environments.
+  # config.py defaults them to localhost (never empty), so registry_for()
+  # never falls back to the shared client — they must name the service.
   REDIS_URL_TESTING: redis://redis:6379/0
   REDIS_URL_PRODUCTION: redis://redis:6379/0
   STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
   STORAGE_BUCKET: ${STORAGE_BUCKET:-data}
-  INFERENCE_HOST: ${INFERENCE_HOST:-http://localhost}
+  PUBLIC_URL: ${PUBLIC_URL:-http://localhost}
 
-x-backend: &backend
+x-python: &python
   env_file: .env
+  environment: *env
   volumes:
     # The `local` storage provider resolves STORAGE_BUCKET against the
     # working directory (/app), so every service shares one bucket.
     - data:/app/data
   restart: unless-stopped
-  depends_on:
-    redis:
-      condition: service_healthy
-    postgres:
-      condition: service_healthy
-    migrate:
-      condition: service_completed_successfully
 
-# Flask/Celery without the ML stack: control plane, data planes, migrate,
-# flower. `api` builds it.
-x-api: &api
-  <<: *backend
-  image: ${REGISTRY:-}indic-nlu-api:${TAG:-latest}
+x-depends: &depends
+  redis:
+    condition: service_healthy
+  postgres:
+    condition: service_healthy
+  migrate:
+    condition: service_completed_successfully
 
-# Celery workers with TensorFlow. `worker` builds it; WORKER_DEVICE selects
-# the cpu (default) or cuda variant — docker-compose.gpu.yml sets cuda.
+# One blueprint per `<name>-api` service, all from the api image, under
+# gunicorn's gevent worker on port 5000: `gunicorn "app:create_app('<name>')"`.
+# `migrate` builds the image.
+x-blueprint: &blueprint
+  <<: *python
+  image: ${REGISTRY:-}api:${TAG:-latest}
+  depends_on: *depends
+
+# Celery workers from the worker image; WORKER_DEVICE selects the cpu
+# (default) or cuda variant — docker-compose.gpu.yml sets cuda.
 x-worker: &worker
-  <<: *backend
-  image: ${REGISTRY:-}indic-nlu-worker:${TAG:-latest}-${WORKER_DEVICE:-cpu}
+  <<: *python
+  image: ${REGISTRY:-}worker:${TAG:-latest}-${WORKER_DEVICE:-cpu}
+  depends_on: *depends
 
 services:
+  # Celery broker, Socket.IO message queue and both inference registries.
   redis:
     image: redis:7-alpine
     command: redis-server --save 60 1 --appendonly yes
@@ -91,14 +106,16 @@ services:
       retries: 10
     restart: unless-stopped
 
-  # One-shot: applies migrations, then exits. Every backend service waits for
-  # it to finish, so a fresh volume is fully migrated before anything starts.
+  # Builds the api image, applies the migrations, exits. Every blueprint
+  # and worker waits for it, so a fresh volume is migrated before anything
+  # starts.
   migrate:
-    <<: *api
+    <<: *python
+    image: ${REGISTRY:-}api:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
     command: flask db upgrade
-    environment:
-      <<: *backend-env
-      FLASK_ENV: testing
     restart: "no"
     depends_on:
       redis:
@@ -106,63 +123,71 @@ services:
       postgres:
         condition: service_healthy
 
-  # Control plane: /api + Socket.IO under gunicorn (one gevent worker —
-  # Socket.IO long-polling needs a client's requests to hit one process).
-  # One is enough for both environments — publishing picks the registry
-  # from the instance's own environment and the telemetry consumer drains
-  # every environment's queue. FLASK_ENV here only selects the port.
-  api:
-    <<: *api
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.api
-    # --timeout is gunicorn's worker heartbeat: a greenlet that never yields for
-    # 300 s gets the only control-plane process killed, Socket.IO sessions with
-    # it. Raise the timeout if that ever happens; do not add workers (-w 2
-    # breaks Socket.IO long-polling without sticky sessions).
-    command: gunicorn -k gevent -w 1 -b 0.0.0.0:5001 --timeout 300 "app:create_app()"
-    environment:
-      <<: *backend-env
-      FLASK_ENV: testing
+  auth-api:
+    <<: *blueprint
+    command: gunicorn -k gevent -w 1 -b 0.0.0.0:5000 --timeout 120 "app:create_app('auth')"
 
-  # Data planes: one per environment, each serving its own registry. They
-  # are stateless (the request/serve handshake lives in Redis), so several
-  # gunicorn workers are fine.
-  triton-testing:
-    <<: *api
-    command: gunicorn -k gevent -w ${TRITON_WORKERS:-2} -b 0.0.0.0:5002 --timeout 120 "server:create_triton_server()"
-    environment:
-      <<: *backend-env
-      FLASK_ENV: testing
-    ports:
-      - "5002:5002"
+  dataset-api:
+    <<: *blueprint
+    # Import/export can hold a request for minutes; --timeout is gunicorn's
+    # worker heartbeat, so it must outlast them.
+    command: gunicorn -k gevent -w 1 -b 0.0.0.0:5000 --timeout 300 "app:create_app('dataset')"
 
-  triton-production:
-    <<: *api
-    command: gunicorn -k gevent -w ${TRITON_WORKERS:-2} -b 0.0.0.0:5004 --timeout 120 "server:create_triton_server()"
-    environment:
-      <<: *backend-env
-      FLASK_ENV: production
-    ports:
-      - "5004:5004"
+  training-api:
+    <<: *blueprint
+    command: gunicorn -k gevent -w 1 -b 0.0.0.0:5000 --timeout 120 "app:create_app('training')"
 
-  # Celery monitoring. Both Celery apps share the broker and the workers
+  publishing-api:
+    <<: *blueprint
+    command: gunicorn -k gevent -w 1 -b 0.0.0.0:5000 --timeout 120 "app:create_app('publishing')"
+
+  # Also runs the telemetry consumer, so keep one worker.
+  analytics-api:
+    <<: *blueprint
+    command: gunicorn -k gevent -w 1 -b 0.0.0.0:5000 --timeout 300 "app:create_app('analytics')"
+
+  # Inference, one container per environment — like the serving workers.
+  # nginx routes /api/inference/<environment>/ to the matching one. The
+  # process is stateless (the request/serve handshake lives in that
+  # environment's registry), so several gunicorn workers are fine.
+  inference-api-testing:
+    <<: *blueprint
+    command: gunicorn -k gevent -w ${INFERENCE_WORKERS:-2} -b 0.0.0.0:5000 --timeout 120 "app:create_app('inference')"
+
+  inference-api-production:
+    <<: *blueprint
+    command: gunicorn -k gevent -w ${INFERENCE_WORKERS:-2} -b 0.0.0.0:5000 --timeout 120 "app:create_app('inference')"
+
+  # The Socket.IO server. One worker: long-polling needs a client's
+  # requests to hit one process.
+  events-api:
+    <<: *blueprint
+    command: gunicorn -k gevent -w 1 -b 0.0.0.0:5000 --timeout 300 "app:create_app('events')"
+
+  # Replays long-running requests (dataset import/export, analytics,
+  # cascading deletes — the views under `apply_async`) so the blueprint
+  # services answer 202 at once. Same image as the blueprints; results go
+  # to REQUEST_RESULT_BACKEND (Redis, db 1) and expire.
+  request-worker:
+    <<: *blueprint
+    command: celery -A server.tasks:api worker -E -Q default -P prefork -c ${REQUEST_WORKERS:-2} -l INFO -Ofair -n request@%h
+
+  # Celery monitoring. All Celery apps share the broker and the workers
   # run with -E, so one flower sees the training, testing and production
   # queues and can inspect, revoke and terminate tasks. Published on
   # loopback by default; set FLOWER_BIND=0.0.0.0 together with
   # FLOWER_BASIC_AUTH=user:password in .env to reach it from elsewhere.
   flower:
-    <<: *api
+    <<: *blueprint
     # flower 2.x returns 401 for every /api/* call — which the UI's revoke and
     # shutdown buttons use — unless auth is configured or
     # FLOWER_UNAUTHENTICATED_API is set. It also splits FLOWER_BASIC_AUTH on
     # ',' even when empty, which would enable auth with an unmatchable
     # credential. So: credentials set → use them; empty → drop the variable
     # and open the API. Keep FLOWER_BIND on loopback unless auth is set.
-    command: sh -c 'if [ -n "$$FLOWER_BASIC_AUTH" ]; then :; else unset FLOWER_BASIC_AUTH; export FLOWER_UNAUTHENTICATED_API=true; fi; exec celery -A server.tasks:sage flower --port=5555'
+    command: sh -c 'if [ -n "$$FLOWER_BASIC_AUTH" ]; then :; else unset FLOWER_BASIC_AUTH; export FLOWER_UNAUTHENTICATED_API=true; fi; exec celery -A server.tasks:training flower --port=5555'
     environment:
-      <<: *backend-env
-      FLASK_ENV: testing
+      <<: *env
       FLOWER_BASIC_AUTH: ${FLOWER_BASIC_AUTH:-}
     ports:
       - "${FLOWER_BIND:-127.0.0.1}:${FLOWER_PORT:-5555}:5555"
@@ -170,49 +195,38 @@ services:
       redis:
         condition: service_healthy
 
-  # Training worker (the `sage` Celery app). Prefork with
+  # Training worker; builds the worker image. Prefork with
   # max_tasks_per_child=1 (WorkerConfig) gives every training run a fresh
   # process; one at a time keeps a single host from oversubscribing its
   # CPUs/GPU.
-  worker:
+  training-worker:
     <<: *worker
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
       args:
         DEVICE: ${WORKER_DEVICE:-cpu}
-    command: celery -A server.tasks:sage worker -E -Q training -P prefork -c 1 -l INFO -Ofair -n sage@%h
-    environment:
-      <<: *backend-env
-      FLASK_ENV: testing
+    command: celery -A server.tasks:training worker -E -Q training -P prefork -c 1 -l INFO -Ofair -n training@%h
 
   # Serving workers: one per environment queue. Each serving task holds one
   # model for the life of its process, so the pool size is the number of
   # models that can be live at once in that environment.
-  worker-testing:
+  serving-worker-testing:
     <<: *worker
-    command: celery -A server.tasks:triton worker -E -Q testing -P prefork -l INFO -Ofair -n triton-testing@%h
-    environment:
-      <<: *backend-env
-      FLASK_ENV: testing
+    command: celery -A server.tasks:serving worker -E -Q testing -P prefork -l INFO -Ofair -n serving-testing@%h
 
-  worker-production:
+  serving-worker-production:
     <<: *worker
-    command: celery -A server.tasks:triton worker -E -Q production -P prefork -l INFO -Ofair -n triton-production@%h
-    environment:
-      <<: *backend-env
-      FLASK_ENV: production
+    command: celery -A server.tasks:serving worker -E -Q production -P prefork -l INFO -Ofair -n serving-production@%h
 
-  # Static frontend + reverse proxy to the control plane.
+  # Static frontend + reverse proxy (nginx.conf).
   client:
     build:
       context: .
       dockerfile: docker/Dockerfile.client
-    image: ${REGISTRY:-}indic-nlu-client:${TAG:-latest}
+    image: ${REGISTRY:-}client:${TAG:-latest}
     ports:
       - "${CLIENT_PORT:-80}:80"
-    depends_on:
-      - api
     restart: unless-stopped
 
 volumes:

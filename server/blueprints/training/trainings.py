@@ -4,14 +4,16 @@ from flask import request, g, current_app, abort, send_file
 from celery import states
 from sqlalchemy import cast, String
 
-from ...auth import token_auth
-from ...database import Training
-from ...tasks import training as training_tasks
-from ...utils.query import (apply_sort, apply_date_range, sort_arguments,
+from server.auth import token_auth
+from server.database import Training
+from server.tasks import train as training_tasks
+from server.utils.query import (apply_sort, apply_date_range, sort_arguments,
                             list_argument, sort_position)
 
-from ... import db, store, socketio
-from . import api
+from server import db, store
+from server.utils.socket import emit
+from server.blueprints import apply_async
+from . import blueprint
 
 
 # Sort fields backed by real columns — these page in SQL.
@@ -111,7 +113,7 @@ def announce_training(training, event, **extra):
     drops the run with ``Ignore``, which pushes nothing. So ``stopped``
     carries the final status itself.
     """
-    socketio.emit('training', {
+    emit('training', {
         'event': event,
         'model_id': training.model_id,
         'model_name': training.model.name,
@@ -119,10 +121,10 @@ def announce_training(training, event, **extra):
         'task_id': training.task_id,
         'version': float(training.version),
         **extra
-    }, room=user_room(g.current_user), namespace='/')
+    }, room=user_room(g.current_user))
 
 
-@api.get('/trainings/active')
+@blueprint.get('/trainings/active')
 @token_auth.login_required
 def get_active_trainings():
     """
@@ -148,7 +150,7 @@ def get_active_trainings():
     return {'trainings': active}, 200
 
 
-@api.get('/models/<modelId>/trainings')
+@blueprint.get('/models/<modelId>/trainings')
 @token_auth.login_required
 def get_trainings(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
@@ -210,7 +212,7 @@ def get_trainings(modelId):
     }, 200
 
 
-@api.get('/models/<modelId>/trainings/<trainingId>')
+@blueprint.get('/models/<modelId>/trainings/<trainingId>')
 @token_auth.login_required
 def get_training(modelId, trainingId):
     model = g.current_user.models.filter_by(id=modelId).first()
@@ -227,8 +229,9 @@ def get_training(modelId, trainingId):
     return training.to_dict(extended=request.args.get('extended', '0') == '1'), 200
 
 
-@api.get('/models/<modelId>/trainings/<trainingId>/data')
+@blueprint.get('/models/<modelId>/trainings/<trainingId>/data')
 @token_auth.login_required
+@apply_async
 def get_training_data(modelId, trainingId):
     model = g.current_user.models.filter_by(id=modelId).first()
     if model is None:
@@ -242,7 +245,7 @@ def get_training_data(modelId, trainingId):
     return send_file(data, mimetype='text/csv')
 
 
-@api.post('/models/<modelId>/trainings')
+@blueprint.post('/models/<modelId>/trainings')
 @token_auth.login_required
 def create_training(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
@@ -254,7 +257,7 @@ def create_training(modelId):
     return training.to_dict(), 201
 
 
-@api.post('/models/<modelId>/trainings/<trainingId>/start')
+@blueprint.post('/models/<modelId>/trainings/<trainingId>/start')
 @token_auth.login_required
 def start_training(modelId, trainingId):
     model = g.current_user.models.filter_by(id=modelId).first()
@@ -278,7 +281,7 @@ def start_training(modelId, trainingId):
     return training.to_dict(extended=True), 200
 
 
-@api.post('/models/<modelId>/trainings/<trainingId>/stop')
+@blueprint.post('/models/<modelId>/trainings/<trainingId>/stop')
 @token_auth.login_required
 def stop_training(modelId, trainingId):
     model = g.current_user.models.filter_by(id=modelId).first()
@@ -297,7 +300,7 @@ def stop_training(modelId, trainingId):
 
 
 
-@api.delete('/models/<modelId>/trainings/<trainingId>')
+@blueprint.delete('/models/<modelId>/trainings/<trainingId>')
 @token_auth.login_required
 def delete_training(modelId, trainingId):
     model = g.current_user.models.filter_by(id=modelId).first()

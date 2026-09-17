@@ -3,7 +3,7 @@ Training-data generation from entity value catalogues.
 
 The annotated model types (NER, NLU) expand their authored training rows
 here, inside the model's preprocessing step, over the **train split only**
-— the control plane ships the authored ``utterances.csv`` and the catalogue
+— the training blueprint ships the authored ``utterances.csv`` and the catalogue
 (``entities.json``) to storage, and ``augment`` runs at train time.
 
 Generation is **coverage-first**: per entity, its catalogued terms and its

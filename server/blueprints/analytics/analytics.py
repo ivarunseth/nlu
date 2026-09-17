@@ -31,14 +31,15 @@ from datetime import timezone
 from flask import request, g, abort, current_app
 from celery import states
 
-from ...auth import token_auth
-from ...database import Entity, Intent, Prediction, Slot, Tag, Training, Utterance
-from ...utils.common import format_timestamp
-from ...utils.dataset import spans_to_tags, parse_inline
-from ...utils.telemetry import persist, sweep
+from server.auth import token_auth
+from server.database import Entity, Intent, Prediction, Slot, Tag, Training, Utterance
+from server.utils.common import format_timestamp
+from server.utils.dataset import spans_to_tags, parse_inline
+from server.utils.telemetry import persist, sweep
 
-from ... import db, store
-from . import api
+from server import db, store
+from server.blueprints import apply_async
+from . import blueprint
 
 # Report keys that are aggregates, not labels.
 REPORT_AGGREGATES = ('accuracy', 'macro avg', 'weighted avg')
@@ -210,8 +211,9 @@ def _lengths(texts):
     }
 
 
-@api.get('/models/<modelId>/analytics/dataset')
+@blueprint.get('/models/<modelId>/dataset')
 @token_auth.login_required
+@apply_async
 def get_dataset_analytics(modelId):
     """Class/entity distribution, totals, duplicates, lengths and vocabulary."""
     model = _get_model(modelId)
@@ -538,8 +540,9 @@ def _nlu_dataset_analytics(model):
     }, 200
 
 
-@api.get('/models/<modelId>/analytics/versions')
+@blueprint.get('/models/<modelId>/versions')
 @token_auth.login_required
+@apply_async
 def get_version_analytics(modelId):
     """Per-successful-version quality metrics and the best-version pick.
 
@@ -603,8 +606,9 @@ def get_version_analytics(modelId):
     }, 200
 
 
-@api.get('/models/<modelId>/analytics/confusions')
+@blueprint.get('/models/<modelId>/confusions')
 @token_auth.login_required
+@apply_async
 def get_confusion_analytics(modelId):
     """Class pairs confused across the last N versions' test matrices.
 
@@ -653,14 +657,14 @@ def _quantile(values, q):
     return round(ordered[low] + (ordered[high] - ordered[low]) * (index - low), 2)
 
 
-@api.get('/models/<modelId>/analytics/live')
+@blueprint.get('/models/<modelId>/live')
 @token_auth.login_required
 def get_live_analytics(modelId):
     """Live-traffic telemetry: throughput, latency, errors, confidence, mix.
 
     Each row carries its model, environment and served version itself, so
     history spans every deployment that ever ran — republishing (which
-    replaces the control-plane instance) never resets the tab. Everything
+    replaces the publishing blueprint's instance) never resets the tab. Everything
     else is derived from the stored ``output`` JSON: classification
     predictions carry ranked ``labels`` (top name/score), named entity
     recognition ones carry ``entities`` (span mix and span scores),
@@ -816,8 +820,9 @@ def get_live_analytics(modelId):
     }, 200
 
 
-@api.get('/models/<modelId>/analytics/coverage')
+@blueprint.get('/models/<modelId>/coverage')
 @token_auth.login_required
+@apply_async
 def get_coverage_analytics(modelId):
     """Current dataset compared against a version's authored training snapshot.
 

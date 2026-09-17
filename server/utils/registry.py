@@ -1,5 +1,3 @@
-import os
-
 import time
 import uuid
 import threading
@@ -9,7 +7,7 @@ from typing import Optional
 from redis import StrictRedis
 from redis.exceptions import WatchError
 
-from ..config import config_for
+from ..config import Config
 
 
 _registries = {}
@@ -246,8 +244,7 @@ def registry_for(environment, redis=None) -> Registry:
 
         # Registries are also built outside an app context (celery workers),
         # so read the settings from the config class directly.
-        config = config_for(os.environ.get('FLASK_ENV', 'production'))
-        url = (config.ALLOWED_ENVIRONMENTS.get(environment) or {}).get('redis_url')
+        url = (Config.ALLOWED_ENVIRONMENTS.get(environment) or {}).get('redis_url')
         if url:
             client = StrictRedis.from_url(url)
         else:

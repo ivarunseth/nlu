@@ -1,3 +1,4 @@
+# Owned by the `publishing` blueprint. Other blueprints read only.
 import uuid
 
 from dataclasses import replace
@@ -10,7 +11,7 @@ from sqlalchemy.orm import relationship
 
 from .. import db
 from ..utils.registry import registry_for, Route
-from ..tasks import triton, WorkerResult
+from ..tasks import serving, WorkerResult
 from ..utils.common import timestamp, format_timestamp, generate_api_key, api_key_expiry
 
 
@@ -190,7 +191,7 @@ class Instance(db.Model):
         )
 
     def _get_task(self):
-        return None if not self.task_id else WorkerResult(id=self.task_id, app=triton)
+        return None if not self.task_id else WorkerResult(id=self.task_id, app=serving)
 
     def ready(self, task=None):
         task = task or self._get_task()
@@ -225,7 +226,7 @@ class Instance(db.Model):
 
     def start(self, **kwargs):
         """
-        Publish this model into its environment's inference data plane.
+        Publish this model into its environment's inference blueprint.
 
         Publishing only writes the route (model -> artifact) into the
         environment's Redis; the serving task is started lazily by the first
@@ -255,8 +256,8 @@ class Instance(db.Model):
             # Reserve the start slot so a query arriving while this task is still
             # loading waits for its output instead of spinning up a rival task.
             registry.claim(self.model.id, ttl=current_app.config['INFERENCE_START_TTL'])
-            from ..tasks.inference import model
-            model.apply_async(
+            from ..tasks.inference import serve
+            serve.apply_async(
                 task_id=self.task_id,
                 args=(self.model.id, self.training.path, self.model.kind),
                 kwargs={**kwargs, 'environment': self.environment.name},
@@ -272,7 +273,6 @@ class Instance(db.Model):
                     abort(400, '%s is missing in request data' % field)
 
     def to_dict(self):
-        settings = current_app.config['ALLOWED_ENVIRONMENTS'][self.environment.name]
         instance = {
             'id': self.id,
             'environment': self.environment.name,
@@ -282,9 +282,9 @@ class Instance(db.Model):
             'api_key': self.api_key,
             'api_key_expiry': format_timestamp(expiry) if (expiry := api_key_expiry(self.api_key)) else None,
             'config': self.options(),
-            'endpoint': '%s:%s/api/infer/%s' % (
-                settings['triton']['host'],
-                settings['triton']['port'],
+            'endpoint': '%s/api/inference/%s/%s' % (
+                current_app.config['PUBLIC_URL'],
+                self.environment.name,
                 self.model_id,
             ),
             'date_receive': format_timestamp(self.date_receive),

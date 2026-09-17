@@ -1,13 +1,14 @@
 from flask import request, g, abort, current_app
 
-from ...auth import token_auth
-from ...database import Model
-from ...utils.dataset import dataset_format, NLU_FORMATS
-from ...utils import io as dataset_io
-from ...utils.query import apply_sort, apply_date_range, list_argument
+from server.auth import token_auth
+from server.database import Model
+from server.utils.dataset import dataset_format, NLU_FORMATS
+from server.utils import io as dataset_io
+from server.utils.query import apply_sort, apply_date_range, list_argument
 
-from ... import db
-from . import api
+from server import db
+from server.blueprints import apply_async
+from . import blueprint
 
 
 # Public sort field -> column, for the models collection.
@@ -43,7 +44,7 @@ def _read_dataset(model, upload):
     return model.read(upload, header=0 if request.form.get('header') == 'true' else None)
 
 
-@api.get('/models')
+@blueprint.get('/models')
 @token_auth.login_required
 def get_models():
     models = g.current_user.models
@@ -71,7 +72,7 @@ def get_models():
     }, 200
 
 
-@api.get('/models/<modelId>')
+@blueprint.get('/models/<modelId>')
 @token_auth.login_required
 def get_model(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
@@ -85,7 +86,7 @@ def get_model(modelId):
     return model.to_dict(), 200
 
 
-@api.post('/models')
+@blueprint.post('/models')
 @token_auth.login_required
 def create_model():
     model = Model.create(request.form)
@@ -102,7 +103,7 @@ def create_model():
     return payload, 201
 
 
-@api.put('/models/<modelId>')
+@blueprint.put('/models/<modelId>')
 @token_auth.login_required
 def edit_model(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
@@ -128,8 +129,9 @@ def edit_model(modelId):
     return payload, 200
 
 
-@api.delete('/models/<modelId>')
+@blueprint.delete('/models/<modelId>')
 @token_auth.login_required
+@apply_async
 def delete_model(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
     if model is None:

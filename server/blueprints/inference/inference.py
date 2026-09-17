@@ -8,19 +8,17 @@ from uuid import uuid4
 
 from flask import current_app, request, abort
 
-from ...auth import api_key_required
-from ...utils.registry import registry_for
-from ...utils import telemetry
+from server.auth import api_key_required
+from server.utils.registry import registry_for
+from server.utils import telemetry
 
-from . import triton
+from . import blueprint
 
 
-@triton.post('/infer/<model_id>')
+@blueprint.post('/<environment>/<model_id>')
 @api_key_required
-def infer(model_id):
+def infer(environment, model_id):
     started = time.perf_counter()
-
-    environment = current_app.config['ENVIRONMENT']
 
     registry = registry_for(environment)
     route = registry.route(model_id)
@@ -99,8 +97,8 @@ def infer(model_id):
     if pending:
         if not registry.alive(model_id) and \
             registry.claim(model_id, ttl=current_app.config['INFERENCE_START_TTL']):
-            from ...tasks.inference import model
-            model.apply_async(
+            from server.tasks.inference import serve
+            serve.apply_async(
                 task_id=route.task_id,
                 args=(model_id, route.path, route.model_type),
                 kwargs={'environment': environment},

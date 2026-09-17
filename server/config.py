@@ -6,37 +6,38 @@ load_dotenv()
 
 class Config(object):
     # The debug server is opt-in rather than implied by an environment name,
-    # so a non-production stack does not run the interactive debugger by
-    # accident. app.py also drives its reloader off this flag.
+    # so a stack does not run the interactive debugger by accident. app.py
+    # also drives its reloader off this flag.
     DEBUG = os.environ.get('FLASK_DEBUG', 'false').lower() in ('1', 'true', 'yes')
     TESTING = False
 
     SECRET_KEY = os.environ.get('SECRET_KEY', '51f52814-0071-11e6-a247-000ec6c2372c')
 
+    # Listen port for `python app.py` (containers always bind 5000).
+    PORT = int(os.environ.get('PORT', 5000))
+
+    # The URL users reach the UI on. It is the only absolute URL the backend
+    # emits: deployment endpoints are PUBLIC_URL/api/inference/<env>/<model>.
+    PUBLIC_URL = os.environ.get('PUBLIC_URL', 'http://localhost').rstrip('/')
+
     ALLOWED_EXTENSIONS = {'csv', 'tsv'}
     ALLOWED_MODELS = {'text_classification', 'named_entity_recognition', 'natural_language_understanding'}
 
+    # The inference environments. Each has its own route registry (a Redis
+    # URL), its own serving queue of the same name, and its own API-key TTL.
+    # No HTTP process "serves" an environment: the inference blueprint reads
+    # it from the request path, and serving workers from their queue.
     ALLOWED_ENVIRONMENTS = {
         name: {
-            'server': {
-                'host': os.environ.get(f'SERVER_HOST_{name.upper()}',
-                                       os.environ.get('SERVER_HOST', 'http://localhost')),
-                'port': int(os.environ.get(f'SERVER_PORT_{name.upper()}', server_port)),
-            },
-            'triton': {
-                'host': os.environ.get(f'INFERENCE_HOST_{name.upper()}',
-                                       os.environ.get('INFERENCE_HOST', 'http://localhost')),
-                'port': int(os.environ.get(f'INFERENCE_PORT_{name.upper()}', triton_port)),
-            },
             'redis_url': os.environ.get(f'REDIS_URL_{name.upper()}', 'redis://localhost:6379/0'),
             'token_ttl': int(os.environ.get(f'INFERENCE_API_KEY_TTL_{name.upper()}', token_ttl)),
         }
-        for name, server_port, triton_port, token_ttl in (
-            ('testing', 5001, 5002, 12 * 60 * 60),
-            ('production', 5003, 5004, 30 * 24 * 60 * 60),
+        for name, token_ttl in (
+            ('testing', 12 * 60 * 60),
+            ('production', 30 * 24 * 60 * 60),
         )
     }
-    
+
     SESSION_TYPE = os.environ.get('SESSION_TYPE', 'filesystem')
 
     SQLALCHEMY_DATABASE_URI = os.environ.get('SQLALCHEMY_DATABASE_URI', 'sqlite:///indicnlu.db')
@@ -47,9 +48,8 @@ class Config(object):
     STORAGE_PROVIDER = os.environ.get('STORAGE_PROVIDER', 'local')
     STORAGE_BUCKET = os.environ.get('STORAGE_BUCKET', 'data')
 
-    REQUEST_STATS_WINDOW = 15
     TOKEN_EXPIRY = 720
-    
+
     INFERENCE_BATCH_SIZE = int(os.environ.get('INFERENCE_BATCH_SIZE', 32))
     INFERENCE_SLEEP = float(os.environ.get('INFERENCE_SLEEP', 0.005))
     INFERENCE_IDLE_TIMEOUT = float(os.environ.get('INFERENCE_IDLE_TIMEOUT', 300))
@@ -70,38 +70,11 @@ class Config(object):
 
     DATASET_IO_BATCH_SIZE = int(os.environ.get('DATASET_IO_BATCH_SIZE', 5000))
 
-
-class ProductionConfig(Config):
-    pass
-
-
-class TestingConfig(Config):
-    # The staging stack a version is validated in before it is promoted to
-    # production. It is a real serving environment, not a unit-test harness,
-    # so it keeps Flask's normal error handling.
-    pass
-
-
-# Keyed by FLASK_ENV, which names both the Flask config and the inference
-# environment the process serves. Every key here must also appear in
-# ALLOWED_ENVIRONMENTS, which supplies its ports, registry and key TTL.
-configs = {
-    'testing': TestingConfig,
-    'production': ProductionConfig
-}
-
-
-def config_for(name):
-    """The Flask config class for an environment name.
-
-    Raised as a named error rather than a bare ``KeyError`` because the only
-    way to get here is a stale ``FLASK_ENV`` — ``development`` was retired as
-    an environment, so an old .env lands squarely on this path.
-    """
-    try:
-        return configs[name]
-    except KeyError:
-        raise ValueError(
-            'Unknown FLASK_ENV %r. Valid environments: %s'
-            % (name, ', '.join(configs))
-        ) from None
+    # Long-running views run in the request worker (server.blueprints.apply_async).
+    # Their results are HTTP responses fetched once, so they live in Redis with
+    # a TTL rather than in the database next to training/serving history.
+    REQUEST_RESULT_BACKEND = os.environ.get('REQUEST_RESULT_BACKEND', 'redis://localhost:6379/1')
+    REQUEST_RESULT_TTL = int(os.environ.get('REQUEST_RESULT_TTL', 3600))
+    # The request worker holds no TensorFlow, so its children can be reused
+    # (the training/serving workers must not: one task per process there).
+    REQUEST_MAX_TASKS_PER_CHILD = int(os.environ.get('REQUEST_MAX_TASKS_PER_CHILD', 50))

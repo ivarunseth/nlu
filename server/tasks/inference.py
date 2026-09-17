@@ -7,16 +7,15 @@ import tempfile
 
 from redis.exceptions import LockError
 
-from . import triton
+from . import serving
 
 
-@triton.task(bind=True)
-def model(self, model_id, path, model_type, **kwargs):
+@serving.task(bind=True)
+def serve(self, model_id, path, model_type, **kwargs):
     """Serve ``model_id`` until idle or unpublished. See module docstring."""
 
-    from ..config import config_for
-    config = config_for(os.environ.get('FLASK_ENV', 'production'))
-    environment = kwargs.get('environment', os.environ.get('FLASK_ENV', 'production'))
+    from ..config import Config as config
+    environment = kwargs['environment']
     bucket = kwargs.get('bucket', config.STORAGE_BUCKET)
 
     from ..utils.registry import registry_for
@@ -54,7 +53,7 @@ def model(self, model_id, path, model_type, **kwargs):
     # until the first heartbeat, which is a further heartbeat_interval after
     # the model comes online -- so a heartbeat_ttl lock silently expires
     # mid-load and the first heartbeat then kills a healthy deployment. Start
-    # on the same budget the control plane reserves for a start, and narrow to
+    # on the same budget the publishing blueprint reserves for a start, and narrow to
     # heartbeat_ttl once the heartbeat loop is refreshing it.
     lock = registry.lock(model_id, timeout=max(start_ttl, heartbeat_ttl))
 

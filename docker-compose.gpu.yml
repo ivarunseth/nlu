@@ -8,18 +8,18 @@
 # handled here: all three services see every GPU.
 
 x-worker-gpu: &worker-gpu
-  image: ${REGISTRY:-}indic-nlu-worker:${TAG:-latest}-cuda
+  image: ${REGISTRY:-}worker:${TAG:-latest}-cuda
   gpus: all
 
 services:
-  worker:
+  training-worker:
     <<: *worker-gpu
     build:
       args:
         DEVICE: cuda
 
-  worker-testing:
+  serving-worker-testing:
     <<: *worker-gpu
 
-  worker-production:
+  serving-worker-production:
     <<: *worker-gpu

@@ -7,12 +7,12 @@ the UNK generalization).
 """
 from flask import request, g, abort
 
-from ...auth import token_auth
-from ...database import Value
-from ...utils.dataset import normalize_term
+from server.auth import token_auth
+from server.database import Value
+from server.utils.dataset import normalize_term
 
-from ... import db
-from . import api
+from server import db
+from . import blueprint
 
 
 def _get_entity(modelId, entityId):
@@ -27,7 +27,7 @@ def _get_entity(modelId, entityId):
     return model, entity
 
 
-@api.get('/models/<modelId>/entities/<entityId>/values')
+@blueprint.get('/models/<modelId>/entities/<entityId>/values')
 @token_auth.login_required
 def get_entity_values(modelId, entityId):
     """
@@ -59,7 +59,7 @@ def get_entity_values(modelId, entityId):
     }, 200
 
 
-@api.post('/models/<modelId>/entities/<entityId>/values')
+@blueprint.post('/models/<modelId>/entities/<entityId>/values')
 @token_auth.login_required
 def create_entity_value(modelId, entityId):
     if not request.is_json:
@@ -71,7 +71,7 @@ def create_entity_value(modelId, entityId):
     return value.to_dict(), 201
 
 
-@api.put('/models/<modelId>/entities/<entityId>/values/<valueId>')
+@blueprint.put('/models/<modelId>/entities/<entityId>/values/<valueId>')
 @token_auth.login_required
 def edit_entity_value(modelId, entityId, valueId):
     if not request.is_json:
@@ -85,7 +85,7 @@ def edit_entity_value(modelId, entityId, valueId):
     return value.to_dict(), 200
 
 
-@api.delete('/models/<modelId>/entities/<entityId>/values/<valueId>')
+@blueprint.delete('/models/<modelId>/entities/<entityId>/values/<valueId>')
 @token_auth.login_required
 def delete_entity_value(modelId, entityId, valueId):
     model, entity = _get_entity(modelId, entityId)

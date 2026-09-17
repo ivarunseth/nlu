@@ -2,13 +2,14 @@ from flask import request, g, abort
 
 from sqlalchemy import func, select
 
-from ...auth import token_auth
-from ...database import Intent, Utterance
-from ...utils import io as dataset_io
-from ...utils.query import apply_sort, apply_date_range
+from server.auth import token_auth
+from server.database import Intent, Utterance
+from server.utils import io as dataset_io
+from server.utils.query import apply_sort, apply_date_range
 
-from ... import db
-from . import api
+from server import db
+from server.blueprints import apply_async
+from . import blueprint
 
 
 # The utterance tally `to_dict` reports, as a correlated subquery so the
@@ -27,7 +28,7 @@ INTENT_SORT_COLUMNS = {
 }
 
 
-@api.get('/models/<modelId>/intents')
+@blueprint.get('/models/<modelId>/intents')
 @token_auth.login_required
 def get_intents(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
@@ -56,7 +57,7 @@ def get_intents(modelId):
     }, 200
 
 
-@api.get('/models/<modelId>/intents/<intentId>')
+@blueprint.get('/models/<modelId>/intents/<intentId>')
 @token_auth.login_required
 def get_intent(modelId, intentId):
     model = g.current_user.models.filter_by(id=modelId).first()
@@ -73,7 +74,7 @@ def get_intent(modelId, intentId):
     return intent.to_dict(), 200
 
 
-@api.post('/models/<modelId>/intents')
+@blueprint.post('/models/<modelId>/intents')
 @token_auth.login_required
 def create_intent(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
@@ -88,7 +89,7 @@ def create_intent(modelId):
     return intent.to_dict(), 201
 
 
-@api.put('/models/<modelId>/intents/<intentId>')
+@blueprint.put('/models/<modelId>/intents/<intentId>')
 @token_auth.login_required
 def edit_intent(modelId, intentId):
     model = g.current_user.models.filter_by(id=modelId).first()
@@ -106,8 +107,9 @@ def edit_intent(modelId, intentId):
     return intent.to_dict(), 200
 
 
-@api.delete('/models/<modelId>/intents/<intentId>')
+@blueprint.delete('/models/<modelId>/intents/<intentId>')
 @token_auth.login_required
+@apply_async
 def delete_intent(modelId, intentId):
     model = g.current_user.models.filter_by(id=modelId).first()
     if model is None:

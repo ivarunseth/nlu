@@ -1,5 +1,5 @@
-# Celery workers: training (`sage`, the default CMD) and model serving
-# (`triton`, one worker per environment queue; docker-compose.yml overrides
+# Celery workers: training (`training`, the default CMD) and model serving
+# (`serving`, one worker per environment queue; docker-compose.yml overrides
 # `command`). This is the only image that carries TensorFlow and friends.
 #
 # DEVICE=cpu (default) installs requirements/worker.txt and builds for
@@ -29,8 +29,7 @@ RUN if [ "$DEVICE" = "cuda" ]; then \
       echo "DEVICE must be cpu or cuda, got '$DEVICE'" >&2; exit 1; \
     fi
 
-# No app.py or migrations: the worker builds its app context through
-# server.create_application_server (server/tasks/request.py).
+# No app.py or migrations: workers import server.tasks only and read Config directly.
 COPY --chown=appuser:appuser server/ ./server/
 # server/utils/dataset.py reads the label palette from public/colors.txt
 COPY --chown=appuser:appuser public/colors.txt ./public/colors.txt
@@ -42,4 +41,4 @@ USER appuser
 
 # Prefork is required: worker_max_tasks_per_child=1 gives every training
 # or serving task a fresh process, which only this pool provides.
-CMD ["celery", "-A", "server.tasks:sage", "worker", "-E", "-Q", "training", "-P", "prefork", "-c", "1", "-l", "INFO", "-Ofair", "-n", "sage@%h"]
+CMD ["celery", "-A", "server.tasks:training", "worker", "-E", "-Q", "training", "-P", "prefork", "-c", "1", "-l", "INFO", "-Ofair", "-n", "training@%h"]

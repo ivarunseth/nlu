@@ -1,13 +1,13 @@
 from flask import request, g, abort
 
-from ...auth import token_auth
-from ...database import Entity, Intent, Tag, Utterance
+from server.auth import token_auth
+from server.database import Entity, Intent, Tag, Utterance
 
-from ... import db
-from . import api
+from server import db
+from . import blueprint
 
 
-@api.get('/models/<modelId>/intents/<intentId>/utterances')
+@blueprint.get('/models/<modelId>/intents/<intentId>/utterances')
 @token_auth.login_required
 def get_utterances(modelId, intentId):
     model = g.current_user.models.filter_by(id=modelId).first()
@@ -31,7 +31,7 @@ def get_utterances(modelId, intentId):
     }, 200
 
 
-@api.get('/models/<modelId>/intents/<intentId>/utterances/<utteranceId>')
+@blueprint.get('/models/<modelId>/intents/<intentId>/utterances/<utteranceId>')
 @token_auth.login_required
 def get_utterance(modelId, intentId, utteranceId):
     utterance = Utterance.query.filter_by(id=utteranceId).first()
@@ -40,7 +40,7 @@ def get_utterance(modelId, intentId, utteranceId):
     return utterance.to_dict(), 200
 
 
-@api.post('/models/<modelId>/intents/<intentId>/utterances')
+@blueprint.post('/models/<modelId>/intents/<intentId>/utterances')
 @token_auth.login_required
 def create_utterance(modelId, intentId):
     intent = Intent.query.filter_by(id=intentId).first()
@@ -52,7 +52,7 @@ def create_utterance(modelId, intentId):
     return utterance.to_dict(), 200
 
 
-@api.put('/models/<modelId>/intents/<intentId>/utterances/<utteranceId>')
+@blueprint.put('/models/<modelId>/intents/<intentId>/utterances/<utteranceId>')
 @token_auth.login_required
 def edit_utterance(modelId, intentId, utteranceId):
     if not request.is_json:
@@ -69,7 +69,7 @@ def edit_utterance(modelId, intentId, utteranceId):
     return utterance.to_dict(), 200
 
 
-@api.delete('/models/<modelId>/intents/<intentId>/utterances/<utteranceId>')
+@blueprint.delete('/models/<modelId>/intents/<intentId>/utterances/<utteranceId>')
 @token_auth.login_required
 def delete_utterances(modelId, intentId, utteranceId):
     utterance = Utterance.query.filter_by(id=utteranceId).first()
@@ -91,7 +91,7 @@ def _get_model(modelId):
     return model
 
 
-@api.get('/models/<modelId>/utterances')
+@blueprint.get('/models/<modelId>/utterances')
 @token_auth.login_required
 def get_model_utterances(modelId):
     model = _get_model(modelId)
@@ -114,7 +114,7 @@ def get_model_utterances(modelId):
     }, 200
 
 
-@api.get('/models/<modelId>/utterances/<utteranceId>')
+@blueprint.get('/models/<modelId>/utterances/<utteranceId>')
 @token_auth.login_required
 def get_model_utterance(modelId, utteranceId):
     model = _get_model(modelId)
@@ -132,7 +132,7 @@ def _get_intent(model, intent_id):
     return intent
 
 
-@api.post('/models/<modelId>/utterances')
+@blueprint.post('/models/<modelId>/utterances')
 @token_auth.login_required
 def create_model_utterance(modelId):
     model = _get_model(modelId)
@@ -148,7 +148,7 @@ def create_model_utterance(modelId):
     return utterance.to_dict(), 201
 
 
-@api.put('/models/<modelId>/utterances/<utteranceId>')
+@blueprint.put('/models/<modelId>/utterances/<utteranceId>')
 @token_auth.login_required
 def edit_model_utterance(modelId, utteranceId):
     if not request.is_json:
@@ -215,7 +215,7 @@ def _replace_annotations(model, utterance, spans):
         entity.catalogue_surfaces(values)
 
 
-@api.delete('/models/<modelId>/utterances/<utteranceId>')
+@blueprint.delete('/models/<modelId>/utterances/<utteranceId>')
 @token_auth.login_required
 def delete_model_utterance(modelId, utteranceId):
     model = _get_model(modelId)

@@ -1,14 +1,14 @@
 from flask import request, g, abort
 
-from ...auth import token_auth
-from ...database import Instance
-from ...utils.common import generate_api_key
+from server.auth import token_auth
+from server.database import Instance
+from server.utils.common import generate_api_key
 
-from ... import db
-from . import api
+from server import db
+from . import blueprint
 
 
-@api.get('/models/<modelId>/instances')
+@blueprint.get('/models/<modelId>/instances')
 @token_auth.login_required
 def get_instances(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
@@ -24,7 +24,7 @@ def get_instances(modelId):
     return {'instances': [instance.to_dict() for instance in instances.all()]}, 200
 
 
-@api.post('/models/<modelId>/instances')
+@blueprint.post('/models/<modelId>/instances')
 @token_auth.login_required
 def create_instance(modelId):
     model = g.current_user.models.filter_by(id=modelId).first()
@@ -45,7 +45,7 @@ def create_instance(modelId):
     return {'instances': [instance.to_dict() for instance in model.instances.all()]}, 200
 
 
-@api.put('/models/<modelId>/instances/<int:instanceId>')
+@blueprint.put('/models/<modelId>/instances/<int:instanceId>')
 @token_auth.login_required
 def update_instance(modelId, instanceId):
     model = g.current_user.models.filter_by(id=modelId).first()
@@ -64,7 +64,7 @@ def update_instance(modelId, instanceId):
     return {'instance': instance.to_dict()}, 200
 
 
-@api.delete('/models/<modelId>/instances/<int:instanceId>')
+@blueprint.delete('/models/<modelId>/instances/<int:instanceId>')
 @token_auth.login_required
 def delete_instance(modelId, instanceId):
     model = g.current_user.models.filter_by(id=modelId).first()

@@ -2,7 +2,7 @@ from flask import request, g
 from flask_socketio import join_room, leave_room, ConnectionRefusedError
 from flask_socketio.namespace import Namespace
 
-from .auth import verify_token, extract_bearer_token_from_headers
+from server.auth import verify_token, extract_bearer_token_from_headers
 
 class Event(Namespace):
 

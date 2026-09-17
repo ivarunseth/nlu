@@ -1,12 +1,12 @@
 from flask import g, session
 
-from ...auth import basic_auth, token_auth
+from server.auth import basic_auth, token_auth
 
-from ... import db
-from . import api
+from server import db
+from . import blueprint
 
 
-@api.post('/tokens')
+@blueprint.post('/tokens')
 @basic_auth.login_required
 def create_token():
     """
@@ -19,7 +19,7 @@ def create_token():
     return g.current_user.to_dict(), 200
 
 
-@api.delete('/tokens')
+@blueprint.delete('/tokens')
 @token_auth.login_required
 def delete_token():
     """

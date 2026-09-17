@@ -1,10 +1,10 @@
 """
 Prediction telemetry pipeline.
 
-The inference data plane (the triton app) never touches the control-plane
+The inference blueprint never touches the
 database. Instead, after fetching a prediction back from Redis it pushes a
 compact record onto a per-environment telemetry queue (``<env>:telemetry``)
-via the same registry. The control plane runs a background consumer that
+via the same registry. The analytics service runs a background consumer that
 watches every environment's queue and batch-inserts the records as
 ``Prediction`` rows, so the serving hot path stays free of database writes.
 
@@ -26,7 +26,7 @@ def record(model_id, environment, version, input, output, cached=False, latency=
 
     ``output`` is the parsed prediction (or error) dict as stored in Redis.
     The record carries the model, environment and served version itself —
-    never a reference to the control-plane instance, which is deleted and
+    never a reference to the publishing blueprint's instance, which is deleted and
     recreated on every republish — so persisted history survives redeploys.
     """
     return {
@@ -64,7 +64,7 @@ def watch(environment: str, size: int):
     rows = []
     for item in raw:
         # A record that fails to parse or shape (e.g. one queued by an older
-        # data plane) is dropped rather than poisoning the whole batch.
+        # inference blueprint) is dropped rather than poisoning the whole batch.
         try:
             data = json.loads(item.decode('utf-8'))
             rows.append(Prediction.create(data))

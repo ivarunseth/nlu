@@ -1,4 +1,5 @@
-from flask import abort, url_for
+# Owned by the `dataset` blueprint. Other blueprints read only.
+from flask import abort
 
 from .. import db
 from ..utils.dataset import spans_to_tags
@@ -120,18 +121,10 @@ class Utterance(db.Model):
                 ],
                 # The IOB tags this utterance trains on; derived by the same
                 # module Training.start uses, so the preview never diverges.
-                'tags': spans_to_tags(self.text, self.spans),
-                '_link': {
-                    'self': url_for('api.get_model_utterance', modelId=self.model_id, utteranceId=self.id),
-                    'model': url_for('api.get_model', modelId=self.model_id)
-                }
+                'tags': spans_to_tags(self.text, self.spans)
             }
         return {
             'id': self.id,
             'intent_id': self.intent_id,
-            'text': self.text,
-            '_link': {
-                'self': url_for('api.get_utterance', modelId=self.intent.model_id, intentId=self.intent_id, utteranceId=self.id),
-                'intent': url_for('api.get_intent', modelId=self.intent.model_id, intentId=self.intent_id)
-            }
+            'text': self.text
         }

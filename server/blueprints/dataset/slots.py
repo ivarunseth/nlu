@@ -6,11 +6,11 @@ model trains on, so the resource is only available on
 """
 from flask import request, g, abort
 
-from ...auth import token_auth
-from ...database import Slot
+from server.auth import token_auth
+from server.database import Slot
 
-from ... import db
-from . import api
+from server import db
+from . import blueprint
 
 
 def _get_model(modelId):
@@ -22,7 +22,7 @@ def _get_model(modelId):
     return model
 
 
-@api.get('/models/<modelId>/slots')
+@blueprint.get('/models/<modelId>/slots')
 @token_auth.login_required
 def get_slots(modelId):
     model = _get_model(modelId)
@@ -39,7 +39,7 @@ def get_slots(modelId):
     return {'slots': [slot.to_dict() for slot in slots], 'total': len(slots)}, 200
 
 
-@api.post('/models/<modelId>/slots')
+@blueprint.post('/models/<modelId>/slots')
 @token_auth.login_required
 def create_slot(modelId):
     if not request.is_json:
@@ -51,7 +51,7 @@ def create_slot(modelId):
     return slot.to_dict(), 201
 
 
-@api.put('/models/<modelId>/slots/<slotId>')
+@blueprint.put('/models/<modelId>/slots/<slotId>')
 @token_auth.login_required
 def edit_slot(modelId, slotId):
     if not request.is_json:
@@ -65,7 +65,7 @@ def edit_slot(modelId, slotId):
     return slot.to_dict(), 200
 
 
-@api.delete('/models/<modelId>/slots/<slotId>')
+@blueprint.delete('/models/<modelId>/slots/<slotId>')
 @token_auth.login_required
 def delete_slot(modelId, slotId):
     model = _get_model(modelId)

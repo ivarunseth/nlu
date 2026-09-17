@@ -1,3 +1,4 @@
+# Owned by the `dataset` blueprint. Other blueprints read only.
 from .. import db
 from ..utils.common import timestamp
 

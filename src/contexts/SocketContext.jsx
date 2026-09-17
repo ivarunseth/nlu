@@ -21,7 +21,7 @@ export const SocketProvider = ({ children }) => {
         if (!user) return undefined;
 
         // Connect to the page's own origin; the Vite proxy (or nginx)
-        // forwards /socket.io to the environment's control-plane server.
+        // forwards /socket.io to the events blueprint.
         const connection = io({
             transports: ['websocket'],
             auth: {

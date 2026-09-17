@@ -48,18 +48,6 @@ def api_key_expiry(api_key):
         return None
 
 
-def add_request(request_stats):
-    t = timestamp()
-    while len(request_stats) > 0 and \
-            request_stats[0] < t - current_app.config['REQUEST_STATS_WINDOW']:
-        del request_stats[0]
-    request_stats.append(t)
-
-
-def requests_per_second(request_stats):
-    return len(request_stats) / current_app.config['REQUEST_STATS_WINDOW']
-
-
 def allowed_file(filename):
     filename = secure_filename(filename)
     return '.' in filename and \

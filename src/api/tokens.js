@@ -11,7 +11,7 @@ import { data } from "./client";
 // trip the session-expired modal: its 401 never passes through the session
 // client's interceptor.
 export const create = (email, password) =>
-    axios.post("/api/tokens", {}, { auth: { username: email, password } }).then(data);
+    axios.post("/api/auth/tokens", {}, { auth: { username: email, password } }).then(data);
 
 export const revoke = (token) =>
-    axios.delete("/api/tokens", { headers: { Authorization: `Bearer ${token}` } });
+    axios.delete("/api/auth/tokens", { headers: { Authorization: `Bearer ${token}` } });

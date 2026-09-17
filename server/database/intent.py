@@ -1,6 +1,7 @@
+# Owned by the `dataset` blueprint. Other blueprints read only.
 import pandas as pd
 
-from flask import abort, url_for
+from flask import abort
 
 from werkzeug.utils import secure_filename
 
@@ -114,12 +115,7 @@ class Intent(db.Model):
             'description': self.description,
             'created_at': format_timestamp(self.created_at),
             'updated_at': format_timestamp(self.updated_at),
-            'utterances_count': self.utterances.count(),
-            '_link': {
-                'self': url_for('api.get_intent', modelId=self.model_id, intentId=self.id),
-                'model': url_for('api.get_model', modelId=self.model_id),
-                'utterances': url_for('api.get_utterances', modelId=self.model_id, intentId=self.id)
-            }
+            'utterances_count': self.utterances.count()
         }
         if self.model is not None and self.model.kind == 'natural_language_understanding':
             data['slots_count'] = self.slots.count()

@@ -4,12 +4,12 @@ import { data } from "./client";
 // an utterance carries annotation spans rather than belonging to a label. The
 // intent-scoped ones live in intents.js, matching the two backend routes.
 export default (client) => ({
-    list: (modelId, params) => client.get(`/api/models/${modelId}/utterances`, { params }).then(data),
-    create: (modelId, body) => client.post(`/api/models/${modelId}/utterances`, body).then(data),
+    list: (modelId, params) => client.get(`/api/dataset/models/${modelId}/utterances`, { params }).then(data),
+    create: (modelId, body) => client.post(`/api/dataset/models/${modelId}/utterances`, body).then(data),
     update: (modelId, utteranceId, body) =>
-        client.put(`/api/models/${modelId}/utterances/${utteranceId}`, body).then(data),
+        client.put(`/api/dataset/models/${modelId}/utterances/${utteranceId}`, body).then(data),
     remove: (modelId, utteranceId) =>
-        client.delete(`/api/models/${modelId}/utterances/${utteranceId}`).then(data),
+        client.delete(`/api/dataset/models/${modelId}/utterances/${utteranceId}`).then(data),
     addTag: (modelId, utteranceId, span) =>
-        client.post(`/api/models/${modelId}/utterances/${utteranceId}/tags`, span).then(data),
+        client.post(`/api/dataset/models/${modelId}/utterances/${utteranceId}/tags`, span).then(data),
 });

@@ -1,8 +1,8 @@
 # Static SPA behind nginx. The build stage runs Vite; the runtime stage is
-# nginx with nginx.conf, which proxies /api and /socket.io to the
-# control plane the same way the Vite dev server does (vite.config.js).
-# Inference endpoints are absolute URLs the browser calls directly and are
-# not proxied here.
+# nginx with nginx.conf, which serves the built UI and proxies
+# /api/<blueprint>/ to the service of that name (inference per environment:
+# /api/inference/<environment>/ -> inference-<environment>) and /socket.io/
+# to events; see nginx.conf.
 
 FROM node:22-bookworm-slim AS build
 

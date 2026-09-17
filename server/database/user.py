@@ -1,6 +1,7 @@
+# Owned by the `auth` blueprint. Other blueprints read only.
 from datetime import datetime, timedelta
 
-from flask import abort, url_for, current_app
+from flask import abort, current_app
 
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -89,10 +90,5 @@ class User(db.Model):
             'created_at': format_timestamp(self.created_at),
             'updated_at': format_timestamp(self.updated_at),
             'email': self.email,
-            'token': self.token,
-            '_links': {
-                'self': url_for('api.get_user', userId=self.id),
-                'tokens': url_for('api.create_token'),
-                'models': url_for('api.get_models')
-            }
+            'token': self.token
         }

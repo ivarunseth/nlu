@@ -1,3 +1,4 @@
+# Owned by the `publishing` blueprint. Other blueprints read only.
 from flask import abort, current_app
 
 from sqlalchemy.ext.associationproxy import association_proxy

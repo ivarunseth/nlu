@@ -1,3 +1,4 @@
+# Owned by the `analytics` blueprint (written by its telemetry consumer). Others read only.
 import time
 
 from flask import abort
@@ -9,13 +10,13 @@ from .. import db
 
 class Prediction(db.Model):
     """
-    A single served prediction, logged by the inference data plane.
+    A single served prediction, logged by the inference blueprint.
 
-    Records are produced by the triton app, pushed onto a per-environment
-    Redis telemetry queue, and batch-inserted here by the control-plane
-    consumer (see ``server.telemetry``). The row is keyed by model and
-    environment — the data plane never resolves the control-plane instance —
-    and carries the environment and served version denormalized so history
+    Records are produced by the inference blueprint, pushed onto a per-environment
+    Redis telemetry queue, and batch-inserted here by the analytics service's
+    telemetry consumer (see ``server.telemetry``). The row is keyed by model and
+    environment — the inference blueprint never resolves the publishing blueprint's
+    instance — and carries the environment and served version denormalized so history
     outlives the deployment: instances are deleted and recreated on every
     republish, and the Analyse Production tab must not reset when that
     happens. Rows only ever leave through the TELEMETRY_RETENTION_DAYS

@@ -21,7 +21,7 @@ variable "TAG" {
 }
 
 group "default" {
-  targets = ["client", "api", "worker"]
+  targets = ["client", "migrate", "training-worker"]
 }
 
 group "cuda" {
@@ -29,23 +29,24 @@ group "cuda" {
 }
 
 group "all" {
-  targets = ["client", "api", "worker", "worker-cuda"]
+  targets = ["client", "migrate", "training-worker", "worker-cuda"]
 }
 
 target "client" {
   platforms = ["linux/amd64", "linux/arm64"]
-  tags      = ["${REGISTRY}indic-nlu-client:${TAG}"]
+  tags      = ["${REGISTRY}client:${TAG}"]
 }
 
-target "api" {
+// The api image: compose's `migrate` service carries its build.
+target "migrate" {
   platforms = ["linux/amd64", "linux/arm64"]
-  tags      = ["${REGISTRY}indic-nlu-api:${TAG}"]
+  tags      = ["${REGISTRY}api:${TAG}"]
 }
 
-// CPU worker: compose's `worker` service with both arches.
-target "worker" {
+// CPU worker: compose's `training-worker` service with both arches.
+target "training-worker" {
   platforms = ["linux/amd64", "linux/arm64"]
-  tags      = ["${REGISTRY}indic-nlu-worker:${TAG}-cpu"]
+  tags      = ["${REGISTRY}worker:${TAG}-cpu"]
   args = {
     DEVICE = "cpu"
   }
@@ -53,9 +54,9 @@ target "worker" {
 
 // CUDA worker: same Dockerfile, TensorFlow's [and-cuda] wheels. x86_64 only.
 target "worker-cuda" {
-  inherits  = ["worker"]
+  inherits  = ["training-worker"]
   platforms = ["linux/amd64"]
-  tags      = ["${REGISTRY}indic-nlu-worker:${TAG}-cuda"]
+  tags      = ["${REGISTRY}worker:${TAG}-cuda"]
   args = {
     DEVICE = "cuda"
   }

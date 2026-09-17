@@ -8,12 +8,13 @@ from flask import request, g, abort
 
 from sqlalchemy import func, select
 
-from ...auth import token_auth
-from ...database import Entity, Value
-from ...utils.query import apply_sort, apply_date_range, list_argument
+from server.auth import token_auth
+from server.database import Entity, Value
+from server.utils.query import apply_sort, apply_date_range, list_argument
 
-from ... import db
-from . import api
+from server import db
+from server.blueprints import apply_async
+from . import blueprint
 
 
 # The catalogue tally `to_dict` reports, as a correlated subquery so the
@@ -44,7 +45,7 @@ def _get_model(modelId):
     return model
 
 
-@api.get('/models/<modelId>/entities')
+@blueprint.get('/models/<modelId>/entities')
 @token_auth.login_required
 def get_entities(modelId):
     model = _get_model(modelId)
@@ -74,7 +75,7 @@ def get_entities(modelId):
     }, 200
 
 
-@api.get('/models/<modelId>/entities/<entityId>')
+@blueprint.get('/models/<modelId>/entities/<entityId>')
 @token_auth.login_required
 def get_entity(modelId, entityId):
     model = _get_model(modelId)
@@ -84,7 +85,7 @@ def get_entity(modelId, entityId):
     return entity.to_dict(), 200
 
 
-@api.post('/models/<modelId>/entities')
+@blueprint.post('/models/<modelId>/entities')
 @token_auth.login_required
 def create_entity(modelId):
     model = _get_model(modelId)
@@ -94,7 +95,7 @@ def create_entity(modelId):
     return entity.to_dict(), 201
 
 
-@api.put('/models/<modelId>/entities/<entityId>')
+@blueprint.put('/models/<modelId>/entities/<entityId>')
 @token_auth.login_required
 def edit_entity(modelId, entityId):
     model = _get_model(modelId)
@@ -107,8 +108,9 @@ def edit_entity(modelId, entityId):
     return entity.to_dict(), 200
 
 
-@api.delete('/models/<modelId>/entities/<entityId>')
+@blueprint.delete('/models/<modelId>/entities/<entityId>')
 @token_auth.login_required
+@apply_async
 def delete_entity(modelId, entityId):
     model = _get_model(modelId)
     entity = model.entities.filter_by(id=entityId).first()

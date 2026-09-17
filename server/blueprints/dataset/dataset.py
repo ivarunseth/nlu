@@ -20,12 +20,13 @@ from flask import Response, request, g, abort
 
 from werkzeug.exceptions import HTTPException
 
-from ...auth import token_auth
-from ...database import Entity, Intent, Slot, Utterance, Value
-from ...utils.dataset import parse_inline, validate_import_spans
+from server.auth import token_auth
+from server.database import Entity, Intent, Slot, Utterance, Value
+from server.utils.dataset import parse_inline, validate_import_spans
 
-from ... import db
-from . import api
+from server import db
+from server.blueprints import apply_async
+from . import blueprint
 from .utterances import _replace_annotations
 
 
@@ -48,14 +49,16 @@ def _document_response(document):
     return Response(json.dumps(document, ensure_ascii=False), mimetype='application/json')
 
 
-@api.get('/models/<modelId>/dataset')
+@blueprint.get('/models/<modelId>/dataset')
 @token_auth.login_required
+@apply_async
 def get_dataset(modelId):
     return _document_response(_get_model(modelId).dataset_to_dict())
 
 
-@api.put('/models/<modelId>/dataset')
+@blueprint.put('/models/<modelId>/dataset')
 @token_auth.login_required
+@apply_async
 def put_dataset(modelId):
     if not request.is_json:
         abort(400, 'Request is not JSON type')

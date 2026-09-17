@@ -1,5 +1,5 @@
-# Runtime shared by every Python process (control plane, data planes,
-# Celery workers, flower). Pins mirror the versions the project was
+# Runtime shared by every Python process (the Flask services, inference
+# blueprints, Celery workers, flower). Pins mirror the versions the project was
 # developed against; pip picks the platform wheel.
 
 # ── direct ────────────────────────────────────────────────────
@@ -8,6 +8,7 @@ azure-storage-blob==12.26.0
 boto3==1.43.26
 celery==5.5.3
 Flask==3.1.0
+Flask-Cors==6.0.1
 Flask-HTTPAuth==4.8.0
 Flask-Migrate==4.1.0
 Flask-Session==0.8.0

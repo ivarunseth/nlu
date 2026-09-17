@@ -1,4 +1,4 @@
-# Control plane, data planes, migrations and flower (docker/Dockerfile.api).
+# The Flask services, inference blueprints, migrations and flower (docker/Dockerfile.api).
 -r base.txt
 
 flower==2.0.1

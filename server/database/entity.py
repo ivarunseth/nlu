@@ -1,6 +1,7 @@
+# Owned by the `dataset` blueprint. Other blueprints read only.
 import re
 
-from flask import abort, url_for
+from flask import abort
 
 from .. import db
 from ..utils.dataset import next_label_color, normalize_term
@@ -159,12 +160,7 @@ class Entity(db.Model):
             'updated_at': format_timestamp(self.updated_at),
             'annotations_count': self.tags.count(),
             # The authored catalogue (values CRUD), on both model types.
-            'values_count': self.values.count(),
-            '_link': {
-                'self': url_for('api.get_entity', modelId=self.model_id, entityId=self.id),
-                'model': url_for('api.get_model', modelId=self.model_id),
-                'values': url_for('api.get_entity_values', modelId=self.model_id, entityId=self.id)
-            }
+            'values_count': self.values.count()
         }
         if self.model is not None and self.model.kind == 'natural_language_understanding':
             # An entity's spans live on the slots that map to it; report

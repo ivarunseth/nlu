@@ -1,3 +1,4 @@
+# Owned by the `dataset` blueprint. Other blueprints read only.
 import io
 import csv
 import uuid
@@ -8,7 +9,7 @@ from datetime import timezone
 
 import pandas as pd
 
-from flask import abort, g, url_for, current_app
+from flask import abort, g, current_app
 
 from werkzeug.utils import secure_filename
 
@@ -679,11 +680,5 @@ class Model(db.Model):
             'kind': self.kind,
             'status': self.status,
             'created_at': format_timestamp(self.created_at),
-            'updated_at': format_timestamp(self.updated_at),
-            '_links': {
-                'self': url_for('api.get_model', modelId=self.id),
-                'user': url_for('api.get_user', userId=self.user_id),
-                'intents': url_for('api.get_intents', modelId=self.id),
-                'trainings': url_for('api.get_trainings', modelId=self.id)
-            }
+            'updated_at': format_timestamp(self.updated_at)
         }

@@ -1,5 +1,5 @@
 """
-SQLAlchemy models for the control plane.
+SQLAlchemy models. Each module states which blueprint owns (writes) its table.
 
 Each model lives in its own module; they are re-exported here so the rest
 of the codebase keeps importing them from ``server.database`` unchanged.

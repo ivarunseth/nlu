@@ -8,7 +8,7 @@ import { UserContext } from "./UserContext";
 // kept current over the shared socket:
 //   - `training` events on the user's own room (user:<id>) say a run started
 //     (so the strip subscribes to the model's room in time) or was stopped —
-//     with its final status, since a stop is written by the control plane
+//     with its final status, since a stop is written by the training blueprint
 //     and the worker pushes nothing for it;
 //   - `status` events on each model:<id> room carry the run's task status,
 //     its metric history and, between epochs, batch progress.

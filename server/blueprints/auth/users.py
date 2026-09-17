@@ -1,13 +1,13 @@
 from flask import request, abort, g, current_app
 
-from ...auth import token_auth, token_optional_auth
-from ...database import User
+from server.auth import token_auth, token_optional_auth
+from server.database import User
 
-from ... import db
-from . import api
+from server import db
+from . import blueprint
 
 
-@api.post('/users')
+@blueprint.post('/users')
 def create_user():
     """
     Register a new user.
@@ -21,7 +21,7 @@ def create_user():
     return user.to_dict(), 201
 
 
-@api.get('/users')
+@blueprint.get('/users')
 @token_optional_auth.login_required
 def get_users():
     """
@@ -35,7 +35,7 @@ def get_users():
     return {'users': [user.to_dict() for user in users.all()]}, 200
 
 
-@api.get('/users/<userId>')
+@blueprint.get('/users/<userId>')
 @token_optional_auth.login_required
 def get_user(userId):
     """
@@ -49,7 +49,7 @@ def get_user(userId):
     return user.to_dict(), 200
 
 
-@api.post('/users/forgot-password')
+@blueprint.post('/users/forgot-password')
 def forgot_password():
     """
     Request a password reset.
@@ -65,7 +65,7 @@ def forgot_password():
     return '', 200
 
 
-@api.put('/users/<userId>')
+@blueprint.put('/users/<userId>')
 @token_auth.login_required
 def edit_user(userId):
     """

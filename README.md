@@ -30,13 +30,16 @@ Each type ships several architectures (transformer, deep neural network, recurre
 
 ### How it fits together
 
-The system is split into two planes that only meet through Redis and blob storage:
+The backend is seven Flask blueprints under [server/blueprints/](server/blueprints/), one per deployable service, all served from one image. The name of a blueprint is its URL prefix (`/api/<name>/`), its nginx location and its compose service:
 
-- **Control plane** (`python app.py`) — the `/api` blueprint: auth, models, datasets, annotation, training, publishing, analytics. Talks to the database, enqueues Celery jobs, writes inference routes to Redis, and streams training progress over Socket.IO.
-- **Data plane** (`python app.py triton`) — one process per environment exposing `POST /api/infer/<model_id>`. It never touches the database: it reads the route from Redis, queues the inputs, and waits for the serving worker to answer.
-- **Workers** — the `sage` Celery app runs training (`training` queue); the `triton` Celery app runs serving tasks, one worker per environment queue (`testing`, `production`). A serving task loads a model once and answers batches until it is unpublished, superseded, or idle.
-
-A version is validated in `testing` before it is promoted to `production`. See [CLAUDE.md](CLAUDE.md) for the architecture in depth.
+- **auth** — sign-up, sign-in, session tokens.
+- **dataset** — models and everything a labelled dataset is made of (intents, entities, slots, values, utterances, tags, import/export).
+- **training** — training runs; enqueues onto the `training` Celery queue.
+- **publishing** — deployments: writes a route into the environment's registry (Redis) and launches the serving task.
+- **analytics** — dashboards; runs the telemetry consumer that persists predictions.
+- **inference** — `POST /api/inference/<environment>/<model_id>`: reads the route from Redis, hands inputs to the serving worker over Redis, never queries the database (the models are imported by every process, but the inference blueprint issues no queries).
+- **events** — the Socket.IO server (`/socket.io`); every other process emits through the Redis message queue.
+- **Workers** — the `training` Celery app runs training (`training` queue); the `serving` app runs serving tasks, one worker per environment queue (`testing`, `production`). A serving task loads a model once and answers batches until it is unpublished, superseded, or idle.
 
 ## Requirements
 
@@ -54,7 +57,7 @@ Local development runs each process on the host against SQLite and a local Redis
 
    ```bash
    cp .env.example .env
-   # set SECRET_KEY; the rest of the defaults work for a local setup
+   # set SECRET_KEY; PUBLIC_URL=http://localhost:5173 is right for host development
    ```
 
 2. **Backend**
@@ -70,13 +73,13 @@ Local development runs each process on the host against SQLite and a local Redis
 4. **Start the processes**, each in its own terminal (there is no process manager):
 
    ```bash
-   python app.py                                                    # control plane, :5001
-   python app.py triton                                             # data plane for FLASK_ENV, :5002 (testing)
-   celery -A server.tasks:sage   worker -Q training -P prefork -c 1 # training worker
-   celery -A server.tasks:triton worker -Q testing  -P prefork      # serving worker, testing
+   python app.py                                                       # every blueprint in one process, :5000
+   celery -A server.tasks:training worker -Q training -P prefork -c 1  # training worker
+   celery -A server.tasks:serving  worker -Q testing  -P prefork       # serving worker, testing
+   celery -A server.tasks:api      worker -Q default  -P prefork       # request worker (long-running API calls)
    ```
 
-   To also serve `production` locally, run a second data plane and serving worker with `FLASK_ENV=production` (`:5004`, queue `production`).
+   `python app.py training` (any blueprint names) runs a subset. To also serve `production` locally, run a second serving worker with `-Q production`.
 
 5. **Frontend**
 
@@ -85,7 +88,7 @@ Local development runs each process on the host against SQLite and a local Redis
    npm run dev                 # http://localhost:5173
    ```
 
-   The Vite dev server proxies `/api`, `/api/infer` and `/socket.io` to the `testing` stack (`FLASK_ENV=production npm run dev` targets the other one). `npm run build` writes a production bundle to `dist/`.
+   The Vite dev server proxies `/api` and `/socket.io` to `http://localhost:${PORT}`. `npm run build` writes a production bundle to `dist/`.
 
 ## Running with Docker Compose
 
@@ -93,25 +96,27 @@ Three images, each with only its own dependencies:
 
 | Image | Dockerfile | Runs |
 |---|---|---|
-| `indic-nlu-client` | [docker/Dockerfile.client](docker/Dockerfile.client) | nginx: built UI, proxies `/api` and `/socket.io` to `api` |
-| `indic-nlu-api` | [docker/Dockerfile.api](docker/Dockerfile.api) | control plane, the two data planes, `flask db upgrade`, flower |
-| `indic-nlu-worker:<tag>-cpu` / `-cuda` | [docker/Dockerfile.worker](docker/Dockerfile.worker) | training and serving Celery workers (the only image with TensorFlow) |
+| `client` | [docker/Dockerfile.client](docker/Dockerfile.client) | nginx: built UI, proxies `/api/<blueprint>/` and `/socket.io/` to the blueprint services |
+| `api` | [docker/Dockerfile.api](docker/Dockerfile.api) | every `*-api` blueprint service, `migrate` (`flask db upgrade`), flower |
+| `worker:<tag>-cpu` / `-cuda` | [docker/Dockerfile.worker](docker/Dockerfile.worker) | training and serving Celery workers (the only image with TensorFlow) |
 
 [docker-compose.yml](docker-compose.yml) runs the whole stack on one host, one process per container:
 
 | Service | Role | Published port |
 |---|---|---|
-| `client` | nginx: built UI, proxies `/api` and `/socket.io` to `api` | `80` (`CLIENT_PORT`) |
-| `api` | control plane (gunicorn, one gevent worker) | — (reached only through `client`) |
-| `triton-testing` / `triton-production` | data planes (gunicorn, `TRITON_WORKERS` gevent workers) | `5002` / `5004` (the browser calls them directly) |
+| `client` | nginx: built UI, proxies `/api/<blueprint>/` and `/socket.io/` | `80` (`CLIENT_PORT`) |
+| `migrate` | builds the Flask image, runs `flask db upgrade`, exits | — |
+| `auth-api`, `dataset-api`, `training-api`, `publishing-api`, `analytics-api`, `events-api` | one blueprint each (gunicorn, gevent) | — |
+| `inference-api-testing` / `inference-api-production` | the `inference` blueprint, one container per environment | — |
 | `flower` | Celery monitoring for every queue | `127.0.0.1:5555` (`FLOWER_BIND`, `FLOWER_PORT`) |
-| `worker` | training worker (`sage` Celery app) | — |
-| `worker-testing` / `worker-production` | serving workers (`triton` Celery app) | — |
-| `migrate` | one-shot `flask db upgrade`, everything waits for it | — |
-| `redis`, `postgres` | with healthchecks and named volumes | — |
+| `request-worker` | replays long-running API calls (see below) | — |
+| `training-worker` | training worker (builds the worker image) | — |
+| `serving-worker-testing` / `serving-worker-production` | serving workers | — |
+| `redis` | Celery broker, Socket.IO message queue, inference registries | — |
+| `postgres` | with healthchecks and a named volume | — |
 
 ```bash
-cp .env.example .env            # set SECRET_KEY and POSTGRES_PASSWORD
+cp .env.example .env            # set SECRET_KEY, POSTGRES_PASSWORD and PUBLIC_URL (http://localhost for a local stack)
 docker compose up -d --build
 open http://localhost/
 ```
@@ -122,7 +127,7 @@ On the CUDA host (linux/amd64 with the NVIDIA Container Toolkit), the override s
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
 ```
 
-Compose reads `.env` and overrides the host-specific values (localhost Redis, SQLite) per service, so the same `.env` serves both ways of running the stack. Model artifacts live in the `data` volume, shared by the API and all workers.
+Compose reads `.env` and overrides the host-specific values (localhost Redis, SQLite) per service, so the same `.env` serves both ways of running the stack. `PUBLIC_URL` is the exception: it must name the address users reach nginx on. Model artifacts live in the `data` volume, shared by the API and all workers.
 
 Python dependencies are split by role under [requirements/](requirements/) (`base`, `api`, `worker`, `worker-cuda`); the top-level `requirements.txt` includes `worker.txt` for a native install. [docker-bake.hcl](docker-bake.hcl) layers `linux/amd64` + `linux/arm64` platforms over the compose build definitions for when the images are published to a registry (`docker buildx bake -f docker-compose.yml -f docker-bake.hcl --print all` shows the plan). The flower service unsets an empty `FLOWER_BASIC_AUTH` before starting, because flower would otherwise treat the empty value as an (unmatchable) credential.
 
@@ -130,16 +135,18 @@ Useful commands:
 
 ```bash
 docker compose ps
-docker compose logs -f api worker       # any service name
-docker compose restart worker-testing
+docker compose logs -f dataset-api training-worker   # any service name
+docker compose restart serving-worker-testing
 docker compose down                     # keep data
 docker compose down -v                  # wipe database, redis and artifacts
 ```
 
 ## Notes for developers
 
-- **Inference endpoints are absolute URLs.** A deployment's endpoint is `INFERENCE_HOST:<5002|5004>/api/infer/<model_id>` and the browser calls it directly, bypassing nginx. On a real host set `INFERENCE_HOST` to its public name and keep `5002`/`5004` reachable.
-- **Environments are first-class.** `FLASK_ENV` (`testing` | `production`) names both the Flask config and the inference environment a process serves — it selects the port for the servers and the registry/queue for the data plane and serving workers. Adding an environment means editing `ALLOWED_ENVIRONMENTS` in [server/config.py](server/config.py), mirroring the ports in [vite.config.js](vite.config.js), and running a serving worker on the new queue.
+- **Inference endpoints go through nginx.** A deployment's endpoint is `PUBLIC_URL/api/inference/<environment>/<model_id>`; set `PUBLIC_URL` to the host's public name.
+- **Environments are inference environments.** `testing` / `production` each have a route registry (`REDIS_URL_<ENV>`), a serving queue of the same name and an API-key TTL (`ALLOWED_ENVIRONMENTS` in [server/config.py](server/config.py)). No HTTP process "serves" an environment: `inference` reads it from the URL, serving workers from their queue. Adding one means editing that dict and running a serving worker on the new queue.
+- **One Socket.IO server.** Only the `events` blueprint (`events-api` in compose) hosts `/socket.io`; everything else emits through `server/utils/socket.py` (the Redis message queue). Keep it at one gunicorn worker.
+- **Long-running API calls are asynchronous.** Views wrapped in `apply_async` ([server/blueprints/__init__.py](server/blueprints/__init__.py)) — dataset import/export, the analytics dashboards, training data download, and the cascading deletes of a model/intent/entity — answer `202 {"task_id"}` with a `Location` header at once; the request worker (`celery -A server.tasks:api worker -Q default`) replays the request and stores the response in `REQUEST_RESULT_BACKEND` (Redis, expiring). `GET /api/<blueprint>/status/<task_id>` returns 202 until then and the stored response after. The browser does not poll: the worker pushes `status` into the task-id Socket.IO room and the API client ([src/api/client.js](src/api/client.js)) fetches the result on the terminal event (with a slow poll as fallback), so call sites see the same result a synchronous endpoint would return. `curl` users poll `Location`.
 - **Keep the Celery prefork pool.** `worker_max_tasks_per_child=1` gives each training/serving task a fresh process; only prefork provides that.
 - **Migrations:** prefer hand-written ones. `flask db migrate` autogenerate proposes dropping Celery's result-backend tables (`taskmeta`, `tasksetmeta`) — those belong to Celery, and dropping them fails on a fresh database.
 - **Local is CPU-only; deployment is CUDA.** Do not install `tensorflow-metal` — it made CRF training an order of magnitude slower and breaks the prefork pool on macOS. CUDA throughput has not yet been profiled; see [CLAUDE.md](CLAUDE.md) for the GPU invariants in the CRF code.

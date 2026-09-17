@@ -557,7 +557,7 @@ class BaseModel:
         scalar, the way ``top`` already does.
 
         A short list is padded with 0.0 rather than truncated: a batch can mix
-        envelopes from two triton processes mid-restart, where the older one
+        envelopes from two serving workers mid-restart, where the older one
         omits the key entirely. Padding fails to "off", which serves the
         missing requests ungated; truncating would drop their outputs and time
         those requests out instead.
