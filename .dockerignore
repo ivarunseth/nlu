@@ -12,6 +12,7 @@ instance
 flask_session
 logs
 docs
+.superpowers
 graphify-out
 **/__pycache__
 *.pyc
