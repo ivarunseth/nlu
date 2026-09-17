@@ -82,7 +82,6 @@ def apply_async(f):
         from server.tasks.request import dispatch, spool_object
         task_id = str(uuid4())
         environ = {k: v for k, v in request.environ.items() if isinstance(v, str)}
-        environ['_blueprint'] = request.blueprint
         if 'wsgi.input' in request.environ:
             if (request.content_length or 0) > current_app.config['REQUEST_INLINE_BODY_LIMIT']:
                 from server import store
