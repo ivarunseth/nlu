@@ -237,7 +237,12 @@ export const getTrainingRuntime = (training) => {
 // Wall-clock seconds since a still-running run was created. Callers pass the
 // current time so a ticking display re-renders off their own clock.
 export const getTrainingElapsed = (training, now = Date.now()) => {
-    const start = parseApiDate(training?.created_at);
+    // Prefer the epoch: `created_at` is formatted in the server's timezone,
+    // and `parseApiDate` reads it in the browser's, so against Date.now() it
+    // is off by the offset between the two.
+    const start = typeof training?.created_epoch === "number"
+        ? new Date(training.created_epoch * 1000)
+        : parseApiDate(training?.created_at);
     if (!start) return null;
     const seconds = (now - start) / 1000;
     return seconds >= 0 ? seconds : null;

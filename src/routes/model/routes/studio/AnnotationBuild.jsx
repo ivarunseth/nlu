@@ -219,13 +219,12 @@ const AnnotationBuild = () => {
         }
 
         try {
-            let created = await api.utterances.create(modelId, { text });
-            for (const span of spans) {
-                const entity = entities.find((candidate) => candidate.name === span.entity);
-                created = await api.utterances.addTag(modelId, created.id, {
-                    entity_id: entity.id, start: span.start, end: span.end
-                });
-            }
+            // Spans go with the create so the row and its tags land in one
+            // transaction: a rejected span leaves no untagged utterance behind.
+            const created = await api.utterances.create(modelId, {
+                text,
+                annotations: spans.map((span) => ({ label: span.entity, start: span.start, end: span.end }))
+            });
 
             setUtterances((previous) => [created, ...previous]);
             setTotal((previous) => previous + 1);

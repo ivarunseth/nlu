@@ -1,7 +1,7 @@
 import { useContext, useEffect, useState } from "react";
 import { Col, Row, Spinner } from "react-bootstrap";
 import { Bookmarks, Braces, ChevronDoubleLeft, ChevronDoubleRight, PencilSquare, Tag, Tags } from "react-bootstrap-icons";
-import { useOutlet, useSearchParams } from "react-router-dom";
+import { useNavigate, useOutlet, useParams, useSearchParams } from "react-router-dom";
 import { ModelContext } from "../../../../contexts/ModelContext";
 import AnnotationBuild from "./AnnotationBuild";
 import ClassificationBuild from "./ClassificationBuild";
@@ -46,7 +46,9 @@ const ICONS = {
 
 const Build = () => {
     const { model } = useContext(ModelContext);
-    const [searchParams, setSearchParams] = useSearchParams();
+    const { modelId } = useParams();
+    const [searchParams] = useSearchParams();
+    const navigate = useNavigate();
     const outlet = useOutlet();
     const [collapsed, setCollapsed] = useState(readCollapsed);
 
@@ -90,7 +92,11 @@ const Build = () => {
                                 className="build-rail-item"
                                 aria-current={item.key === tab ? "page" : undefined}
                                 title={collapsed ? item.label : undefined}
-                                onClick={() => setSearchParams({ tab: item.key })}
+                                // Absolute, not just the search params: from a
+                                // nested drill-in (a label's utterances page)
+                                // the outlet would otherwise keep rendering
+                                // over the chosen tab.
+                                onClick={() => navigate(`/models/${modelId}/build?tab=${item.key}`)}
                             >
                                 {ICONS[item.key]}
                                 <span className="build-rail-label">{item.label}</span>

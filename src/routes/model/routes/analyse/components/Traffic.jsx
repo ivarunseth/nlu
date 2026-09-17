@@ -215,21 +215,28 @@ const Traffic = ({ dataset, instances, ner, nlu }) => {
 
     useEffect(() => {
         if (!user || !modelId) return;
+        // A slow response for the previous selection must not land on top
+        // of a newer one, so anything resolving after cleanup is dropped.
+        let cancelled = false;
         const load = async (spin) => {
             try {
                 if (spin) setLoading(true);
-                setData(await api.analytics.live(modelId, { hours, ...(env && { environment: env }) }));
+                const next = await api.analytics.live(modelId, { hours, ...(env && { environment: env }) });
+                if (cancelled) return;
+                setData(next);
                 setError(null);
             } catch (err) {
-                setError(err.response?.data?.error || err.message);
+                if (!cancelled) setError(err.response?.data?.error || err.message);
             } finally {
-                if (spin) setLoading(false);
+                if (spin && !cancelled) setLoading(false);
             }
         };
         load(true);
-        if (!auto) return;
-        const timer = setInterval(() => load(false), REFRESH_MS);
-        return () => clearInterval(timer);
+        const timer = auto ? setInterval(() => load(false), REFRESH_MS) : null;
+        return () => {
+            cancelled = true;
+            if (timer) clearInterval(timer);
+        };
     }, [user, modelId, env, hours, tick, auto]);
 
     const environments = [...new Set([

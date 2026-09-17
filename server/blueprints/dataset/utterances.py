@@ -144,6 +144,12 @@ def create_model_utterance(modelId):
         intent = _get_intent(model, data['intent_id'])
     utterance = Utterance.create(data, intent=intent, model=model)
     db.session.add(utterance)
+    if isinstance(data, dict) and 'annotations' in data:
+        # Spans ride along on create so an annotated utterance lands in one
+        # transaction: a rejected span rolls the row back with it, instead
+        # of leaving an untagged utterance behind a failed follow-up call.
+        db.session.flush()
+        _replace_annotations(model, utterance, data['annotations'])
     db.session.commit()
     return utterance.to_dict(), 201
 

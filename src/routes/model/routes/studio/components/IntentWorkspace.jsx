@@ -193,13 +193,13 @@ const IntentWorkspace = ({ intentId }) => {
         }
 
         try {
-            let created = await api.utterances.create(modelId, { text, intent_id: Number(intentId) });
-            for (const span of spans) {
-                const slot = slots.find((candidate) => candidate.name === span.entity);
-                created = await api.utterances.addTag(modelId, created.id, {
-                    slot_id: slot.id, start: span.start, end: span.end
-                });
-            }
+            // Spans go with the create so the row and its tags land in one
+            // transaction: a rejected span leaves no untagged utterance behind.
+            const created = await api.utterances.create(modelId, {
+                text,
+                intent_id: Number(intentId),
+                annotations: spans.map((span) => ({ label: span.entity, start: span.start, end: span.end }))
+            });
             setUtterances((previous) => [created, ...previous]);
             setTotal((previous) => previous + 1);
             setQuery("");

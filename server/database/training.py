@@ -155,6 +155,10 @@ class Training(db.Model):
             'task_id': self.task_id,
             'version': float(self.version),
             'created_at': format_timestamp(self.created_at),
+            # Epoch seconds alongside the display string: the live elapsed
+            # readout compares against the browser clock, and the formatted
+            # value is in the server's zone.
+            'created_epoch': self.created_at,
             'updated_at': format_timestamp(self.updated_at)
         }
         task = self._get_task()
