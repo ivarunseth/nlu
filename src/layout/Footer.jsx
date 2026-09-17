@@ -1,12 +1,14 @@
-import { useNavigate } from "react-router-dom";
+import { useMatch, useNavigate } from "react-router-dom";
 import { useTrainings, trainingProgress } from "../contexts/TrainingContext";
 
 // The page's foot: a bare full-width strip that closes the layout, carrying
-// nothing — until a training runs. Then it hosts one row per run the user
-// has going, centred: model, version, where it is, and a bar filling left to
-// right along the row's top edge. Metrics stay on the History page, which
-// a row links to. Rows go when their runs finish (after lingering a few
-// seconds with the outcome), and the strip returns to bare.
+// nothing — until a training runs. Then, on that model's pages only, it
+// hosts one row per run the user has going, centred: model, version, where
+// it is, and a bar filling left to right along the row's top edge. Other
+// models' runs are not shown, and the home page never shows any: the strip
+// reports on the model in view, not on the account. Metrics stay on the
+// History page, which a row links to. Rows go when their runs finish (after
+// lingering a few seconds with the outcome), and the strip returns to bare.
 const STATUS_LABEL = {
     PENDING: "queued",
     RECEIVED: "starting",
@@ -26,8 +28,10 @@ const describe = (run) => {
 };
 
 const Footer = () => {
-    const trainings = useTrainings();
     const navigate = useNavigate();
+    // The footer sits outside the model route, so useParams is empty here.
+    const modelId = useMatch("/models/:modelId/*")?.params.modelId;
+    const trainings = useTrainings().filter((run) => String(run.modelId) === modelId);
 
     return (
         <footer className="app-footer" role={trainings.length ? "status" : undefined} aria-live="polite">
