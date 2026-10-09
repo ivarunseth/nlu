@@ -2,7 +2,7 @@ import React, { useContext, useState, useEffect, useRef } from "react";
 import { Alert, Form, InputGroup, Button, Spinner, Row, Col, Container } from "react-bootstrap";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { UserContext } from "../../contexts/UserContext";
-import axios from "axios";
+import { useApi } from "../../contexts/ApiContext";
 
 const ForgotPassword = () => {
 
@@ -10,6 +10,7 @@ const ForgotPassword = () => {
     const navigate = useNavigate();
 
     const { user } = useContext(UserContext);
+    const api = useApi();
 
     const [email, setEmail] = useState('');
 
@@ -33,7 +34,7 @@ const ForgotPassword = () => {
             try {
                 let data = new FormData();
                 data.append('email', email);
-                await axios.post('/api/users/forgot-password', data);
+                await api.users.forgotPassword(data);
                 setAlert({ variant: 'success', message: 'If an account with that email exists, you will receive a password reset link shortly.' });
                 setEmail('');
             } catch (error) {
@@ -57,7 +58,7 @@ const ForgotPassword = () => {
     }, [location.state]);
 
     return (
-        <Container fluid className="d-flex flex-column justify-content-center align-items-center vh-100">
+        <Container fluid className="d-flex flex-column justify-content-center align-items-center app-fill">
             <Row style={{ width: "25rem" }}>
                 <Col>
                     {alert && <Alert variant={alert.variant} onClose={() => setAlert(null)} dismissible>{alert.message}</Alert>}
@@ -95,7 +96,7 @@ const ForgotPassword = () => {
                         <div className="d-grid gap-2 my-3">
                             <Button
                                 type="submit"
-                                variant="dark"
+                                variant="primary"
                                 disabled={submitting}
                             >
                                 {submitting ? (

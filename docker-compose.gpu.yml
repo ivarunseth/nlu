@@ -1,0 +1,25 @@
+# Override for the CUDA deployment host (linux/amd64 with the NVIDIA
+# Container Toolkit):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+#
+# Switches every worker to the cuda variant of the worker image and grants
+# the GPUs. Nothing else in the stack changes. Multi-GPU scheduling is not
+# handled here: all three services see every GPU.
+
+x-worker-gpu: &worker-gpu
+  image: ${REGISTRY:-}worker:${TAG:-latest}-cuda
+  gpus: all
+
+services:
+  training-worker:
+    <<: *worker-gpu
+    build:
+      args:
+        DEVICE: cuda
+
+  serving-worker-testing:
+    <<: *worker-gpu
+
+  serving-worker-production:
+    <<: *worker-gpu

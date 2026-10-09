@@ -1,18 +1,33 @@
 from gevent import monkey
 monkey.patch_all()
 
-from server import create_application_server
+import sys
 
 
-application, socketio = app, socket = create_application_server() 
+def create_app(*names):
+    """
+    gunicorn / flask-CLI entry: `gunicorn "app:create_app('dataset')"`,
+    `flask db upgrade` (which discovers this by name and mounts everything,
+    with background work skipped — see server.CLI).
+    """
+    from server import create_app as factory
+    return factory(*names)
+
+
+def main(names):
+    """`python app.py [name ...]` — the named blueprints, default all, on PORT."""
+    app = create_app(*names)
+    debug = app.config['DEBUG']
+    port = app.config['PORT']
+    if 'socketio' in app.extensions:
+        # The events blueprint is mounted: serve through Socket.IO so the
+        # WebSocket upgrade works under the dev server.
+        from server import socketio
+        socketio.run(app, host='0.0.0.0', port=port,
+                     debug=debug, use_reloader=debug, log_output=debug)
+    else:
+        app.run(host='0.0.0.0', port=port, debug=debug, use_reloader=debug)
 
 
 if __name__ == '__main__':
-    host=app.config.get('HOST', '0.0.0.0')
-    port=app.config.get('PORT', 5001)
-    debug=app.config.get('DEBUG', False)
-    use_reloader=app.config.get('DEBUG', False)
-    log_output=app.config.get('DEBUG', False)
-
-    socket.run(app, host=host, port=port, debug=debug, \
-               use_reloader=use_reloader, log_output=log_output)
+    main(sys.argv[1:])

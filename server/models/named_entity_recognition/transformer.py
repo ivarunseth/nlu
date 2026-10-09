@@ -1,6 +1,10 @@
 import numpy as np
-from transformers import AutoConfig, AutoTokenizer, TFAutoModelForTokenClassification as AutoModel, create_optimizer
+import tensorflow as tf
+from transformers import AutoConfig, AutoTokenizer, TFAutoModelForTokenClassification as AutoModel
+from ..optimization import create_optimizer
 from .base import BaseNamedEntityRecognition
+from . import NonPaddingLoss
+from ..crf import CRFLoss, CRFTransitions, transitions_variable
 
 PRETRAINED_MODELS = [
     'distilbert/distilbert-base-uncased',
@@ -11,58 +15,98 @@ PRETRAINED_MODELS = [
     'google/muril-base-cased'
 ]
 
+
 class BERTNamedEntityRecognition(BaseNamedEntityRecognition):
     """
     BERT-based architecture for Named Entity Recognition (NER).
+
+    A pretrained transformer encoder feeds a token-classification head
+    (``Dense`` -> ``Dropout`` -> softmax ``Dense``) built as a Keras functional
+    model, trained with a padding-aware loss and a warmup/decay optimizer.
     """
     def __init__(self):
         super().__init__()
         self.architecture = 'transformer'
         self.parameters.update({
             'pretrained_model': PRETRAINED_MODELS[0],
-            'max_seq_len': 128,
+            'sequence_length': 128,
             'trainable': False,
+            'units': 768,
+            'dropout': 0.15,
+            'l2': 0.01,
+            'crf': False,
             'learning_rate': 2e-5,
             'num_train_steps': 1000,
             'weight_decay_rate': 0.01,
             'num_warmup_steps': 0
         })
 
-    def preprocess_x(self, X):
+    def _get_processor(self):
         """
-        Tokenizes text for BERT.
+        Returns the (lazily instantiated) tokenizer for the configured model.
+        RoBERTa-family tokenizers need ``add_prefix_space`` to tokenize
+        pre-split words, so honour the model type when constructing it.
         """
         if self.processor is None:
-            pretrained_model = self.parameters.get('pretrained_model', 'distilbert/distilbert-base-uncased')
-            self.processor = AutoTokenizer.from_pretrained(pretrained_model)
-        
-        # BERT for token classification typically expects split words if we want to align
-        # But here we handle string inputs.
-        tokenized = self.processor(
+            pretrained_model = self.parameters.get('pretrained_model', PRETRAINED_MODELS[0])
+            model_type = getattr(self.config, 'model_type', None) if self.config else None
+            if model_type == 'roberta':
+                self.processor = AutoTokenizer.from_pretrained(
+                    pretrained_model, use_fast=True, add_prefix_space=True
+                )
+            else:
+                self.processor = AutoTokenizer.from_pretrained(pretrained_model, use_fast=True)
+        return self.processor
+
+    def preprocess_x(self, X):
+        """
+        Tokenizes text into padded, int32 input tensors for BERT.
+        """
+        tokenized = self._get_processor()(
             X,
             truncation=True,
             padding='max_length',
-            max_length=self.parameters.get('max_seq_len', 128),
+            max_length=self.parameters.get('sequence_length', 128),
             return_tensors='np'
         )
         return {k: np.asarray(v).astype(np.int32) for k, v in tokenized.items()}
 
+    def _word_positions(self, X):
+        """
+        Maps each whitespace token to its first subword's sequence position,
+        mirroring the training-time alignment in ``tokenize_and_align``.
+        """
+        tokenized = self._get_processor()(
+            X,
+            truncation=True,
+            padding='max_length',
+            max_length=self.parameters.get('sequence_length', 128)
+        )
+        positions = []
+        for i, text in enumerate(X):
+            first = {}
+            for position, word_idx in enumerate(tokenized.word_ids(batch_index=i)):
+                if word_idx is not None and word_idx not in first:
+                    first[word_idx] = position
+            positions.append([first.get(word) for word in range(len(text.split()))])
+        return positions
+
     def tokenize_and_align(self, X, y):
         """
-        Aligns labels with BERT tokens.
-        """
-        if self.processor is None:
-            pretrained_model = self.parameters.get('pretrained_model', 'distilbert/distilbert-base-uncased')
-            self.processor = AutoTokenizer.from_pretrained(pretrained_model)
+        Aligns integer word labels with BERT sub-word tokens.
 
-        tokenized_inputs = self.processor(
-            X, 
-            truncation=True, 
-            padding='max_length', 
-            max_length=self.parameters.get('max_seq_len', 128),
-            is_split_into_words=False # Assuming string inputs
+        Only the first sub-word of each word carries its label; special tokens
+        and continuation sub-words get ``-100`` so ``NonPaddingLoss`` ignores
+        them.
+        """
+        tokenized_inputs = self._get_processor()(
+            X,
+            truncation=True,
+            padding='max_length',
+            max_length=self.parameters.get('sequence_length', 128),
+            is_split_into_words=False  # Assuming string inputs
         )
-        
+
         labels = []
         for i, label in enumerate(y):
             word_ids = tokenized_inputs.word_ids(batch_index=i)
@@ -77,30 +121,99 @@ class BERTNamedEntityRecognition(BaseNamedEntityRecognition):
                     label_ids.append(-100)
                 previous_word_idx = word_idx
             labels.append(label_ids)
-            
-        return {k: np.array(v) for k, v in tokenized_inputs.items()}, np.array(labels)
 
-    def build(self, num_classes, **kwargs):
+        inputs = {k: np.asarray(v).astype(np.int32) for k, v in tokenized_inputs.items()}
+        return inputs, np.asarray(labels, dtype=np.int32)
+
+    def _num_train_steps(self):
         """
-        Builds the BERT Token Classification model.
+        Derives the optimizer's decay horizon from the training set when it is
+        available (``batches_per_epoch * epochs``), matching the reference
+        script, and otherwise falls back to the persisted/default value so the
+        architecture can be rebuilt at load time.
         """
-        self.parameters.update(kwargs)
-        pretrained_model = self.parameters.get('pretrained_model', 'distilbert/distilbert-base-uncased')
-        config = AutoConfig.from_pretrained(pretrained_model, num_labels=num_classes)
+        if self.X_train is not None:
+            batch_size = max(1, int(self.parameters.get('batch_size', 32)))
+            epochs = max(1, int(self.parameters.get('epochs', 10)))
+            steps = max(1, (len(self.X_train) // batch_size) * epochs)
+            self.parameters['num_train_steps'] = steps
+            return steps
+        return max(1, int(self.parameters.get('num_train_steps', 1000)))
+
+    def build(self, num_classes, class_weights=None, **kwargs):
+        """
+        Builds the BERT token-classification model as a Keras functional model:
+        a (optionally frozen) pretrained encoder followed by a
+        ``Dense -> Dropout -> softmax Dense`` head, compiled with a
+        padding-aware loss and a warmup/decay optimizer.
+        """
+        self.parameters.update({k: v for k, v in kwargs.items() if k != 'callbacks'})
+
+        pretrained_model = self.parameters.get('pretrained_model', PRETRAINED_MODELS[0])
+        sequence_length = self.parameters.get('sequence_length', 128)
+
+        id2label = {int(index): tag for index, tag in self.labels.items()} if self.labels else None
+        label2id = {tag: int(index) for index, tag in self.labels.items()} if self.labels else None
+
+        config = AutoConfig.from_pretrained(
+            pretrained_model, num_labels=num_classes, id2label=id2label, label2id=label2id
+        )
         self.config = config
-        model = AutoModel.from_pretrained(pretrained_model, config=config)
-        model.trainable = self.parameters.get('trainable', False)
-        
-        # Use transformers optimizer
+
+        # Pull the encoder out of the token-classification model and discard its
+        # randomly-initialised head; we attach our own below.
+        encoder = AutoModel.from_pretrained(pretrained_model, config=config).layers[0]
+        encoder.trainable = self.parameters.get('trainable', False)
+
+        input_names = self._get_processor().model_input_names
+        inputs = {
+            name: tf.keras.layers.Input((sequence_length,), name=name, dtype=tf.int32)
+            for name in input_names
+        }
+
+        outputs = encoder(inputs)
+        sequence_output = outputs.last_hidden_state if hasattr(outputs, 'last_hidden_state') else outputs[0]
+
+        hidden = self._apply_hidden_layers(
+            sequence_output,
+            default=[{'units': self.parameters.get('units', 768), 'activation': 'tanh'}]
+        )
+        hidden = tf.keras.layers.Dropout(self.parameters.get('dropout', 0.15))(hidden)
+        # Under the CRF the tag head emits raw emission scores, which
+        # `_to_probabilities` softmaxes at decode time.
+        crf = self.parameters.get('crf', False)
+
+        logits = tf.keras.layers.Dense(
+            num_classes,
+            activation=None if crf else 'softmax',
+            kernel_regularizer=tf.keras.regularizers.l2(self.parameters.get('l2', 0.01)),
+            name='output'
+        )(hidden)
+
+        if crf:
+            logits = CRFTransitions(num_classes, name='crf_transitions')(logits)
+
+        model = tf.keras.models.Model(inputs=inputs, outputs=logits)
+
         optimizer, _ = create_optimizer(
             init_lr=self.parameters.get('learning_rate', 2e-5),
-            num_train_steps=self.parameters.get('num_train_steps', 1000),
+            num_train_steps=self._num_train_steps(),
             weight_decay_rate=self.parameters.get('weight_decay_rate', 0.01),
             num_warmup_steps=self.parameters.get('num_warmup_steps', 0)
         )
-        
-        # Token classification loss handles -100 ignored indices
-        model.compile(optimizer=optimizer) 
+
+        # Read the transition weight off the final model: pruning clones the
+        # graph, so a reference taken above would train an orphaned variable.
+        transitions = transitions_variable(model) if crf else None
+
+        model.compile(
+            optimizer=optimizer,
+            loss=(
+                CRFLoss(transitions) if transitions is not None
+                else NonPaddingLoss(class_weights=class_weights)
+            ),
+            metrics=self._metrics(num_classes, masked=True)
+        )
         return model
 
     def save(self, path, save_format='tf'):
@@ -116,12 +229,12 @@ class BERTNamedEntityRecognition(BaseNamedEntityRecognition):
         Loads BERT model and tokenizer.
         """
         instance = super().load(path, **kwargs)
-        
+
         # BERT specific loading
+        instance.config = AutoConfig.from_pretrained(path)
         instance.processor = AutoTokenizer.from_pretrained(path)
         instance.tokenizer = instance.processor
-        instance.config = AutoConfig.from_pretrained(path)
-        
+
         save_format = instance.parameters.get('save_format', 'tf')
         instance.model = cls._load_model_file(
             path,

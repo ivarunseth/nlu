@@ -3,6 +3,7 @@ import {Container, Nav, Navbar, NavDropdown} from 'react-bootstrap';
 import { PersonCircle, BoxArrowLeft } from 'react-bootstrap-icons';
 import { Link } from "react-router-dom";
 import { UserContext } from "../contexts/UserContext";
+import ThemeToggle from "../shared/components/ThemeToggle";
 
 function Header() {
     
@@ -10,12 +11,13 @@ function Header() {
 
     return (
         <>
-            {user && <Navbar collapseOnSelect expand="lg" bg="light" data-bs-theme="light" className="bg-body-tertiary">
+            {user && <Navbar collapseOnSelect expand="lg" className="bg-body-tertiary">
                 <Container fluid>
                     <Navbar.Brand as={Link} to="/">classify.ai</Navbar.Brand>
                     <Navbar.Toggle aria-controls="responsive-navbar-nav" />
                     <Navbar.Collapse id="responsive-navbar-nav">
-                        <Nav className="ms-auto">
+                        <Nav className="ms-auto align-items-lg-center">
+                            <ThemeToggle />
                             <NavDropdown title={user.email}>
                                 <NavDropdown.Item as={Link} to="/settings">
                                     <PersonCircle/>&nbsp;Account settings

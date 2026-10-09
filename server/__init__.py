@@ -7,11 +7,14 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_socketio import SocketIO
 
-from sqlalchemy import MetaData
+import sqlite3
+
+from sqlalchemy import MetaData, event
+from sqlalchemy.engine import Engine
 
 from redis import StrictRedis
 
-from .config import flask_config
+from .config import Config
 from .storage import Storage
 
 
@@ -24,6 +27,25 @@ metadata = MetaData(naming_convention={
 })
 db = SQLAlchemy(metadata=metadata)
 migrate = Migrate()
+
+@event.listens_for(Engine, "connect")
+def _set_sqlite_pragma(connection, *args, **kwargs):
+    """
+    Tune every SQLite connection opened in this process (the Flask app's
+    engine and, in the worker processes, the Celery result backend's engine —
+    both point at the same file). WAL lets readers run alongside a writer, and
+    a long busy_timeout makes concurrent writers block on the lock instead of
+    failing immediately with "database is locked". Applies only to SQLite; a
+    Postgres/MySQL backend is left untouched.
+    """
+    if isinstance(connection, sqlite3.Connection):
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
+
+
 socketio = SocketIO(cors_allowed_origins='*',
                     channel='socketio', 
                     logger=True,
@@ -34,41 +56,39 @@ redis = StrictRedis(host=os.environ.get('REDIS_HOST', 'localhost'),
 store = Storage()
 
 
-def create_application_server(config_name=os.environ.get('FLASK_ENV', 'development')):
+# True under the `flask` CLI (`flask db upgrade`): blueprints skip their
+# background work then, so a migration command boots nothing.
+CLI = 'db' in sys.argv
+
+
+def create_app(*names, init=True):
+    """
+    The Flask app for the given blueprints (default: all of them).
+
+    One process, any subset: `python app.py` mounts everything for local
+    development; each container mounts exactly one. Blueprint packages that
+    define ``init_app`` get it called here, after registration — unless
+    ``init`` is false, which is how the request worker replays a view
+    without also starting that blueprint's background work.
+    """
+    from . import blueprints
+
     app = Flask(__name__)
-    app.config.from_object(flask_config[config_name])
+    app.config.from_object(Config)
 
     db.init_app(app)
-    from . import database
-
+    from . import database  # noqa: F401 — registers the models
     migrate.init_app(app, db, directory='./migrations')
 
     Session(app)
-    
-    socketio.init_app(app, 
-                      manage_session=False,
-                      message_queue=app.config['SOCKETIO_MESSAGE_QUEUE'])
-    
     store.init_app(app)
-    
-    from .events import Event
-    socketio.on_namespace(Event('/'))
 
-    from .views import api as api_bp, before_app_first_request
-    app.register_blueprint(api_bp, url_prefix='/api')
-
-    if 'db' not in sys.argv:
-        before_app_first_request(app)
-
-    return app, socketio
-
-
-def create_triton_server(config_name=os.environ.get('FLASK_ENV', 'production')):
-    app = Flask(__name__)
-    app.config.from_object(flask_config[config_name])
-    app.config['ENVIRONMENT'] = config_name
-
-    from .views import triton as triton_bp
-    app.register_blueprint(triton_bp, url_prefix='/triton')
+    for name in names or blueprints.NAMES:
+        package = blueprints.load(name)
+        if package.blueprint is not None:
+            app.register_blueprint(package.blueprint)
+        init_app = getattr(package, 'init_app', None)
+        if init and init_app is not None:
+            init_app(app)
 
     return app

@@ -1,7 +1,7 @@
 import { createContext, useState, useContext, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { UserContext } from "./UserContext";
-import axios from "axios";
+import { useApi } from "./ApiContext";
 
 export const ModelContext = createContext();
 
@@ -10,28 +10,21 @@ export const ModelProvider = ({ children }) => {
     const { modelId } = useParams();
 
     const { user } = useContext(UserContext);
+    const api = useApi();
     const [model, setModel] = useState(null);
 
     useEffect(() => {
         if (user && modelId) {
             const getModel = async () => {
                 try {
-                    const response = await axios.get(
-                        `/api/models/${modelId}`,
-                        {
-                            headers: {
-                                'Authorization': `Bearer ${user.token}`
-                            }
-                        }
-                    );
-                    setModel(response.data);
+                    setModel(await api.models.get(modelId));
                 } catch (error) {
                     console.error(error.response.data.error);
                 }
             };
             getModel();
         }
-    }, [user, modelId])
+    }, [api, user, modelId])
 
     return (
         <ModelContext.Provider value={{ model, setModel }}>

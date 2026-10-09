@@ -45,10 +45,17 @@ const SignIn = () => {
         }
     };
 
+    // Bounce a visitor who is *already* signed in away from the sign-in page.
+    //
+    // Deliberately keyed to mount only. Keeping `user` in the dependency list
+    // made this fire again the instant signIn() set the user, and since it runs
+    // after that state commit it overrode signIn()'s own navigate() — which is
+    // the one that returns the user to the page their session expired on. The
+    // redirect was being computed correctly and then thrown away here.
+    const wasSignedInOnMount = useRef(Boolean(user));
     useEffect(() => {
-        if (user)
-            navigate('/');
-    }, [user, navigate]);
+        if (wasSignedInOnMount.current) navigate('/');
+    }, [navigate]);
 
     useEffect(() => {
         if (location.state && location.state.alert) {
@@ -57,7 +64,7 @@ const SignIn = () => {
     }, [location.state]);
 
     return (
-        <Container fluid className="d-flex flex-column justify-content-center align-items-center vh-100">
+        <Container fluid className="d-flex flex-column justify-content-center align-items-center app-fill">
             <Row style={{ width: "25rem" }}>
                 <Col>
                     {alert && <Alert variant={alert.variant} onClose={() => setAlert(null)} dismissible>{alert.message}</Alert>}
@@ -127,12 +134,12 @@ const SignIn = () => {
                             </InputGroup>
                         </Form.Group>
                         <Form.Text>
-                            <Link style={{ textDecoration: 'none' }}>Forgot password?</Link>
+                            <Link to='/forgot-password' style={{ textDecoration: 'none' }}>Forgot password?</Link>
                         </Form.Text>
                         <div className="d-grid gap-2 my-3">
                             <Button
                                 type="submit"
-                                variant="dark"
+                                variant="primary"
                                 disabled={submitting}
                             >
                                 {submitting ? (
@@ -159,14 +166,6 @@ const SignIn = () => {
                             }}
                         >
                             Don't have an account?&nbsp;<Link to='/signup' style={{ textDecoration: 'none' }}>Sign up</Link>
-                        </Form.Text>
-                        <Form.Text
-                            style={{
-                                display: 'flex',
-                                justifyContent: 'center'
-                            }}
-                        >
-                            <Link to='/forgot-password' style={{ textDecoration: 'none' }}>Forgot password?</Link>
                         </Form.Text>
                     </Form>
                 </Col>

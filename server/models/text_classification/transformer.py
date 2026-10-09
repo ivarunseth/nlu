@@ -1,7 +1,8 @@
 import os
 import numpy as np
 import tensorflow as tf
-from transformers import AutoConfig, AutoTokenizer, TFAutoModel as AutoModel, create_optimizer
+from transformers import AutoConfig, AutoTokenizer, TFAutoModel as AutoModel
+from ..optimization import create_optimizer
 from .base import BaseTextClassification
 
 PRETRAINED_MODELS = [
@@ -23,7 +24,7 @@ class BERTTextClassification(BaseTextClassification):
         self.architecture = 'transformer'
         self.parameters.update({
             'pretrained_model': PRETRAINED_MODELS[0],
-            'max_seq_len': 128,
+            'sequence_length': 128,
             'trainable': False,
             'units': 768,
             'dropout': 0.15,
@@ -44,12 +45,12 @@ class BERTTextClassification(BaseTextClassification):
             pretrained_model = self.parameters.get('pretrained_model', 'distilbert/distilbert-base-uncased')
             self.processor = AutoTokenizer.from_pretrained(pretrained_model)
         
-        max_seq_len = self.parameters.get('max_seq_len', 128)
+        sequence_length = self.parameters.get('sequence_length', 128)
         tokenized = self.processor(
             cleaned,
             truncation=True,
             padding='max_length',
-            max_length=max_seq_len,
+            max_length=sequence_length,
             return_tensors='np'
         )
         return {key: np.asarray(tokenized[key]).astype(np.int32) for key in ['input_ids', 'attention_mask']}
@@ -60,45 +61,40 @@ class BERTTextClassification(BaseTextClassification):
         """
         self.parameters.update(kwargs)
         pretrained_model = self.parameters.get('pretrained_model', 'distilbert/distilbert-base-uncased')
-        max_seq_len = self.parameters.get('max_seq_len', 128)
+        sequence_length = self.parameters.get('sequence_length', 128)
+        units = self.parameters.get('units', 768)
+        dropout = self.parameters.get('dropout', 0.15)
+        activation = self.parameters.get('activation', 'relu')
         
-        config = AutoConfig.from_pretrained(pretrained_model, num_labels=num_classes)
-        self.config = config
-        base = AutoModel.from_pretrained(pretrained_model, config=config).layers[0]
-        base.trainable = self.parameters.get('trainable', False)
+        self.config = AutoConfig.from_pretrained(pretrained_model, num_labels=num_classes)
+        encoder = AutoModel.from_pretrained(pretrained_model, config=self.config).layers[0]
+        encoder.trainable = self.parameters.get('trainable', False)
 
-        input_ids = tf.keras.layers.Input((max_seq_len,), name='input_ids', dtype=tf.int32)
-        attention_mask = tf.keras.layers.Input((max_seq_len,), name='attention_mask', dtype=tf.int32)
+        # Must mirror the keys preprocess_x returns, which it filters to
+        # exactly this pair regardless of tokenizer.
+        input_names = ['input_ids', 'attention_mask']
+        inputs = {name: tf.keras.layers.Input((sequence_length,), name=name, dtype=tf.int32) for name in input_names}
         
-        outputs = base({'input_ids': input_ids, 'attention_mask': attention_mask})
-        pooled_output = tf.keras.layers.GlobalAveragePooling1D()(outputs.last_hidden_state)
-        
-        dropout = tf.keras.layers.Dropout(self.parameters.get('dropout', 0.15))(pooled_output)
-        dense_layer = tf.keras.layers.Dense(self.parameters.get('units', 768), activation='relu')
-        output_layer = tf.keras.layers.Dense(
+        outputs = encoder(inputs)
+
+        outputs = outputs.last_hidden_state if hasattr(outputs, 'last_hidden_state') else outputs[0]        
+        outputs = tf.keras.layers.GlobalAveragePooling1D()(outputs)
+        outputs = tf.keras.layers.Dropout(dropout)(outputs)
+        outputs = self._apply_hidden_layers(
+            outputs, default=[{'units': units, 'activation': activation}]
+        )
+        outputs = tf.keras.layers.Dense(
             num_classes,
             activation='softmax',
             kernel_regularizer=tf.keras.regularizers.l2(self.parameters.get('l2', 0.01)),
-            name='output'
-        )
-        if self.parameters.get('pruning', False):
-            import tensorflow_model_optimization as tfmot
-            schedule = tfmot.sparsity.keras.PolynomialDecay(
-                initial_sparsity=self.parameters.get('initial_sparsity', 0),
-                final_sparsity=self.parameters.get('final_sparsity', 0.5),
-                begin_step=self.parameters.get('pruning_begin_step', 0),
-                end_step=self.parameters.get('pruning_end_step', 1000),
-                frequency=self.parameters.get('pruning_frequency', 100)
-            )
-            dense_layer = tfmot.sparsity.keras.prune_low_magnitude(dense_layer, pruning_schedule=schedule)
-            output_layer = tfmot.sparsity.keras.prune_low_magnitude(output_layer, pruning_schedule=schedule)
-
-        dense = dense_layer(dropout)
-        logits = output_layer(dense)
-
-        model = tf.keras.models.Model(inputs=[input_ids, attention_mask], outputs=logits)
+            name='labels'
+        )(outputs)
         
-        # Use transformers optimizer
+        model = tf.keras.models.Model(inputs=inputs, outputs=outputs)
+
+        if self.parameters.get('pruning', False):
+            model = self._prune_model(model)        
+
         optimizer, _ = create_optimizer(
             init_lr=self.parameters.get('learning_rate', 2e-5),
             num_train_steps=self.parameters.get('num_train_steps', 1000),
@@ -106,7 +102,11 @@ class BERTTextClassification(BaseTextClassification):
             num_warmup_steps=self.parameters.get('num_warmup_steps', 0)
         )
 
-        model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+        model.compile(
+            optimizer=optimizer,
+            loss='sparse_categorical_crossentropy',
+            metrics=self._metrics(num_classes)
+        )
         return model
 
     def save(self, path, save_format='tf'):

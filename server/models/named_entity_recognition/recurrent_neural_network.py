@@ -2,7 +2,10 @@ import os
 import pickle
 import numpy as np
 import tensorflow as tf
+from ..optimization import create_optimizer
 from .base import BaseNamedEntityRecognition
+from . import NonPaddingLoss
+from ..crf import CRFLoss, CRFTransitions, transitions_variable
 
 class RNNNamedEntityRecognition(BaseNamedEntityRecognition):
     """
@@ -15,9 +18,14 @@ class RNNNamedEntityRecognition(BaseNamedEntityRecognition):
         self.parameters.update({
             'max_tokens': 10000,
             'sequence_length': 128,
-            'embedding_dims': 64,
-            'lstm_dims': 100,
-            'dropout': 0.2
+            'embedding_dims': 128,
+            'lstm_dims': 128,
+            'dropout': 0.3,
+            'learning_rate': 1e-3,
+            'weight_decay_rate': 1e-5,
+            'num_warmup_steps': 0,
+            'crf': False,
+            'hidden_layers': []
         })
 
     def preprocess_x(self, X):
@@ -36,29 +44,46 @@ class RNNNamedEntityRecognition(BaseNamedEntityRecognition):
 
     def tokenize_and_align(self, X, y):
         """
-        Standard padding/truncation for RNN.
+        Standard padding/truncation for RNN. Padded positions use ``-100``,
+        matching the transformer architecture's convention, so
+        ``NonPaddingLoss``/``NonPaddingAccuracy`` and the sample-weight
+        computation in ``BaseNamedEntityRecognition.train`` exclude them —
+        ``0`` would collide with a real tag id.
         """
         X_processed = self.preprocess_x(X)
         seq_len = self.parameters.get('sequence_length', 128)
-        
+
         y_padded = []
         for labels in y:
             if len(labels) > seq_len:
                 y_padded.append(labels[:seq_len])
             else:
-                y_padded.append(labels + [0] * (seq_len - len(labels)))
+                y_padded.append(labels + [-100] * (seq_len - len(labels)))
         return X_processed, np.array(y_padded)
 
-    def build(self, num_classes, **kwargs):
+    def build(self, num_classes, class_weights=None, **kwargs):
         """
         Builds the Bi-LSTM model.
         """
         self.parameters.update(kwargs)
         vocab_size = len(self.processor.get_vocabulary())
-        embedding_dims = self.parameters.get('embedding_dims', 64)
-        lstm_dims = self.parameters.get('lstm_dims', 100)
-        dropout = self.parameters.get('dropout', 0.2)
+        embedding_dims = self.parameters.get('embedding_dims', 128)
+        lstm_dims = self.parameters.get('lstm_dims', 128)
+        dropout = self.parameters.get('dropout', 0.3)
         sequence_length = self.parameters.get('sequence_length', 128)
+
+        # Sequential can't thread a tensor through _apply_hidden_layers, so
+        # the stack is materialised as a layer list via the shared
+        # per-layer builder; semantics match the helper (empty/absent list
+        # is a no-op, and the Bi-LSTM output is always a sequence).
+        hidden = [
+            self._hidden_layer(layer, sequences=True)
+            for layer in self.parameters.get('hidden_layers', [])
+        ]
+
+        # Under the CRF the tag head emits raw emission scores, which
+        # `_to_probabilities` softmaxes at decode time.
+        crf = self.parameters.get('crf', False)
 
         model = tf.keras.Sequential([
             tf.keras.layers.Input(shape=(sequence_length,), dtype=tf.int32),
@@ -66,10 +91,34 @@ class RNNNamedEntityRecognition(BaseNamedEntityRecognition):
             tf.keras.layers.Dropout(dropout),
             tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(lstm_dims, return_sequences=True)),
             tf.keras.layers.Dropout(dropout),
-            tf.keras.layers.Dense(num_classes, activation='softmax', name='dense_output')
+            *hidden,
+            tf.keras.layers.Dense(
+                num_classes,
+                activation=None if crf else 'softmax',
+                name='dense_output'
+            ),
+            *([CRFTransitions(num_classes, name='crf_transitions')] if crf else [])
         ])
 
-        model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+        optimizer, _ = create_optimizer(
+            init_lr=self.parameters.get('learning_rate', 1e-3),
+            num_train_steps=self.parameters.get('num_train_steps', 1000),
+            weight_decay_rate=self.parameters.get('weight_decay_rate', 1e-5),
+            num_warmup_steps=self.parameters.get('num_warmup_steps', 0)
+        )
+
+        # Read the transition weight off the final model: pruning clones the
+        # graph, so a reference taken above would train an orphaned variable.
+        transitions = transitions_variable(model) if crf else None
+
+        model.compile(
+            optimizer=optimizer,
+            loss=(
+                CRFLoss(transitions) if transitions is not None
+                else NonPaddingLoss(class_weights=class_weights)
+            ),
+            metrics=self._metrics(num_classes, masked=True)
+        )
         return model
 
     def save(self, path, save_format='tf'):

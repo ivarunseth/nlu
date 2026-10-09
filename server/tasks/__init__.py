@@ -11,12 +11,11 @@ from celery.exceptions import Ignore, Reject
 from celery.result import AsyncResult
 from celery.signals import worker_shutting_down
 
-from flask_socketio import SocketIO
-
 from redis.lock import Lock
 from redis.exceptions import LockError
 
 from .. import redis
+from ..config import Config
 
 
 shutting_down = False
@@ -35,8 +34,11 @@ class WorkerConfig(object):
 
     broker_url = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
     broker_connection_retry_on_startup = True
+    # Deliberately not CELERY_RESULT_BACKEND: Celery lets that environment
+    # variable override every app's configured backend, and the request
+    # worker (`api`) needs a different one from training/serving.
     result_backend = os.environ.get(
-        'CELERY_RESULT_BACKEND',
+        'TASK_RESULT_BACKEND',
         f"db+{os.environ.get('SQLALCHEMY_DATABASE_URI', 'sqlite:///instance/indicnlu.db')}"
     )
     database_table_names = {
@@ -131,6 +133,9 @@ class WorkerTask(Task):
     
     abstract = True
     lock_key = 'celery-task-lock-{}'
+    # Tasks that also report into their model's room (see push_status); the
+    # training task opts in, serving tasks stay on their task room only.
+    broadcast_model_room = False
 
     def AsyncResult(self, task_id):
         return WorkerResult(task_id, backend=self.backend)
@@ -148,27 +153,32 @@ class WorkerTask(Task):
             raise TaskAbortedError('Task has been aborted')
         if shutting_down:
             raise WorkerShutdownError('Worker is shutting down')
+        return True
 
     def push_status(self, extended=False):
-        self.socketio.emit(
-            'status', 
-            self.AsyncResult(self.request.id).to_dict(extended), 
-            room=self.request.id, 
-            namespace='/'
-        )
+        payload = self.AsyncResult(self.request.id).to_dict(extended)
+        # The task room feeds the page that owns this run (History, Publish);
+        # the model room feeds the app-wide training strip, which must keep
+        # receiving after such a page leaves the task room on unmount — both
+        # share one browser socket, and rooms are per socket.
+        rooms = [self.request.id]
+        model_room = self.model_room() if self.broadcast_model_room else None
+        if model_room:
+            rooms.append(model_room)
+        for room in rooms:
+            self.socketio.emit('status', payload, room=room, namespace='/')
+
+    def model_room(self):
+        """The ``model:<id>`` room, for tasks whose first argument is a ``<model_id>/<version>`` path."""
+        args = self.request.args or ()
+        if args and isinstance(args[0], str) and args[0]:
+            return f'model:{args[0].split("/")[0]}'
+        return None
     
     def before_start(self, *args, **kwargs):
         super().before_start(*args, **kwargs)
-        
-        self.socketio = SocketIO(
-            app=None,
-            cors_allowed_origins='*',
-            channel='socketio',
-            message_queue=os.environ.get('SOCKETIO_MESSAGE_QUEUE', 'redis://'),
-            async_mode='threading',
-            logger=False,  
-            engineio_logger=False)
-        
+        from ..utils.socket import emitter
+        self.socketio = emitter()
         self.push_status(extended=True)
     
     def on_success(self, *args, **kwargs):
@@ -202,11 +212,25 @@ class WorkerTask(Task):
                 lock.release()
 
 
+class RequestTask(WorkerTask):
+    """
+    Base for ``dispatch``: the same status pushes to the task room, minus
+    the payload. The stored result is the HTTP response itself and is
+    fetched once over ``/api/<blueprint>/status/<task_id>``; the socket
+    only tells the browser when to fetch.
+    """
+
+    def push_status(self, extended=False):
+        payload = self.AsyncResult(self.request.id).to_dict()
+        payload['result'] = None
+        self.socketio.emit('status', payload, room=self.request.id, namespace='/')
+
+
 def _queues(*names):
     return tuple(Queue(name, Exchange('default', type='direct'), routing_key=name, durable=True) for name in names)
 
 
-def create_worker(name, include, queues, **kwargs):
+def create_worker(name, include, queues, task_class=None, **kwargs):
     worker = Celery(name)
     worker.config_from_object(WorkerConfig)
     worker.conf.update(
@@ -216,25 +240,46 @@ def create_worker(name, include, queues, **kwargs):
         task_default_routing_key=queues[0],
         **kwargs,
     )
-    worker.Task = WorkerTask
+    if task_class:
+        worker.Task = task_class
     return worker
 
 
-sage = create_worker(
-    'sage',
-    include=['server.tasks.training'],
-    queues=('training',),
+# Replays long-running HTTP requests (server.blueprints.apply_async). No ML
+# stack, so it runs from the api image. JSON like every other app (bodies
+# travel base64-encoded) — control replies use the task serializer, and
+# flower, on the training app, only accepts json. Results live in Redis and
+# expire: the status route fetches each once.
+api = create_worker(
+    'api',
+    include=['server.tasks.request'],
+    queues=('default',),
+    task_class=RequestTask,
+    # The task argument is the whole request, Authorization header included;
+    # never copy it into the result store the way the extended meta would.
+    result_extended=False,
+    worker_max_tasks_per_child=Config.REQUEST_MAX_TASKS_PER_CHILD,
+    result_backend=Config.REQUEST_RESULT_BACKEND,
+    result_expires=Config.REQUEST_RESULT_TTL,
 )
 
 
-triton = create_worker(
-    'triton',
+training = create_worker(
+    'training',
+    include=['server.tasks.train'],
+    queues=('training',),
+    task_class=WorkerTask,
+)
+
+
+serving = create_worker(
+    'serving',
     include=['server.tasks.inference'],
     queues=(
-        'development', 
-        'testing', 
+        'testing',
         'production',
     ),
+    task_class=WorkerTask,
 )
 
 

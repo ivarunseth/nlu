@@ -1,5 +1,9 @@
+from ..masking import NonPaddingLoss, NonPaddingAccuracy
+
 from .base import BaseNaturalLanguageUnderstanding
 from .transformer import BERTNaturalLanguageUnderstanding
+from .deep_neural_network import DNNNaturalLanguageUnderstanding
+
 
 class NaturalLanguageUnderstanding:
     """
@@ -7,7 +11,8 @@ class NaturalLanguageUnderstanding:
     """
     _architectures = {
         'base': BaseNaturalLanguageUnderstanding,
-        'transformer': BERTNaturalLanguageUnderstanding
+        'transformer': BERTNaturalLanguageUnderstanding,
+        'deep_neural_network': DNNNaturalLanguageUnderstanding
     }
 
     @staticmethod
